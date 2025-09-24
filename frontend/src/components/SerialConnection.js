@@ -96,33 +96,43 @@ const SerialConnection = ({ isConnected, onConnectionChange }) => {
           >
             Refresh
           </button>
+          {isConnected && (
+            <button
+              onClick={handleDisconnect}
+              className="px-3 py-1 bg-red-500 text-white rounded text-sm hover:bg-red-600 transition-colors font-medium"
+            >
+              Disconnect
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Port Selection */}
-      <div className="mb-4">
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Serial Port
-        </label>
-        <select
-          value={selectedPort}
-          onChange={(e) => handlePortChange(e.target.value)}
-          disabled={isConnected}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
-        >
-          <option value="">Select a port...</option>
-          {availablePorts.map((port) => (
-            <option key={port} value={port}>
-              {port}
-            </option>
-          ))}
-        </select>
-        {availablePorts.length === 0 && (
-          <p className="text-sm text-red-600 mt-1">
-            No serial ports found. Make sure your device is connected.
-          </p>
-        )}
-      </div>
+      {/* Port Selection - only show when not connected or when settings is open */}
+      {(!isConnected || showAdvanced) && (
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Serial Port
+          </label>
+          <select
+            value={selectedPort}
+            onChange={(e) => handlePortChange(e.target.value)}
+            disabled={isConnected}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+          >
+            <option value="">Select a port...</option>
+            {availablePorts.map((port) => (
+              <option key={port} value={port}>
+                {port}
+              </option>
+            ))}
+          </select>
+          {availablePorts.length === 0 && (
+            <p className="text-sm text-red-600 mt-1">
+              No serial ports found. Make sure your device is connected.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Advanced Settings */}
       {showAdvanced && (
@@ -201,43 +211,18 @@ const SerialConnection = ({ isConnected, onConnectionChange }) => {
         </div>
       )}
 
-      {/* Connection Status and Button */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          {isConnected ? (
-            <>
-              <Wifi className="w-5 h-5 text-green-500" />
-              <span className="text-green-600 font-medium">
-                Connected
-              </span>
-            </>
-          ) : (
-            <>
-              <WifiOff className="w-5 h-5 text-gray-400" />
-              <span className="text-gray-500">Disconnected</span>
-            </>
-          )}
+      {/* Connection Button - only show Connect button when disconnected */}
+      {!isConnected && (
+        <div className="flex justify-center">
+          <button
+            onClick={handleConnect}
+            disabled={!selectedPort || isConnecting}
+            className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isConnecting ? 'Connecting...' : 'Connect'}
+          </button>
         </div>
-
-        <div>
-          {isConnected ? (
-            <button
-              onClick={handleDisconnect}
-              className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors font-medium"
-            >
-              Disconnect
-            </button>
-          ) : (
-            <button
-              onClick={handleConnect}
-              disabled={!selectedPort || isConnecting}
-              className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isConnecting ? 'Connecting...' : 'Connect'}
-            </button>
-          )}
-        </div>
-      </div>
+      )}
 
     </div>
   );
