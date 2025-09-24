@@ -1,0 +1,49 @@
+export namespace main {
+	
+	export class AirConditioner {
+	    power: boolean;
+	    mode: string;
+	    temperature: number;
+	    fanSpeed: string;
+	    swing: boolean;
+	    currentTemp: number;
+	    model: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AirConditioner(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.power = source["power"];
+	        this.mode = source["mode"];
+	        this.temperature = source["temperature"];
+	        this.fanSpeed = source["fanSpeed"];
+	        this.swing = source["swing"];
+	        this.currentTemp = source["currentTemp"];
+	        this.model = source["model"];
+	    }
+	}
+	export class SerialConfig {
+	    port: string;
+	    baudRate: number;
+	    dataBits: number;
+	    parity: string;
+	    stopBits: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SerialConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.port = source["port"];
+	        this.baudRate = source["baudRate"];
+	        this.dataBits = source["dataBits"];
+	        this.parity = source["parity"];
+	        this.stopBits = source["stopBits"];
+	    }
+	}
+
+}
+

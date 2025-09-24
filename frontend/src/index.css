@@ -1,0 +1,37 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .btn-primary {
+    @apply bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded-lg transition-colors duration-200 font-medium;
+  }
+  
+  .btn-secondary {
+    @apply bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg transition-colors duration-200 font-medium;
+  }
+  
+  .control-button {
+    @apply px-6 py-3 rounded-xl font-semibold transition-all duration-200 transform hover:scale-105 shadow-lg;
+  }
+  
+  .control-button.active {
+    @apply bg-primary-600 text-white shadow-primary-600/25;
+  }
+  
+  .control-button.inactive {
+    @apply bg-gray-200 text-gray-700 hover:bg-gray-300;
+  }
+  
+  .temperature-display {
+    @apply text-6xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent;
+  }
+  
+  .status-card {
+    @apply bg-white rounded-2xl p-6 shadow-xl border border-gray-100;
+  }
+  
+  .glass-effect {
+    @apply backdrop-blur-sm bg-white/90 border border-white/20;
+  }
+}
