@@ -35,3 +35,52 @@
     @apply backdrop-blur-sm bg-white/90 border border-white/20;
   }
 }
+
+/* Custom animations for AC components */
+@layer utilities {
+  .duration-300 {
+    animation-duration: 0.3s;
+  }
+  
+  .duration-500 {
+    animation-duration: 0.5s;
+  }
+  
+  .duration-1000 {
+    animation-duration: 1s;
+  }
+  
+  .duration-2000 {
+    animation-duration: 2s;
+  }
+  
+  /* Louver swing animation */
+  .louver-swing {
+    animation: louverSwing 2s ease-in-out infinite alternate;
+  }
+  
+  @keyframes louverSwing {
+    0% { transform: rotate(-15deg); }
+    100% { transform: rotate(15deg); }
+  }
+  
+  /* Air flow animation */
+  .air-flow {
+    animation: airFlow 1.5s ease-in-out infinite;
+  }
+  
+  @keyframes airFlow {
+    0% { 
+      opacity: 0; 
+      transform: translateY(0px); 
+    }
+    50% { 
+      opacity: 0.6; 
+      transform: translateY(-10px); 
+    }
+    100% { 
+      opacity: 0; 
+      transform: translateY(-20px); 
+    }
+  }
+}

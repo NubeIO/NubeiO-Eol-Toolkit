@@ -1,5 +1,6 @@
 import React from 'react';
 import { Power, Thermometer, Wind, Activity, Gauge } from 'lucide-react';
+import { ACUnitVisual, AnimatedFan, AnimatedVerticalLouver, AnimatedHorizontalLouver } from './AnimatedComponents';
 
 const StatusDisplay = ({ acState, isConnected }) => {
   const getModeIcon = (mode) => {
@@ -33,6 +34,12 @@ const StatusDisplay = ({ acState, isConnected }) => {
 
   return (
     <div className="space-y-6">
+      {/* AC Visual Representation */}
+      <div className="status-card">
+        <h2 className="text-xl font-bold text-gray-900 mb-4">AC Unit Visual</h2>
+        <ACUnitVisual acState={acState} />
+      </div>
+
       {/* Connection Status */}
       <div className="status-card">
         <div className="flex items-center justify-between">
@@ -121,7 +128,7 @@ const StatusDisplay = ({ acState, isConnected }) => {
       <div className="status-card">
         <div className="flex items-center gap-4">
           <div className="p-3 rounded-full bg-purple-100 text-purple-600">
-            <Gauge className="w-8 h-8" />
+            <AnimatedFan fanSpeed={acState.fanSpeed} isOn={acState.power} />
           </div>
           <div>
             <h3 className="text-lg font-semibold text-gray-900">
@@ -130,6 +137,32 @@ const StatusDisplay = ({ acState, isConnected }) => {
             <p className="text-xl font-bold text-purple-600">
               {acState.fanSpeed}
             </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Louver Control */}
+      <div className="status-card">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">
+          Louver Positions
+        </h3>
+        <div className="flex items-center justify-around">
+          {/* Vertical Louvers */}
+          <div className="text-center">
+            <AnimatedVerticalLouver swing={acState.swing} position={50} />
+            <span className="text-sm text-gray-600 mt-2 block">Vertical</span>
+            <span className="text-xs text-gray-500">
+              {acState.swing ? 'Swinging' : 'Fixed'}
+            </span>
+          </div>
+          
+          {/* Horizontal Louvers */}
+          <div className="text-center">
+            <AnimatedHorizontalLouver swing={acState.swing} position={50} />
+            <span className="text-sm text-gray-600 mt-2 block">Horizontal</span>
+            <span className="text-xs text-gray-500">
+              {acState.swing ? 'Swinging' : 'Fixed'}
+            </span>
           </div>
         </div>
       </div>
