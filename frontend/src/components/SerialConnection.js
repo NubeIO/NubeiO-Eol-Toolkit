@@ -208,13 +208,13 @@ const SerialConnection = ({ isConnected, onConnectionChange }) => {
             <>
               <Wifi className="w-5 h-5 text-green-500" />
               <span className="text-green-600 font-medium">
-                Connected to {selectedPort}
+                Connected
               </span>
             </>
           ) : (
             <>
               <WifiOff className="w-5 h-5 text-gray-400" />
-              <span className="text-gray-500">Not connected</span>
+              <span className="text-gray-500">Disconnected</span>
             </>
           )}
         </div>
@@ -239,17 +239,6 @@ const SerialConnection = ({ isConnected, onConnectionChange }) => {
         </div>
       </div>
 
-      {/* Connection Info */}
-      {isConnected && (
-        <div className="mt-4 p-3 bg-green-50 rounded-lg">
-          <div className="text-sm text-green-800">
-            <div className="font-medium mb-1">Connection Details:</div>
-            <div>Port: {selectedPort}</div>
-            <div>Baud Rate: {serialConfig.baudRate}</div>
-            <div>Data: {serialConfig.dataBits}{serialConfig.parity.charAt(0)}{serialConfig.stopBits}</div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
