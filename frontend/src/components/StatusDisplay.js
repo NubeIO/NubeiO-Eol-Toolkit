@@ -2,7 +2,7 @@ import React from 'react';
 import { Power, Thermometer, Wind, Activity, Gauge } from 'lucide-react';
 import { ACUnitVisual, AnimatedFan, AnimatedVerticalLouver, AnimatedHorizontalLouver } from './AnimatedComponents';
 
-const StatusDisplay = ({ acState, isConnected }) => {
+const StatusDisplay = ({ acState, isConnected, capabilities }) => {
   const getModeIcon = (mode) => {
     const icons = {
       Auto: <Activity className="w-6 h-6" />,
@@ -197,7 +197,7 @@ const StatusDisplay = ({ acState, isConnected }) => {
         </div>
       </div>
 
-      {/* System Information */}
+      {/* System / Capability Information */}
       <div className="status-card">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">
           System Information
@@ -208,17 +208,45 @@ const StatusDisplay = ({ acState, isConnected }) => {
             <span className="font-medium">UART 9600 baud</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-gray-600">Frame Format:</span>
-            <span className="font-medium">8 bytes</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-600">Checksum:</span>
-            <span className="font-medium">XOR</span>
-          </div>
-          <div className="flex justify-between">
             <span className="text-gray-600">Manufacturer:</span>
             <span className="font-medium">Fujitsu</span>
           </div>
+          {capabilities && (
+            <>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Model:</span>
+                <span className="font-medium">{capabilities.modelName}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">System Type:</span>
+                <span className="font-medium">0x{capabilities.systemType.toString(16).padStart(4,'0')}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Vertical Steps:</span>
+                <span className="font-medium">{capabilities.verticalSteps}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Vertical Swing:</span>
+                <span className="font-medium">{capabilities.verticalSwing ? 'Yes' : 'No'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Vertical Vanes:</span>
+                <span className="font-medium">{capabilities.verticalVaneCount}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Horizontal Steps:</span>
+                <span className="font-medium">{capabilities.horizontalSteps}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Horizontal Swing:</span>
+                <span className="font-medium">{capabilities.horizontalSwing ? 'Yes' : 'No'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Horizontal Vanes:</span>
+                <span className="font-medium">{capabilities.horizontalVaneCount}</span>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

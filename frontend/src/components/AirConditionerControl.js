@@ -54,6 +54,7 @@ const AirConditionerControl = ({ acState, onStateChange, isConnected }) => {
     }
   };
 
+
   const getModeColor = (mode) => {
     const colors = {
       Auto: 'bg-green-500',

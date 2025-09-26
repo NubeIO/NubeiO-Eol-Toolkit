@@ -4,15 +4,32 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"go.bug.st/serial"
 )
+
+// helper to format bytes as space separated hex pairs
+func bytesToSpacedHex(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for i, b := range data {
+		if i > 0 {
+			sb.WriteByte(' ')
+		}
+		sb.WriteString(fmt.Sprintf("%02x", b))
+	}
+	return sb.String()
+}
 
 // Protocol constants from Python simulation
 const (
@@ -40,7 +57,7 @@ type App struct {
 	ctx      context.Context
 	ac       *AirConditioner
 	serial   serial.Port
-	model    int // 1: Office Model, 2: Vertical, 3: VRF
+	model    int // 1: Office Model, 2: Horizontal, 3: VRF
 	protocol *FujitsuProtocol
 }
 
@@ -52,7 +69,7 @@ type AirConditioner struct {
 	FanSpeed    string `json:"fanSpeed"`    // Auto, Low, Medium, High, Quiet
 	Swing       bool   `json:"swing"`
 	CurrentTemp int    `json:"currentTemp"`
-	Model       int    `json:"model"` // 1: Office, 2: Vertical, 3: VRF
+	Model       int    `json:"model"` // 1: Office, 2: Horizontal, 3: VRF
 }
 
 // FujitsuProtocol holds all protocol state variables
@@ -76,6 +93,17 @@ type FujitsuProtocol struct {
 	Economy             uint16
 	LastSSChangeTime    time.Time
 	SSChangeInterval    time.Duration
+
+	// Extended capability/state (per-model) mapped to class 0x01 objects
+	SystemType          uint16    // object 0x0001 (0x0000 single/office/horizontal, 0x0004 VRF)
+	VertStepsSupported  uint16    // 0x0130 (represented via class 0x01 num 0x30 in queries)
+	VertSwingSupported  bool      // 0x0131 (class 0x01 num 0x31) overall vertical swing capability
+	VertVanePos         [4]uint16 // 0x0132–0x0135 (class 0x01 num 0x32–0x35) individual positions
+	VertVaneSwing       [4]bool   // 0x103A–0x103D originally, represented by 0x3A–0x3D in queries
+	HorizStepsSupported uint16    // 0x0142 (class 0x01 num 0x42)
+	HorizSwingSupported bool      // 0x0143 (class 0x01 num 0x43)
+	HorizVanePos        [4]uint16 // 0x0144–0x0147 (class 0x01 num 0x44–0x47)
+	HorizVaneSwing      [4]bool   // 0x0148–0x014B (class 0x01 num 0x48–0x4B)
 }
 
 // SerialConfig holds serial port configuration
@@ -111,8 +139,15 @@ func NewApp() *App {
 		SSChangeInterval:    time.Duration(rand.Intn(5)+5) * time.Second,
 	}
 
+	// Load persisted model selection (fallback to 1)
+	storedModel := loadStoredModel()
+	if storedModel < 1 || storedModel > 3 {
+		storedModel = 1
+	}
+	initModelCapabilities(protocol, storedModel)
+
 	return &App{
-		model:    1, // Default to Office Model
+		model:    storedModel,
 		protocol: protocol,
 		ac: &AirConditioner{
 			Power:       false,
@@ -121,8 +156,48 @@ func NewApp() *App {
 			FanSpeed:    "Auto",
 			Swing:       false,
 			CurrentTemp: 24,
-			Model:       1,
+			Model:       storedModel,
 		},
+	}
+}
+
+// initModelCapabilities sets protocol capability / static values per model id
+func initModelCapabilities(p *FujitsuProtocol, model int) {
+	// Reset arrays
+	for i := 0; i < 4; i++ {
+		p.VertVanePos[i] = 0
+		p.VertVaneSwing[i] = false
+		p.HorizVanePos[i] = 0
+		p.HorizVaneSwing[i] = false
+	}
+
+	switch model {
+	case 1: // Office (treated same as Horizontal single for system type)
+		p.SystemType = 0x0000
+		p.VertStepsSupported = 0x0004
+		p.VertSwingSupported = true
+		p.VertVanePos[0] = 0x0001 // only first vane meaningful
+		// Individual vanes 2-4 unsupported -> leave at 0 & swing false (reported as FFFF)
+		p.HorizStepsSupported = 0x0000
+		p.HorizSwingSupported = false
+	case 2: // Horizontal (Single)
+		p.SystemType = 0x0000
+		p.VertStepsSupported = 0x0004
+		p.VertSwingSupported = true
+		p.VertVanePos[0] = 0x0001
+		p.HorizStepsSupported = 0x0015 // extended horizontal positions
+		p.HorizSwingSupported = true
+		p.HorizVanePos[0] = 0x0001
+	case 3: // VRF
+		p.SystemType = 0x0004
+		p.VertStepsSupported = 0x0004
+		p.VertSwingSupported = true
+		for i := 0; i < 4; i++ { // all four vertical vanes supported
+			p.VertVanePos[i] = 0x0001
+		}
+		// Horizontal generally not present (treat as 0 steps)
+		p.HorizStepsSupported = 0x0000
+		p.HorizSwingSupported = false
 	}
 }
 
@@ -159,45 +234,83 @@ func (a *App) GetReturnStatus(cls, num uint8) uint16 {
 
 	case 0x01:
 		switch num {
-		case 0x01: // System Type
-			if a.model == 3 {
-				return 0x04
+		case 0x01: // System Type (object 0x0001) explicit per model mapping
+			if a.model == 3 { // VRF
+				return 0x0004
 			}
-			return 0x00
-		case 0x10, 0x11, 0x12, 0x14, 0x15, 0x17, 0x1a, 0x1d, 0x20: // Various operation modes
+			// Office (1) and Horizontal (2) both report 0x0000
+			return 0x0000
+		case 0x13: // Special handling requested: for Horizontal (model 2) must be 0x0000
+			if a.model == 1 { // Office
+				return 0x0001
+			} else if a.model == 2 { // Horizontal override to 0x0000 per requirement
+				return 0x0000
+			}
+			return 0x0001 // VRF or others default (retain previous non-zero behavior)
+		case 0x12: // Requirement: VRF (model 3) should report 0x0000 for 0x0112
+			if a.model == 3 {
+				return 0x0000
+			}
+			// Office & Horizontal keep previous enabled (0x0001)
+			return 0x0001
+		case 0x10, 0x11, 0x14, 0x15, 0x17, 0x1a, 0x1d, 0x20: // Operation modes - Office Model specific (excluding 0x13 & 0x12 handled separately)
+			if a.model == 1 { // Office Model - expected: 01 [num] 00 01
+				return 0x0001
+			}
 			return 0x01
-		case 0x13: // Operation HEAT
-			if a.model == 2 {
-				return 0x00
+		// case 0x13 is now handled in the combined case above
+		case 0x30: // Vertical steps supported
+			return a.protocol.VertStepsSupported
+		case 0x31: // Overall vertical swing capability (report 1 if supported)
+			if a.protocol.VertSwingSupported {
+				return 0x0001
+			} else {
+				return 0x0000
 			}
-			return 0x01
-		case 0x30, 0x31: // Vertical wind direction step
-			return 0x04
-		case 0x32, 0x33, 0x34, 0x35: // Vertical wind direction step (model 3 only)
+		case 0x32, 0x33, 0x34, 0x35: // Individual vertical vane positions
+			// Updated requirement: Office (1) AND Horizontal (2) report 0xFFFF for 0x0132-0x0135
+			if a.model == 1 || a.model == 2 {
+				return 0xFFFF
+			}
+			// VRF requirement: always report 0x0004 for 0x0132-0x0135
 			if a.model == 3 {
-				return 0x04
+				return 0x0004
 			}
 			return 0xFFFF
-		case 0x3A, 0x3B, 0x3C, 0x3D: // Vertical wind direction step (model 3 only)
+		case 0x3A, 0x3B, 0x3C, 0x3D: // Individual vertical vane swing states
+			// Office (1) & Horizontal (2) report unsupported (0xFFFF) for 0x013A-0x013D
+			if a.model == 1 || a.model == 2 {
+				return 0xFFFF
+			}
+			// VRF requirement: always report swing state supported/on = 0x0001 for 0x013A-0x013D
 			if a.model == 3 {
-				return 0x01
+				return 0x0001
 			}
 			return 0xFFFF
-		case 0x42: // Horizontal Wind Direction Step
-			if a.model == 2 {
-				return 0x15
+		case 0x42: // Horizontal steps supported
+			return a.protocol.HorizStepsSupported
+		case 0x43: // Horizontal swing overall
+			if a.protocol.HorizSwingSupported {
+				return 0x0001
+			} else {
+				return 0x0000
 			}
-			return 0x00
-		case 0x43: // Horizontal Wind Direction Swing ON/OFF
-			if a.model == 2 {
-				return 0x01
+		case 0x44, 0x45, 0x46, 0x47: // Individual horizontal vane position
+			// Updated requirement: Office (1) AND Horizontal (2) report unsupported (0xFFFF)
+			if a.model == 1 || a.model == 2 {
+				return 0xFFFF
 			}
-			return 0x00
-		case 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B: // Horizontal wind direction (model 3 only)
-			if a.model == 3 {
-				return 0x00
+			// VRF: treat as present but neutral (0) / stored value
+			return a.protocol.HorizVanePos[int(num-0x44)]
+		case 0x48, 0x49, 0x4A, 0x4B: // Individual horizontal vane swing
+			// Updated requirement: Office (1) AND Horizontal (2) per-vane horizontal swing unsupported
+			if a.model == 1 || a.model == 2 {
+				return 0xFFFF
 			}
-			return 0xFFFF
+			if a.protocol.HorizVaneSwing[int(num-0x48)] {
+				return 0x0001
+			}
+			return 0x0000
 		case 0x50: // ECONOMY ON
 			return 0x01
 		case 0x51, 0x52: // Min Heat, Human Detection (model 1 only)
@@ -478,13 +591,33 @@ func (a *App) ConstructResponse(command uint8, address uint32, length uint8, dat
 
 	// Handle different command types
 	switch command {
-	case 0x00: // Start command - send simple ACK
-		frame = append(frame, 1)    // Length (1 byte of response data)
-		frame = append(frame, 0x01) // Response data
+	case 0x00: // Start command - send response based on data
+		if len(data) > 0 && data[0] == 0x01 {
+			// Response format: 2 byte request echo + 2 byte status
+			frame = append(frame, 4)    // Length (4 bytes of response data)
+			frame = append(frame, 0x00) // Request echo byte 1 (command)
+			frame = append(frame, 0x01) // Request echo byte 2 (data)
+			frame = append(frame, 0x01) // Status byte 1
+			frame = append(frame, 0x00) // Status byte 2
+		} else {
+			// Default ACK
+			frame = append(frame, 1)    // Length (1 byte of response data)
+			frame = append(frame, 0x01) // Response data
+		}
 
-	case 0x01: // Equipment info command - send ACK
-		frame = append(frame, 1)    // Length (1 byte of response data)
-		frame = append(frame, 0x01) // Response data
+	case 0x01: // Equipment info command - send response based on data
+		if len(data) > 0 && data[0] == 0x01 {
+			// Response format: 2 byte request echo + 2 byte status
+			frame = append(frame, 4)    // Length (4 bytes of response data)
+			frame = append(frame, 0x01) // Request echo byte 1 (command)
+			frame = append(frame, 0x01) // Request echo byte 2 (data)
+			frame = append(frame, 0x00) // Status byte 1
+			frame = append(frame, 0x00) // Status byte 2
+		} else {
+			// Default ACK
+			frame = append(frame, 1)    // Length (1 byte of response data)
+			frame = append(frame, 0x01) // Response data
+		}
 
 	case 0x02: // Object data command - process and ACK
 		// Handle command 2 - process object data
@@ -546,6 +679,50 @@ func (a *App) ConstructResponse(command uint8, address uint32, length uint8, dat
 				case ECONOMY:
 					a.protocol.Economy = value
 					log.Printf("Set economy mode to: %d", value)
+				// Extended capability/state writes
+				case 0x0132, 0x0133, 0x0134, 0x0135: // Vertical vane positions (per-vane)
+					idx := int(object - 0x0132)
+					if a.model == 3 { // VRF supports all 4
+						if idx >= 0 && idx < 4 {
+							a.protocol.VertVanePos[idx] = value
+							log.Printf("Set vertical vane %d position to: 0x%04X", idx, value)
+						}
+					} else if (a.model == 1 || a.model == 2) && idx == 0 { // only vane 0 meaningful
+						a.protocol.VertVanePos[0] = value
+						log.Printf("Set vertical vane 0 position to: 0x%04X", value)
+					}
+				case 0x103A, 0x103B, 0x103C, 0x103D: // Vertical vane swing (VRF per-vane)
+					idx := int(object - 0x103A)
+					if a.model == 3 && idx >= 0 && idx < 4 {
+						a.protocol.VertVaneSwing[idx] = value != 0
+						log.Printf("Set vertical vane %d swing to: %v", idx, value != 0)
+					}
+				case 0x0144, 0x0145, 0x0146, 0x0147: // Horizontal vane positions
+					idx := int(object - 0x0144)
+					if a.model == 2 { // Horizontal model only first vane
+						if idx == 0 {
+							a.protocol.HorizVanePos[0] = value
+							log.Printf("Set horizontal vane 0 position to: 0x%04X", value)
+						}
+					} else if a.model == 3 { // VRF treat as neutral/no-op but record
+						if idx >= 0 && idx < 4 {
+							a.protocol.HorizVanePos[idx] = value
+							log.Printf("(VRF) Stored horizontal vane %d position (not used) to: 0x%04X", idx, value)
+						}
+					}
+				case 0x0148, 0x0149, 0x014A, 0x014B: // Horizontal vane swing
+					idx := int(object - 0x0148)
+					if a.model == 2 { // only first vane
+						if idx == 0 {
+							a.protocol.HorizVaneSwing[0] = value != 0
+							log.Printf("Set horizontal vane 0 swing to: %v", value != 0)
+						}
+					} else if a.model == 3 { // record but not really used
+						if idx >= 0 && idx < 4 {
+							a.protocol.HorizVaneSwing[idx] = value != 0
+							log.Printf("(VRF) Stored horizontal vane %d swing (not used) to: %v", idx, value != 0)
+						}
+					}
 				default:
 					log.Printf("Unknown object: 0x%04X with value: 0x%04X", object, value)
 				}
@@ -556,8 +733,9 @@ func (a *App) ConstructResponse(command uint8, address uint32, length uint8, dat
 		frame = append(frame, 0x01) // Response data (ACK)
 
 	case 0x03: // Equipment confirmation or wind direction command
-		// Equipment confirmation - response will be adding 2 bytes data each object
-		payloadLength := length*2 + 1        // 2 bytes per object + 1 ACK byte
+		// Equipment confirmation - response format: ACK + 4 bytes per query
+		// Expected response format: [00] [cls] [num] [00] for each query
+		payloadLength := length*2 + 1        // 4 bytes per object + 1 ACK byte
 		frame = append(frame, payloadLength) // Length
 		frame = append(frame, 0x01)          // ACK data
 
@@ -568,13 +746,12 @@ func (a *App) ConstructResponse(command uint8, address uint32, length uint8, dat
 
 				returnStatus := a.GetReturnStatus(cls, num)
 
-				// Add object (class and number)
-				frame = append(frame, cls)
-				frame = append(frame, num)
-
-				// Add status (2 bytes, big-endian)
-				frame = append(frame, byte((returnStatus>>8)&0xFF))
-				frame = append(frame, byte(returnStatus&0xFF))
+				// Add response in format: [cls] [num] [status_high] [status_low]
+				// This matches the expected format: 2 byte request echo + 2 byte status
+				frame = append(frame, cls)                          // Request echo: Class
+				frame = append(frame, num)                          // Request echo: Number
+				frame = append(frame, byte((returnStatus>>8)&0xFF)) // Status high byte
+				frame = append(frame, byte(returnStatus&0xFF))      // Status low byte
 			}
 		}
 	}
@@ -620,8 +797,15 @@ func (a *App) updateACFromProtocol() {
 		a.ac.FanSpeed = "High"
 	}
 
-	// Update swing (combine all swing states for simplicity)
-	a.ac.Swing = a.protocol.VerticalWindSwing != 0 || a.protocol.HorizontalWindSwing != 0
+	// Update swing (combine global + per-vane arrays)
+	swing := a.protocol.VerticalWindSwing != 0 || a.protocol.HorizontalWindSwing != 0
+	for i := 0; i < 4 && !swing; i++ {
+		if a.protocol.VertVaneSwing[i] || a.protocol.HorizVaneSwing[i] {
+			swing = true
+			break
+		}
+	}
+	a.ac.Swing = swing
 
 	// Update temperature
 	if a.protocol.Temp >= 16*10 && a.protocol.Temp <= 30*10 {
@@ -647,7 +831,7 @@ func (a *App) ReadFrame(buffer []byte, timeout time.Duration) ([]byte, []byte, e
 
 		if n > 0 {
 			buffer = append(buffer, available[:n]...)
-			log.Printf("Buffer now contains: %s (length: %d)", hex.EncodeToString(buffer), len(buffer))
+			// log.Printf("Buffer now contains: %s (length: %d)", hex.EncodeToString(buffer), len(buffer))
 		}
 
 		// Try to find and extract valid frames from buffer
@@ -760,7 +944,9 @@ func (a *App) SetModel(model int) *AirConditioner {
 	if model >= 1 && model <= 3 {
 		a.model = model
 		a.ac.Model = model
+		initModelCapabilities(a.protocol, model)
 		log.Printf("Model set to %d: %s", model, a.getModelName(model))
+		persistModel(model)
 	}
 	return a.ac
 }
@@ -771,7 +957,7 @@ func (a *App) getModelName(model int) string {
 	case 1:
 		return "Office Model"
 	case 2:
-		return "Vertical"
+		return "Horizontal"
 	case 3:
 		return "VRF"
 	default:
@@ -816,8 +1002,8 @@ func (a *App) StartProtocolListener() {
 				log.Printf("Processing command: 0x%02X, address: 0x%06X, length: %d, data: %s",
 					command, address, dataLength, hex.EncodeToString(data))
 
-				// Send immediate ACK for critical commands
-				if command == 0x00 || command == 0x01 || command == 0x03 {
+				// Send immediate ACK for critical commands (but not 0x03 which needs full response)
+				if command == 0x00 || command == 0x01 {
 					// Send simple ACK immediately
 					ackFrame := []byte{command, byte((address >> 16) & 0xFF), byte((address >> 8) & 0xFF), byte(address & 0xFF), 0x01, 0x01}
 					// Add checksum
@@ -834,7 +1020,7 @@ func (a *App) StartProtocolListener() {
 						}
 					}
 				} else {
-					// For other commands, send full response
+					// For other commands (including 0x03), send full response
 					responseFrame := a.ConstructResponse(command, address, dataLength, data)
 
 					if a.serial != nil {
@@ -842,11 +1028,205 @@ func (a *App) StartProtocolListener() {
 						if err != nil {
 							log.Printf("Error sending response: %v", err)
 						} else {
-							log.Printf("Sent response: %s", hex.EncodeToString(responseFrame))
+							log.Printf("Sent response: %s", bytesToSpacedHex(responseFrame))
 						}
 					}
 				}
 			}
 		}
 	}()
+}
+
+// ---------------- Persistence Helpers ----------------
+
+const configFileName = "fga_simulator_config.json"
+
+type persistentConfig struct {
+	Model int `json:"model"`
+}
+
+// loadStoredModel reads last selected model from config file
+func loadStoredModel() int {
+	path := filepath.Join(".", configFileName)
+	f, err := os.Open(path)
+	if err != nil {
+		return 1
+	}
+	defer f.Close()
+	var cfg persistentConfig
+	if err := json.NewDecoder(f).Decode(&cfg); err != nil {
+		return 1
+	}
+	if cfg.Model < 1 || cfg.Model > 3 {
+		return 1
+	}
+	return cfg.Model
+}
+
+// persistModel writes the selected model to config file
+func persistModel(model int) {
+	if model < 1 || model > 3 {
+		return
+	}
+	path := filepath.Join(".", configFileName)
+	tmp := path + ".tmp"
+	f, err := os.Create(tmp)
+	if err != nil {
+		return
+	}
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(&persistentConfig{Model: model})
+	f.Close()
+	_ = os.Rename(tmp, path)
+}
+
+// ---------------- Capability Accessor ----------------
+
+// CapabilityInfo describes feature support for current model
+type CapabilityInfo struct {
+	Model                   int    `json:"model"`
+	ModelName               string `json:"modelName"`
+	SystemType              uint16 `json:"systemType"`
+	VerticalSteps           uint16 `json:"verticalSteps"`
+	VerticalSwing           bool   `json:"verticalSwing"`
+	VerticalVaneCount       int    `json:"verticalVaneCount"`
+	VerticalVaneSupported   []bool `json:"verticalVaneSupported"`
+	HorizontalSteps         uint16 `json:"horizontalSteps"`
+	HorizontalSwing         bool   `json:"horizontalSwing"`
+	HorizontalVaneCount     int    `json:"horizontalVaneCount"`
+	HorizontalVaneSupported []bool `json:"horizontalVaneSupported"`
+}
+
+// GetCapabilities returns current model capability information
+func (a *App) GetCapabilities() *CapabilityInfo {
+	vertSupported := make([]bool, 4)
+	horizSupported := make([]bool, 4)
+
+	// Determine per-vane support based on model rules already used in GetReturnStatus
+	switch a.model {
+	case 1: // only first vertical vane meaningful; no horizontal
+		vertSupported[0] = true
+	case 2: // single vertical & single horizontal
+		vertSupported[0] = true
+		horizSupported[0] = true
+	case 3: // VRF supports four vertical
+		for i := 0; i < 4; i++ {
+			vertSupported[i] = true
+		}
+	}
+
+	vCount := 0
+	hCount := 0
+	for _, v := range vertSupported {
+		if v {
+			vCount++
+		}
+	}
+	for _, v := range horizSupported {
+		if v {
+			hCount++
+		}
+	}
+
+	return &CapabilityInfo{
+		Model:                   a.model,
+		ModelName:               a.getModelName(a.model),
+		SystemType:              a.protocol.SystemType,
+		VerticalSteps:           a.protocol.VertStepsSupported,
+		VerticalSwing:           a.protocol.VertSwingSupported,
+		VerticalVaneCount:       vCount,
+		VerticalVaneSupported:   vertSupported,
+		HorizontalSteps:         a.protocol.HorizStepsSupported,
+		HorizontalSwing:         a.protocol.HorizSwingSupported,
+		HorizontalVaneCount:     hCount,
+		HorizontalVaneSupported: horizSupported,
+	}
+}
+
+// ---------------- Per-Vane Control Exported Methods ----------------
+
+// SetVerticalVanePosition sets an individual vertical vane position if supported and returns updated capabilities
+func (a *App) SetVerticalVanePosition(index int, position uint16) *CapabilityInfo {
+	if index < 0 || index > 3 {
+		return a.GetCapabilities()
+	}
+	// Model support: model 3 supports all four, models 1 & 2 only index 0
+	if a.model == 3 || (index == 0 && (a.model == 1 || a.model == 2)) {
+		// Clamp position to supported steps if steps declared (>0 means count)
+		steps := int(a.protocol.VertStepsSupported)
+		if steps > 0 && int(position) > steps {
+			position = uint16(steps)
+		}
+		if position == 0 {
+			position = 1
+		} // enforce minimum 1 for now
+		a.protocol.VertVanePos[index] = position
+		log.Printf("Vertical vane %d position set to %d", index, position)
+	}
+	return a.GetCapabilities()
+}
+
+// SetVerticalVaneSwing sets swing state for a single vertical vane (VRF only) else ignored
+func (a *App) SetVerticalVaneSwing(index int, swing bool) *CapabilityInfo {
+	if index < 0 || index > 3 {
+		return a.GetCapabilities()
+	}
+	if a.model == 3 { // only VRF exposes per-vane swing
+		a.protocol.VertVaneSwing[index] = swing
+		log.Printf("Vertical vane %d swing set to %v", index, swing)
+		a.updateACFromProtocol()
+	} else if index == 0 { // for single vane models treat as global vertical swing
+		if swing {
+			a.protocol.VerticalWindSwing = 1
+		} else {
+			a.protocol.VerticalWindSwing = 0
+		}
+		a.updateACFromProtocol()
+	}
+	return a.GetCapabilities()
+}
+
+// SetHorizontalVanePosition sets an individual horizontal vane position if supported
+func (a *App) SetHorizontalVanePosition(index int, position uint16) *CapabilityInfo {
+	if index < 0 || index > 3 {
+		return a.GetCapabilities()
+	}
+	// Model 2 supports only index 0; model 3 conceptually none but we store for completeness
+	if a.model == 2 && index == 0 {
+		steps := int(a.protocol.HorizStepsSupported)
+		if steps > 0 && int(position) > steps {
+			position = uint16(steps)
+		}
+		if position == 0 {
+			position = 1
+		}
+		a.protocol.HorizVanePos[0] = position
+		log.Printf("Horizontal vane 0 position set to %d", position)
+	} else if a.model == 3 { // store but not operational
+		a.protocol.HorizVanePos[index] = position
+		log.Printf("(VRF) Stored horizontal vane %d position %d (non-operational)", index, position)
+	}
+	return a.GetCapabilities()
+}
+
+// SetHorizontalVaneSwing sets swing for horizontal vane (model 2 index 0 only, VRF store only)
+func (a *App) SetHorizontalVaneSwing(index int, swing bool) *CapabilityInfo {
+	if index < 0 || index > 3 {
+		return a.GetCapabilities()
+	}
+	if a.model == 2 && index == 0 {
+		a.protocol.HorizVaneSwing[0] = swing
+		if swing {
+			a.protocol.HorizontalWindSwing = 1
+		} else {
+			a.protocol.HorizontalWindSwing = 0
+		}
+		a.updateACFromProtocol()
+		log.Printf("Horizontal vane 0 swing set to %v", swing)
+	} else if a.model == 3 { // store only
+		a.protocol.HorizVaneSwing[index] = swing
+		log.Printf("(VRF) Stored horizontal vane %d swing %v (non-operational)", index, swing)
+	}
+	return a.GetCapabilities()
 }

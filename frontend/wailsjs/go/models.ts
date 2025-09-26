@@ -24,6 +24,38 @@ export namespace main {
 	        this.model = source["model"];
 	    }
 	}
+	export class CapabilityInfo {
+	    model: number;
+	    modelName: string;
+	    systemType: number;
+	    verticalSteps: number;
+	    verticalSwing: boolean;
+	    verticalVaneCount: number;
+	    verticalVaneSupported: boolean[];
+	    horizontalSteps: number;
+	    horizontalSwing: boolean;
+	    horizontalVaneCount: number;
+	    horizontalVaneSupported: boolean[];
+	
+	    static createFrom(source: any = {}) {
+	        return new CapabilityInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.model = source["model"];
+	        this.modelName = source["modelName"];
+	        this.systemType = source["systemType"];
+	        this.verticalSteps = source["verticalSteps"];
+	        this.verticalSwing = source["verticalSwing"];
+	        this.verticalVaneCount = source["verticalVaneCount"];
+	        this.verticalVaneSupported = source["verticalVaneSupported"];
+	        this.horizontalSteps = source["horizontalSteps"];
+	        this.horizontalSwing = source["horizontalSwing"];
+	        this.horizontalVaneCount = source["horizontalVaneCount"];
+	        this.horizontalVaneSupported = source["horizontalVaneSupported"];
+	    }
+	}
 	export class SerialConfig {
 	    port: string;
 	    baudRate: number;

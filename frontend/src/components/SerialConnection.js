@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Usb, Wifi, WifiOff, Settings } from 'lucide-react';
-import { GetAvailablePorts, ConnectSerial, DisconnectSerial } from '../wailsjs/go/main/App/App';
+import { GetAvailablePorts, ConnectSerial, DisconnectSerial, SetModel } from '../wailsjs/go/main/App/App';
 
 const SerialConnection = ({ isConnected, onConnectionChange }) => {
   const [availablePorts, setAvailablePorts] = useState([]);
@@ -12,6 +12,7 @@ const SerialConnection = ({ isConnected, onConnectionChange }) => {
     parity: 'None',
     stopBits: 1
   });
+  const [selectedModel, setSelectedModel] = useState(1); // Default to Office Model
   const [isConnecting, setIsConnecting] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -40,11 +41,14 @@ const SerialConnection = ({ isConnected, onConnectionChange }) => {
 
     setIsConnecting(true);
     try {
+      // Set the AC model before connecting
+      await SetModel(selectedModel);
+
       const config = {
         ...serialConfig,
         port: selectedPort
       };
-      
+
       await ConnectSerial(config);
       onConnectionChange(true);
     } catch (error) {
@@ -73,6 +77,11 @@ const SerialConnection = ({ isConnected, onConnectionChange }) => {
   const dataBitsOptions = [7, 8];
   const parityOptions = ['None', 'Even', 'Odd'];
   const stopBitsOptions = [1, 2];
+  const acModels = [
+    { id: 1, name: 'Office Model', description: 'Standard office AC unit' },
+    { id: 2, name: 'Horizontal', description: 'Single horizontal (louver) unit' },
+    { id: 3, name: 'VRF', description: 'Variable Refrigerant Flow system' }
+  ];
 
   return (
     <div className="status-card">
@@ -136,77 +145,116 @@ const SerialConnection = ({ isConnected, onConnectionChange }) => {
 
       {/* Advanced Settings */}
       {showAdvanced && (
-        <div className="grid grid-cols-2 gap-4 mb-4 p-4 bg-gray-50 rounded-lg">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Baud Rate
+        <div className="mb-4 p-4 bg-gray-50 rounded-lg">
+          {/* AC Model Selection */}
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              AC Model Type
             </label>
-            <select
-              value={serialConfig.baudRate}
-              onChange={(e) => setSerialConfig(prev => ({ ...prev, baudRate: parseInt(e.target.value) }))}
-              disabled={isConnected}
-              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary-500 disabled:bg-gray-100"
-            >
-              {baudRates.map((rate) => (
-                <option key={rate} value={rate}>
-                  {rate}
-                </option>
+            <div className="grid grid-cols-1 gap-2">
+              {acModels.map((model) => (
+                <label
+                  key={model.id}
+                  className={`flex items-start p-3 border rounded-lg cursor-pointer transition-colors ${
+                    selectedModel === model.id
+                      ? 'bg-blue-50 border-blue-300'
+                      : 'bg-white border-gray-200 hover:bg-gray-50'
+                  } ${isConnected ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  <input
+                    type="radio"
+                    name="acModel"
+                    value={model.id}
+                    checked={selectedModel === model.id}
+                    onChange={(e) => setSelectedModel(parseInt(e.target.value))}
+                    disabled={isConnected}
+                    className="mt-1 mr-3"
+                  />
+                  <div>
+                    <div className="font-medium text-sm">{model.name}</div>
+                    <div className="text-xs text-gray-600">{model.description}</div>
+                  </div>
+                </label>
               ))}
-            </select>
+            </div>
+            <p className="text-xs text-gray-600 mt-2">
+              Select AC model before connecting. This affects available features and protocol behavior.
+            </p>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Data Bits
-            </label>
-            <select
-              value={serialConfig.dataBits}
-              onChange={(e) => setSerialConfig(prev => ({ ...prev, dataBits: parseInt(e.target.value) }))}
-              disabled={isConnected}
-              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary-500 disabled:bg-gray-100"
-            >
-              {dataBitsOptions.map((bits) => (
-                <option key={bits} value={bits}>
-                  {bits}
-                </option>
-              ))}
-            </select>
-          </div>
+          {/* Serial Settings */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Baud Rate
+              </label>
+              <select
+                value={serialConfig.baudRate}
+                onChange={(e) => setSerialConfig(prev => ({ ...prev, baudRate: parseInt(e.target.value) }))}
+                disabled={isConnected}
+                className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary-500 disabled:bg-gray-100"
+              >
+                {baudRates.map((rate) => (
+                  <option key={rate} value={rate}>
+                    {rate}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Parity
-            </label>
-            <select
-              value={serialConfig.parity}
-              onChange={(e) => setSerialConfig(prev => ({ ...prev, parity: e.target.value }))}
-              disabled={isConnected}
-              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary-500 disabled:bg-gray-100"
-            >
-              {parityOptions.map((parity) => (
-                <option key={parity} value={parity}>
-                  {parity}
-                </option>
-              ))}
-            </select>
-          </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Data Bits
+              </label>
+              <select
+                value={serialConfig.dataBits}
+                onChange={(e) => setSerialConfig(prev => ({ ...prev, dataBits: parseInt(e.target.value) }))}
+                disabled={isConnected}
+                className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary-500 disabled:bg-gray-100"
+              >
+                {dataBitsOptions.map((bits) => (
+                  <option key={bits} value={bits}>
+                    {bits}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Stop Bits
-            </label>
-            <select
-              value={serialConfig.stopBits}
-              onChange={(e) => setSerialConfig(prev => ({ ...prev, stopBits: parseInt(e.target.value) }))}
-              disabled={isConnected}
-              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary-500 disabled:bg-gray-100"
-            >
-              {stopBitsOptions.map((bits) => (
-                <option key={bits} value={bits}>
-                  {bits}
-                </option>
-              ))}
-            </select>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Parity
+              </label>
+              <select
+                value={serialConfig.parity}
+                onChange={(e) => setSerialConfig(prev => ({ ...prev, parity: e.target.value }))}
+                disabled={isConnected}
+                className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary-500 disabled:bg-gray-100"
+              >
+                {parityOptions.map((parity) => (
+                  <option key={parity} value={parity}>
+                    {parity}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Stop Bits
+              </label>
+              <select
+                value={serialConfig.stopBits}
+                onChange={(e) => setSerialConfig(prev => ({ ...prev, stopBits: parseInt(e.target.value) }))}
+                disabled={isConnected}
+                className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary-500 disabled:bg-gray-100"
+              >
+                {stopBitsOptions.map((bits) => (
+                  <option key={bits} value={bits}>
+                    {bits}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
       )}

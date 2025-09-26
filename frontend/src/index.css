@@ -34,6 +34,10 @@
   .glass-effect {
     @apply backdrop-blur-sm bg-white/90 border border-white/20;
   }
+
+  .wall-controller-btn {
+    @apply h-12 px-4 rounded-lg font-medium text-white transition-all duration-200 flex flex-col items-center justify-center space-y-1 hover:scale-105 shadow-lg;
+  }
 }
 
 /* Custom animations for AC components */

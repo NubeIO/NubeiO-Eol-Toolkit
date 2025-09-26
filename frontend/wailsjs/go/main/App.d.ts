@@ -15,11 +15,17 @@ export function GetAirConditionerState():Promise<main.AirConditioner>;
 
 export function GetAvailablePorts():Promise<Array<string>>;
 
+export function GetCapabilities():Promise<main.CapabilityInfo>;
+
 export function GetReturnStatus(arg1:number,arg2:number):Promise<number>;
 
 export function ReadFrame(arg1:Array<number>,arg2:time.Duration):Promise<Array<number>>;
 
 export function SetFanSpeed(arg1:string):Promise<main.AirConditioner>;
+
+export function SetHorizontalVanePosition(arg1:number,arg2:number):Promise<main.CapabilityInfo>;
+
+export function SetHorizontalVaneSwing(arg1:number,arg2:boolean):Promise<main.CapabilityInfo>;
 
 export function SetMode(arg1:string):Promise<main.AirConditioner>;
 
@@ -30,6 +36,10 @@ export function SetPower(arg1:boolean):Promise<main.AirConditioner>;
 export function SetSwing(arg1:boolean):Promise<main.AirConditioner>;
 
 export function SetTemperature(arg1:number):Promise<main.AirConditioner>;
+
+export function SetVerticalVanePosition(arg1:number,arg2:number):Promise<main.CapabilityInfo>;
+
+export function SetVerticalVaneSwing(arg1:number,arg2:boolean):Promise<main.CapabilityInfo>;
 
 export function StartProtocolListener():Promise<void>;
 

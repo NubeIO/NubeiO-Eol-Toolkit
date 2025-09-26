@@ -26,6 +26,10 @@ export function GetAvailablePorts() {
   return window['go']['main']['App']['GetAvailablePorts']();
 }
 
+export function GetCapabilities() {
+  return window['go']['main']['App']['GetCapabilities']();
+}
+
 export function GetReturnStatus(arg1, arg2) {
   return window['go']['main']['App']['GetReturnStatus'](arg1, arg2);
 }
@@ -36,6 +40,14 @@ export function ReadFrame(arg1, arg2) {
 
 export function SetFanSpeed(arg1) {
   return window['go']['main']['App']['SetFanSpeed'](arg1);
+}
+
+export function SetHorizontalVanePosition(arg1, arg2) {
+  return window['go']['main']['App']['SetHorizontalVanePosition'](arg1, arg2);
+}
+
+export function SetHorizontalVaneSwing(arg1, arg2) {
+  return window['go']['main']['App']['SetHorizontalVaneSwing'](arg1, arg2);
 }
 
 export function SetMode(arg1) {
@@ -56,6 +68,14 @@ export function SetSwing(arg1) {
 
 export function SetTemperature(arg1) {
   return window['go']['main']['App']['SetTemperature'](arg1);
+}
+
+export function SetVerticalVanePosition(arg1, arg2) {
+  return window['go']['main']['App']['SetVerticalVanePosition'](arg1, arg2);
+}
+
+export function SetVerticalVaneSwing(arg1, arg2) {
+  return window['go']['main']['App']['SetVerticalVaneSwing'](arg1, arg2);
 }
 
 export function StartProtocolListener() {
