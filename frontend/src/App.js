@@ -93,11 +93,7 @@ function App() {
               <option value={3}>VRF</option>
             </select>
             {modelChanging && <span className="text-xs text-gray-500">Updating...</span>}
-            {capabilities && (
-              <span className="text-xs text-gray-600">
-                VertVanes: {capabilities.verticalVaneCount} | HorizVanes: {capabilities.horizontalVaneCount}
-              </span>
-            )}
+            {/* Removed inline vane counts per user request; details now only in StatusDisplay */}
           </div>
         </div>
 

@@ -1044,9 +1044,9 @@ func (a *App) ReadFrame(buffer []byte, timeout time.Duration) ([]byte, []byte, e
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	if len(buffer) > 0 {
-		log.Printf("Timeout with remaining buffer: %s", hex.EncodeToString(buffer))
-	}
+	// if len(buffer) > 0 {
+	// 	log.Printf("Timeout with remaining buffer: %s", hex.EncodeToString(buffer))
+	// }
 	return nil, buffer, fmt.Errorf("timeout reading frame")
 }
 
@@ -1105,8 +1105,8 @@ func (a *App) extractValidFrame(buffer []byte) ([]byte, []byte, bool) {
 
 		// Verify checksum
 		if a.VerifyFrameChecksum(candidateFrame) {
-			log.Printf("Found valid frame at offset %d: %s (cmd=0x%02X, addr=0x%06X, len=%d)",
-				i, hex.EncodeToString(candidateFrame), command, address, dataLength)
+			// log.Printf("Found valid frame at offset %d: %s (cmd=0x%02X, addr=0x%06X, len=%d)",
+			// 	i, hex.EncodeToString(candidateFrame), command, address, dataLength)
 
 			// Remove processed data including any garbage before the frame
 			remainingBuffer := buffer[i+expectedFrameLength:]
@@ -1193,8 +1193,8 @@ func (a *App) StartProtocolListener() {
 					data = frame[5 : 5+dataLength] // Payload starts at byte 5
 				}
 
-				log.Printf("Processing command: 0x%02X, address: 0x%06X, length: %d, data: %s",
-					command, address, dataLength, hex.EncodeToString(data))
+				// log.Printf("Processing command: 0x%02X, address: 0x%06X, length: %d, data: %s",
+				// 	command, address, dataLength, hex.EncodeToString(data))
 
 				// Send immediate ACK for critical commands (but not 0x03 which needs full response)
 				if command == 0x00 || command == 0x01 {
@@ -1222,7 +1222,7 @@ func (a *App) StartProtocolListener() {
 						if err != nil {
 							log.Printf("Error sending response: %v", err)
 						} else {
-							log.Printf("Sent response: %s", bytesToSpacedHex(responseFrame))
+							// log.Printf("Sent response: %s", bytesToSpacedHex(responseFrame))
 						}
 					}
 				}
