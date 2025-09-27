@@ -2,11 +2,12 @@ import React, { useState, useEffect } from 'react';
 import WallController from './components/WallController';
 import ACUnitDisplay from './components/ACUnitDisplay';
 import SerialConnection from './components/SerialConnection';
-import StatusDisplay from './components/StatusDisplay';
+// Removed StatusDisplay, replaced with RoomTempInjector for sensor injection
+import RoomTempInjector from './components/RoomTempInjector';
 import VaneControls from './components/VaneControls';
 import ThemeToggle from './components/ThemeToggle';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
-import { GetAirConditionerState, GetCapabilities, SetModel } from './wailsjs/go/main/App/App';
+import { GetAirConditionerState, GetCapabilities, SetModel } from './wailsjs/go/main/App';
 
 const AppContent = () => {
   const { getThemeClasses } = useTheme();
@@ -127,10 +128,10 @@ const AppContent = () => {
               isConnected={isConnected}
               capabilities={capabilities}
             />
-            <StatusDisplay
+            <RoomTempInjector
               acState={acState}
               isConnected={isConnected}
-              capabilities={capabilities}
+              onInject={loadAcState}
             />
           </div>
         </div>

@@ -535,6 +535,24 @@ func (a *App) SetSwing(swing bool) *AirConditioner {
 	return a.ac
 }
 
+// SetRoomTemperature sets the room temperature for testing purposes
+func (a *App) SetRoomTemperature(temp float64) *AirConditioner {
+	// Convert temperature to protocol format (multiply by 100 for 0.01°C precision)
+	// Protocol formula: (temp + 50) * 100 to handle range from -50.00°C to +605.34°C
+	if temp < -50.0 || temp > 605.34 {
+		log.Printf("Room temperature %.2f°C out of valid range (-50.00°C to +605.34°C)", temp)
+		return a.ac
+	}
+	
+	// Convert to protocol value using the same formula as TemperatureToHex
+	protocolValue := uint16((temp + 50.0) * 100)
+	a.protocol.RoomTemperature = protocolValue
+	a.ac.CurrentTemp = int(temp + 0.5) // Round to nearest integer for display
+	
+	log.Printf("Set room temperature to: %.2f°C (protocol: 0x%04X)", temp, protocolValue)
+	return a.ac
+}
+
 // GetAvailablePorts returns available serial ports
 func (a *App) GetAvailablePorts() []string {
 	ports, err := serial.GetPortsList()
