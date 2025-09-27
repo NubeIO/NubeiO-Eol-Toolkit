@@ -4,9 +4,12 @@ import ACUnitDisplay from './components/ACUnitDisplay';
 import SerialConnection from './components/SerialConnection';
 import StatusDisplay from './components/StatusDisplay';
 import VaneControls from './components/VaneControls';
+import ThemeToggle from './components/ThemeToggle';
+import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { GetAirConditionerState, GetCapabilities, SetModel } from './wailsjs/go/main/App/App';
 
-function App() {
+const AppContent = () => {
+  const { getThemeClasses } = useTheme();
   const [acState, setAcState] = useState({
     power: false,
     mode: 'Auto',
@@ -15,7 +18,7 @@ function App() {
     swing: false,
     currentTemp: 24
   });
-  
+
   const [isConnected, setIsConnected] = useState(false);
   const [capabilities, setCapabilities] = useState(null);
   const [modelChanging, setModelChanging] = useState(false);
@@ -72,27 +75,35 @@ function App() {
     setAcState(newState);
   };
 
+  const themeClasses = getThemeClasses();
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+    <div className={themeClasses.app}>
       <div className="container mx-auto px-4 py-8">
-        {/* Serial Connection & Model Selector */}
+        {/* Theme Toggle & Serial Connection */}
         <div className="mb-8">
-          <SerialConnection 
-            isConnected={isConnected} 
+          <div className="flex justify-between items-center mb-6">
+            <h1 className={`text-2xl font-bold ${themeClasses.text.primary}`}>
+              FGA Simulator
+            </h1>
+            <ThemeToggle variant="button" size="default" />
+          </div>
+          <SerialConnection
+            isConnected={isConnected}
             onConnectionChange={setIsConnected}
           />
           <div className="mt-4 flex items-center gap-4">
-            <label className="text-sm font-medium text-gray-700">Model</label>
+            <label className={`text-sm font-medium ${themeClasses.text.secondary}`}>Model</label>
             <select
               onChange={handleModelChange}
               value={acState.model || ''}
-              className="border rounded px-3 py-2 text-sm focus:outline-none focus:ring focus:border-indigo-500 bg-white shadow-sm"
+              className={`border rounded px-3 py-2 text-sm focus:outline-none focus:ring focus:border-indigo-500 shadow-sm ${themeClasses.controls}`}
             >
               <option value={1}>Office</option>
               <option value={2}>Horizontal</option>
               <option value={3}>VRF</option>
             </select>
-            {modelChanging && <span className="text-xs text-gray-500">Updating...</span>}
+            {modelChanging && <span className={`text-xs ${themeClasses.text.muted}`}>Updating...</span>}
             {/* Removed inline vane counts per user request; details now only in StatusDisplay */}
           </div>
         </div>
@@ -125,11 +136,19 @@ function App() {
         </div>
 
         {/* Footer */}
-        <div className="text-center mt-12 text-gray-500">
+        <div className={`text-center mt-12 ${themeClasses.text.muted}`}>
           <p>© 2025 Nube IO - FGA Simulator v1.0.0</p>
         </div>
       </div>
     </div>
+  );
+};
+
+function App() {
+  return (
+    <ThemeProvider>
+      <AppContent />
+    </ThemeProvider>
   );
 }
 

@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Usb, Wifi, WifiOff, Settings } from 'lucide-react';
+import { Usb, Settings } from 'lucide-react';
 import { GetAvailablePorts, ConnectSerial, DisconnectSerial, SetModel } from '../wailsjs/go/main/App/App';
+import { useTheme } from '../contexts/ThemeContext';
 
 const SerialConnection = ({ isConnected, onConnectionChange }) => {
+  const { getThemeClasses, isDark } = useTheme();
+  const themeClasses = getThemeClasses();
   const [availablePorts, setAvailablePorts] = useState([]);
   const [selectedPort, setSelectedPort] = useState('');
   const [serialConfig, setSerialConfig] = useState({
@@ -84,23 +87,23 @@ const SerialConnection = ({ isConnected, onConnectionChange }) => {
   ];
 
   return (
-    <div className="status-card">
+    <div className={`${themeClasses.card} rounded-xl shadow-lg p-6 border`}>
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+        <h2 className={`text-2xl font-bold ${themeClasses.text.primary} flex items-center gap-2`}>
           <Usb className="w-6 h-6" />
           Serial Connection
         </h2>
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowAdvanced(!showAdvanced)}
-            className="p-2 text-gray-500 hover:text-gray-700 transition-colors"
+            className={`p-2 ${themeClasses.text.secondary} hover:${themeClasses.text.primary} transition-colors`}
             title="Advanced Settings"
           >
             <Settings className="w-5 h-5" />
           </button>
           <button
             onClick={loadAvailablePorts}
-            className="btn-secondary text-sm"
+            className={`px-3 py-1 rounded text-sm transition-colors ${isDark ? 'bg-gray-700 text-gray-200 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
             disabled={isConnected}
           >
             Refresh

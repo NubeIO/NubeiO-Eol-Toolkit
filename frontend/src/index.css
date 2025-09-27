@@ -10,6 +10,10 @@
   .btn-secondary {
     @apply bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg transition-colors duration-200 font-medium;
   }
+
+  .dark .btn-secondary {
+    @apply bg-gray-700 hover:bg-gray-600 text-gray-200;
+  }
   
   .control-button {
     @apply px-6 py-3 rounded-xl font-semibold transition-all duration-200 transform hover:scale-105 shadow-lg;
@@ -22,6 +26,10 @@
   .control-button.inactive {
     @apply bg-gray-200 text-gray-700 hover:bg-gray-300;
   }
+
+  .dark .control-button.inactive {
+    @apply bg-gray-700 text-gray-300 hover:bg-gray-600;
+  }
   
   .temperature-display {
     @apply text-6xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent;
@@ -29,6 +37,10 @@
   
   .status-card {
     @apply bg-white rounded-2xl p-6 shadow-xl border border-gray-100;
+  }
+
+  .dark .status-card {
+    @apply bg-gray-800 border-gray-700;
   }
   
   .glass-effect {

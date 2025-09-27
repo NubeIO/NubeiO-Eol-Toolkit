@@ -1,8 +1,11 @@
 import React from 'react';
 import { Power, ChevronUp, ChevronDown, Wind, RotateCw, Snowflake, Sun, Droplets, Fan } from 'lucide-react';
 import { SetPower, SetMode, SetTemperature, SetFanSpeed, SetSwing } from '../wailsjs/go/main/App/App';
+import { useTheme } from '../contexts/ThemeContext';
 
 const WallController = ({ acState, onStateChange, isConnected }) => {
+  const { getThemeClasses, isDark } = useTheme();
+  const themeClasses = getThemeClasses();
   const modes = ['Auto', 'Cool', 'Heat', 'Dry', 'Fan'];
   const fanSpeeds = ['Auto', 'Quiet', 'Low', 'Medium', 'High'];
 
@@ -81,22 +84,22 @@ const WallController = ({ acState, onStateChange, isConnected }) => {
   };
 
   return (
-    <div className="bg-gray-900 rounded-xl shadow-2xl p-6 max-w-sm mx-auto">
+    <div className={`${isDark ? 'bg-gray-900' : 'bg-gray-100'} rounded-xl shadow-2xl p-6 max-w-sm mx-auto border ${isDark ? 'border-gray-700' : 'border-gray-300'}`}>
       {/* Header */}
       <div className="text-center mb-4">
-        <h2 className="text-white text-lg font-bold">FUJITSU</h2>
-        <div className="text-xs text-gray-400">Wall Controller</div>
+        <h2 className={`text-lg font-bold ${themeClasses.text.primary}`}>FUJITSU</h2>
+        <div className={`text-xs ${themeClasses.text.muted}`}>Wall Controller</div>
       </div>
 
       {/* LCD Display Area */}
-      <div className="bg-gray-800 rounded-lg p-4 mb-6 border border-gray-600">
+      <div className={`${themeClasses.lcd} rounded-lg p-4 mb-6 border ${isDark ? 'border-gray-600' : 'border-gray-400'}`}>
         <div className="grid grid-cols-3 items-center mb-2">
           {/* Power Status LED */}
           <div className="flex items-center">
             <div className={`w-3 h-3 rounded-full mr-2 ${
               acState.power ? 'bg-green-400 shadow-green-400/50 shadow-lg' : 'bg-gray-600'
             }`}></div>
-            <span className="text-xs text-gray-400">PWR</span>
+            <span className={`text-xs ${themeClasses.text.muted}`}>PWR</span>
           </div>
 
           {/* Mode Display */}
@@ -112,26 +115,26 @@ const WallController = ({ acState, onStateChange, isConnected }) => {
             <div className={`w-3 h-3 rounded-full ml-auto ${
               isConnected ? 'bg-blue-400 shadow-blue-400/50 shadow-lg' : 'bg-red-500'
             }`}></div>
-            <span className="text-xs text-gray-400">COM</span>
+            <span className={`text-xs ${themeClasses.text.muted}`}>COM</span>
           </div>
         </div>
 
         {/* Temperature Display */}
         <div className="text-center">
-          <div className="text-4xl font-mono text-white mb-1">
+          <div className={`text-4xl font-mono mb-1 ${isDark ? 'text-white' : 'text-gray-800'}`}>
             {acState.temperature}°
           </div>
-          <div className="text-xs text-gray-400">
+          <div className={`text-xs ${themeClasses.text.muted}`}>
             Target: {acState.temperature}°C | Room: {acState.currentTemp}°C
           </div>
         </div>
 
         {/* Fan Speed & Swing Status */}
         <div className="flex justify-between mt-3 text-xs">
-          <div className="text-gray-400">
-            Fan: <span className="text-white">{acState.fanSpeed}</span>
+          <div className={themeClasses.text.muted}>
+            Fan: <span className={themeClasses.text.primary}>{acState.fanSpeed}</span>
           </div>
-          <div className="text-gray-400">
+          <div className={themeClasses.text.muted}>
             Swing: <span className={acState.swing ? 'text-blue-400' : 'text-gray-500'}>
               {acState.swing ? 'ON' : 'OFF'}
             </span>
@@ -210,7 +213,7 @@ const WallController = ({ acState, onStateChange, isConnected }) => {
       </div>
 
       {/* Footer */}
-      <div className="mt-4 text-center text-xs text-gray-500">
+      <div className={`mt-4 text-center text-xs ${themeClasses.text.muted}`}>
         Model: {acState.model === 1 ? 'Office' : acState.model === 2 ? 'Horizontal' : 'VRF'}
       </div>
     </div>
