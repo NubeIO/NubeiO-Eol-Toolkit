@@ -210,7 +210,7 @@ const WallController = ({ acState, onStateChange, isConnected, theme = 'light' }
           {/* Temperature Controls */}
           <div className="grid grid-cols-2 gap-3">
             <button
-              onClick={() => handleTemperatureChange(1)}
+              onClick={() => handleTemperatureChange(0.5)}
               disabled={!isConnected || !acState.power || acState.temperature >= 30}
               className={`py-3 rounded-lg border-2 transition-all duration-200 ${styles.button} 
                 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] hover:shadow-lg`}
@@ -221,7 +221,7 @@ const WallController = ({ acState, onStateChange, isConnected, theme = 'light' }
               </div>
             </button>
             <button
-              onClick={() => handleTemperatureChange(-1)}
+              onClick={() => handleTemperatureChange(-0.5)}
               disabled={!isConnected || !acState.power || acState.temperature <= 16}
               className={`py-3 rounded-lg border-2 transition-all duration-200 ${styles.button}
                 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] hover:shadow-lg`}

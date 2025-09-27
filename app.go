@@ -67,13 +67,13 @@ type App struct {
 
 // AirConditioner represents the state of the simulated air conditioner
 type AirConditioner struct {
-	Power       bool   `json:"power"`
-	Mode        string `json:"mode"`        // Auto, Cool, Dry, Fan, Heat
-	Temperature int    `json:"temperature"` // 16-30 degrees Celsius
-	FanSpeed    string `json:"fanSpeed"`    // Auto, Low, Medium, High, Quiet
-	Swing       bool   `json:"swing"`
-	CurrentTemp int    `json:"currentTemp"`
-	Model       int    `json:"model"` // 1: Office, 2: Horizontal, 3: VRF
+	Power       bool    `json:"power"`
+	Mode        string  `json:"mode"`        // Auto, Cool, Dry, Fan, Heat
+	Temperature float64 `json:"temperature"` // 16-30 degrees Celsius with 0.5°C precision
+	FanSpeed    string  `json:"fanSpeed"`    // Auto, Low, Medium, High, Quiet
+	Swing       bool    `json:"swing"`
+	CurrentTemp int     `json:"currentTemp"`
+	Model       int     `json:"model"` // 1: Office, 2: Horizontal, 3: VRF
 }
 
 // FujitsuProtocol holds all protocol state variables
@@ -175,7 +175,7 @@ func NewApp() *App {
 		ac: &AirConditioner{
 			Power:       false,
 			Mode:        "Auto",
-			Temperature: 22,
+			Temperature: 22.0,
 			FanSpeed:    "Auto",
 			Swing:       false,
 			CurrentTemp: initialRoomTemp,
@@ -481,25 +481,25 @@ func (a *App) SetMode(mode string) *AirConditioner {
 }
 
 // SetTemperature sets the target temperature setpoint with mode-aware validation
-func (a *App) SetTemperature(temp int) *AirConditioner {
-	var minTemp, maxTemp int
+func (a *App) SetTemperature(temp float64) *AirConditioner {
+	var minTemp, maxTemp float64
 
 	// Set temperature range based on current mode
 	switch a.ac.Mode {
 	case "Heat":
-		minTemp, maxTemp = 16, 30 // Heating: 16-30°C
+		minTemp, maxTemp = 16.0, 30.0 // Heating: 16-30°C
 	case "Cool":
-		minTemp, maxTemp = 18, 30 // Cooling: 18-30°C
+		minTemp, maxTemp = 18.0, 30.0 // Cooling: 18-30°C
 	default:
-		minTemp, maxTemp = 16, 30 // Auto/Dry/Fan: full range
+		minTemp, maxTemp = 16.0, 30.0 // Auto/Dry/Fan: full range
 	}
 
 	if temp >= minTemp && temp <= maxTemp {
 		a.ac.Temperature = temp
-		a.protocol.TempSetpoint = uint16(temp * 10) // Protocol uses temperature * 10
-		log.Printf("Set temperature setpoint to: %d°C (mode: %s, range: %d-%d°C)", temp, a.ac.Mode, minTemp, maxTemp)
+		a.protocol.TempSetpoint = uint16(temp * 10) // Protocol uses temperature * 10 (0.1°C precision)
+		log.Printf("Set temperature setpoint to: %.1f°C (mode: %s, range: %.1f-%.1f°C)", temp, a.ac.Mode, minTemp, maxTemp)
 	} else {
-		log.Printf("Temperature %d°C out of range for %s mode (valid: %d-%d°C)", temp, a.ac.Mode, minTemp, maxTemp)
+		log.Printf("Temperature %.1f°C out of range for %s mode (valid: %.1f-%.1f°C)", temp, a.ac.Mode, minTemp, maxTemp)
 	}
 	return a.ac
 }
@@ -995,7 +995,7 @@ func (a *App) updateACFromProtocol() {
 
 	// Update temperature setpoint
 	if a.protocol.TempSetpoint >= 16*10 && a.protocol.TempSetpoint <= 30*10 {
-		a.ac.Temperature = int(a.protocol.TempSetpoint / 10)
+		a.ac.Temperature = float64(a.protocol.TempSetpoint) / 10.0
 	}
 
 	// Update current (sensor) room temperature from object 0x1033
