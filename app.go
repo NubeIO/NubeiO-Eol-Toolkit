@@ -473,6 +473,9 @@ func (a *App) SetMode(mode string) *AirConditioner {
 	if modeValue, exists := validModes[mode]; exists {
 		a.ac.Mode = mode
 		a.protocol.Mode = modeValue
+		log.Printf("Mode changed to: %s (protocol value: %d)", mode, modeValue)
+	} else {
+		log.Printf("Invalid mode: %s", mode)
 	}
 	return a.ac
 }
@@ -505,15 +508,18 @@ func (a *App) SetTemperature(temp int) *AirConditioner {
 func (a *App) SetFanSpeed(speed string) *AirConditioner {
 	validSpeeds := map[string]uint16{
 		"Auto":   0,
-		"Quiet":  1,
-		"Low":    2,
-		"Medium": 3,
-		"High":   4,
+		"Quiet":  2,
+		"Low":    5,
+		"Medium": 8,
+		"High":   11,
 	}
 
 	if speedValue, exists := validSpeeds[speed]; exists {
 		a.ac.FanSpeed = speed
 		a.protocol.Air = speedValue
+		log.Printf("Fan speed changed to: %s (protocol value: %d)", speed, speedValue)
+	} else {
+		log.Printf("Invalid fan speed: %s", speed)
 	}
 	return a.ac
 }
@@ -712,11 +718,21 @@ func (a *App) ConstructResponse(command uint8, address uint32, length uint8, dat
 				case OP_MODE:
 					a.protocol.Mode = value
 					a.updateACFromProtocol()
-					log.Printf("Set mode to: %d", value)
+					modeNames := map[uint16]string{0: "Auto", 1: "Cool", 2: "Dry", 3: "Fan", 4: "Heat"}
+					modeName := modeNames[value]
+					if modeName == "" {
+						modeName = "Unknown"
+					}
+					log.Printf("Set mode to: %d (%s)", value, modeName)
 				case OP_AIR:
 					a.protocol.Air = value
 					a.updateACFromProtocol()
-					log.Printf("Set fan speed to: %d", value)
+					fanNames := map[uint16]string{0: "Auto", 2: "Quiet", 5: "Low", 8: "Medium", 11: "High"}
+					fanName := fanNames[value]
+					if fanName == "" {
+						fanName = "Unknown"
+					}
+					log.Printf("Set fan speed to: %d (%s)", value, fanName)
 				case VERTICAL_DIRECTION:
 					a.protocol.VerDir = value
 					log.Printf("Set vertical direction to: %d", value)
@@ -839,6 +855,7 @@ func (a *App) ConstructResponse(command uint8, address uint32, length uint8, dat
 						statusValue = uint16(a.protocol.SS)
 					case OP_MODE: // 1001 - Mode status
 						statusValue = a.protocol.Mode
+						log.Printf("Mode status requested: returning %d (%s)", statusValue, a.ac.Mode)
 					case OP_TEMP_SETPOINT: // 1002 - Temperature Setpoint (Cooling: 18-30°C, Heating: 16-30°C)
 						statusValue = a.protocol.TempSetpoint
 						// Convert and log the actual temperature
@@ -846,6 +863,7 @@ func (a *App) ConstructResponse(command uint8, address uint32, length uint8, dat
 						log.Printf("Temperature setpoint: 0x%04X (%.1f°C)", statusValue, actualTemp)
 					case OP_AIR: // 1003 - Fan speed status
 						statusValue = a.protocol.Air
+						log.Printf("Fan speed status requested: returning %d (%s)", statusValue, a.ac.FanSpeed)
 					case VERTICAL_DIRECTION: // 1010 - Vertical direction status
 						statusValue = a.protocol.VerDir
 					case VERTICAL_DIRECTION_SWING: // 1011 - Vertical swing status
@@ -914,6 +932,10 @@ func (a *App) ConstructResponse(command uint8, address uint32, length uint8, dat
 
 // updateACFromProtocol updates the AC state from protocol values
 func (a *App) updateACFromProtocol() {
+	oldMode := a.ac.Mode
+	oldFanSpeed := a.ac.FanSpeed
+	oldPower := a.ac.Power
+
 	// Update power state
 	a.ac.Power = a.protocol.SS != 0
 
@@ -935,14 +957,30 @@ func (a *App) updateACFromProtocol() {
 	switch a.protocol.Air {
 	case 0:
 		a.ac.FanSpeed = "Auto"
-	case 1:
-		a.ac.FanSpeed = "Quiet"
 	case 2:
+		a.ac.FanSpeed = "Quiet"
+	case 5:
 		a.ac.FanSpeed = "Low"
-	case 3:
+	case 8:
 		a.ac.FanSpeed = "Medium"
-	case 4:
+	case 11:
 		a.ac.FanSpeed = "High"
+	default:
+		// For unknown values, keep current speed or default to Auto
+		if a.ac.FanSpeed == "" {
+			a.ac.FanSpeed = "Auto"
+		}
+	}
+
+	// Log changes
+	if oldPower != a.ac.Power {
+		log.Printf("AC Power updated: %v -> %v", oldPower, a.ac.Power)
+	}
+	if oldMode != a.ac.Mode {
+		log.Printf("AC Mode updated: %s -> %s", oldMode, a.ac.Mode)
+	}
+	if oldFanSpeed != a.ac.FanSpeed {
+		log.Printf("AC Fan Speed updated: %s -> %s", oldFanSpeed, a.ac.FanSpeed)
 	}
 
 	// Update swing (combine global + per-vane arrays)
