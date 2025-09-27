@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -35,7 +36,7 @@ func bytesToSpacedHex(data []byte) string {
 const (
 	OP_START_STOP              = 0x1000
 	OP_MODE                    = 0x1001
-	OP_SET_TEMP                = 0x1002
+	OP_TEMP_SETPOINT           = 0x1002 // Temperature Setpoint (Cooling: 18-30°C, Heating: 16-30°C)
 	OP_AIR                     = 0x1003
 	VERTICAL_DIRECTION         = 0x1010
 	VERTICAL_DIRECTION_SWING   = 0x1011
@@ -49,6 +50,9 @@ const (
 	VERTICAL_DIRECTION_SWING4  = 0x1019
 	HORIZONTAL_DIRECTION       = 0x1022
 	HORIZONTAL_DIRECTION_SWING = 0x1023
+	OP_ERROR_CODE_1030         = 0x1030 // Error Code (Large/Small/Detail Classification)
+	OP_ERROR_CODE_1031         = 0x1031 // Error Code related object
+	OP_ROOM_TEMPERATURE        = 0x1033 // Room Temperature by 0.01°C
 	ECONOMY                    = 0x1100
 )
 
@@ -79,7 +83,7 @@ type FujitsuProtocol struct {
 	Air                 uint16
 	VerDir              uint16
 	HorDir              uint16
-	Temp                uint16
+	TempSetpoint        uint16 // Temperature Setpoint (Cooling: 18-30°C, Heating: 16-30°C)
 	VerticalWindSwing   uint16
 	HorizontalWindSwing uint16
 	VerDir1             uint16
@@ -93,6 +97,11 @@ type FujitsuProtocol struct {
 	Economy             uint16
 	LastSSChangeTime    time.Time
 	SSChangeInterval    time.Duration
+
+	// Additional protocol objects
+	ErrorCode1030   uint16 // Error Code (Large/Small/Detail Classification)
+	ErrorCode1031   uint16 // Error Code related object
+	RoomTemperature uint16 // Room Temperature by 0.01°C (0x1a90 = 6800 = 18.00°C)
 
 	// Extended capability/state (per-model) mapped to class 0x01 objects
 	SystemType          uint16    // object 0x0001 (0x0000 single/office/horizontal, 0x0004 VRF)
@@ -123,7 +132,7 @@ func NewApp() *App {
 		Air:                 0,
 		VerDir:              0,
 		HorDir:              0,
-		Temp:                0xB4, // Default temperature
+		TempSetpoint:        0xB4, // Default temperature setpoint (18.0°C)
 		VerticalWindSwing:   0x00,
 		HorizontalWindSwing: 0x00,
 		VerDir1:             0x00,
@@ -137,6 +146,11 @@ func NewApp() *App {
 		Economy:             0,
 		LastSSChangeTime:    time.Now(),
 		SSChangeInterval:    time.Duration(rand.Intn(5)+5) * time.Second,
+
+		// Additional protocol objects
+		ErrorCode1030:   0,      // No error initially
+		ErrorCode1031:   0,      // No error initially
+		RoomTemperature: 0x1a90, // Room temperature (6800 = 18.00°C)
 	}
 
 	// Load persisted model selection (fallback to 1)
@@ -145,6 +159,15 @@ func NewApp() *App {
 		storedModel = 1
 	}
 	initModelCapabilities(protocol, storedModel)
+
+	// Derive initial current room temperature from protocol.RoomTemperature value
+	initialRoomTemp := 0
+	if protocol.RoomTemperature != 0xFFFF {
+		roomFloat := ConvertHvacRoomTemperature(protocol.RoomTemperature)
+		if roomFloat < 1000 { // guard against invalid sentinel
+			initialRoomTemp = int(math.Round(roomFloat))
+		}
+	}
 
 	return &App{
 		model:    storedModel,
@@ -155,7 +178,7 @@ func NewApp() *App {
 			Temperature: 22,
 			FanSpeed:    "Auto",
 			Swing:       false,
-			CurrentTemp: 24,
+			CurrentTemp: initialRoomTemp,
 			Model:       storedModel,
 		},
 	}
@@ -221,6 +244,38 @@ func TemperatureToHex(tempC float64) uint16 {
 	// Calculate the hex value for valid temperatures between -50.00℃ and 605.34℃
 	index := int((tempC + 50) * 100) // Calculate the index
 	return uint16(index)             // Return the index directly as a number
+}
+
+// HexToTemperature converts hex value back to temperature in Celsius
+func HexToTemperature(hexVal uint16) float64 {
+	if hexVal == 0x0000 {
+		return -50.00
+	} else if hexVal >= 0xFFFE {
+		return 605.34
+	}
+
+	// Convert hex index back to temperature
+	return (float64(hexVal) / 100.0) - 50.0
+}
+
+// HVAC Temperature protocol constants
+const (
+	HVAC_TEMP_INVALID   = 0xFFFF
+	HVAC_TEMP_MIN_VALID = 0x0001
+	HVAC_TEMP_MAX_VALID = 0xFFFE
+	HVAC_TEMP_BASE      = -50.00
+	HVAC_TEMP_SCALE     = 0.01
+)
+
+// ConvertHvacRoomTemperature converts HVAC room temperature following DeviceController::getRoomTemperature() formula
+func ConvertHvacRoomTemperature(hvacTempValue uint16) float64 {
+	if hvacTempValue == 0x0000 {
+		return HVAC_TEMP_BASE // -50.00°C
+	} else if hvacTempValue >= HVAC_TEMP_MIN_VALID && hvacTempValue <= HVAC_TEMP_MAX_VALID {
+		return HVAC_TEMP_BASE + (float64(hvacTempValue) * HVAC_TEMP_SCALE)
+	} else {
+		return 0xFFFF // Invalid value
+	}
 }
 
 // GetReturnStatus implements the status logic from Python simulation
@@ -345,11 +400,9 @@ func (a *App) GetReturnStatus(cls, num uint8) uint16 {
 			return uint16(a.protocol.SS)
 		case 0x01: // Mode
 			return a.protocol.Mode
-		case 0x02: // Temperature
-			if a.protocol.Temp == 0xB4 {
-				return 0xDC
-			}
-			return 0xB4
+		case 0x02: // Temperature Setpoint (value stored as Celsius * 10)
+			// Return the actual protocol TempSetpoint so UI & status match object 0x1002 queries
+			return a.protocol.TempSetpoint
 		case 0x03: // Air
 			return a.protocol.Air
 		case 0x10: // Vertical direction
@@ -378,8 +431,8 @@ func (a *App) GetReturnStatus(cls, num uint8) uint16 {
 			return a.protocol.HorizontalWindSwing
 		case 0x30, 0x31: // Reserved
 			return 0x00
-		case 0x33: // Temperature
-			return TemperatureToHex(float64(a.protocol.Temp) / 10)
+		case 0x33: // Room Temperature (sensor reading)
+			return a.protocol.RoomTemperature
 		}
 
 	case 0x11:
@@ -424,11 +477,26 @@ func (a *App) SetMode(mode string) *AirConditioner {
 	return a.ac
 }
 
-// SetTemperature sets the target temperature
+// SetTemperature sets the target temperature setpoint with mode-aware validation
 func (a *App) SetTemperature(temp int) *AirConditioner {
-	if temp >= 16 && temp <= 30 {
+	var minTemp, maxTemp int
+
+	// Set temperature range based on current mode
+	switch a.ac.Mode {
+	case "Heat":
+		minTemp, maxTemp = 16, 30 // Heating: 16-30°C
+	case "Cool":
+		minTemp, maxTemp = 18, 30 // Cooling: 18-30°C
+	default:
+		minTemp, maxTemp = 16, 30 // Auto/Dry/Fan: full range
+	}
+
+	if temp >= minTemp && temp <= maxTemp {
 		a.ac.Temperature = temp
-		a.protocol.Temp = uint16(temp * 10) // Protocol uses temperature * 10
+		a.protocol.TempSetpoint = uint16(temp * 10) // Protocol uses temperature * 10
+		log.Printf("Set temperature setpoint to: %d°C (mode: %s, range: %d-%d°C)", temp, a.ac.Mode, minTemp, maxTemp)
+	} else {
+		log.Printf("Temperature %d°C out of range for %s mode (valid: %d-%d°C)", temp, a.ac.Mode, minTemp, maxTemp)
 	}
 	return a.ac
 }
@@ -631,10 +699,12 @@ func (a *App) ConstructResponse(command uint8, address uint32, length uint8, dat
 				log.Printf("Processing object: 0x%04X, value: 0x%04X", object, value)
 
 				switch object {
-				case OP_SET_TEMP:
-					a.protocol.Temp = value
+				case OP_TEMP_SETPOINT:
+					a.protocol.TempSetpoint = value
 					a.updateACFromProtocol()
-					log.Printf("Set temperature to: %d", value)
+					// Convert from protocol value (temp * 10) to actual temperature
+					actualTemp := float64(value) / 10.0
+					log.Printf("Set temperature setpoint to: 0x%04X (%.1f°C)", value, actualTemp)
 				case OP_START_STOP:
 					a.protocol.SS = uint8(value)
 					a.updateACFromProtocol()
@@ -723,6 +793,16 @@ func (a *App) ConstructResponse(command uint8, address uint32, length uint8, dat
 							log.Printf("(VRF) Stored horizontal vane %d swing (not used) to: %v", idx, value != 0)
 						}
 					}
+				case OP_ERROR_CODE_1030:
+					a.protocol.ErrorCode1030 = value
+					log.Printf("Set error code 1030 to: 0x%04X", value)
+				case OP_ERROR_CODE_1031:
+					a.protocol.ErrorCode1031 = value
+					log.Printf("Set error code 1031 to: 0x%04X", value)
+				case OP_ROOM_TEMPERATURE:
+					a.protocol.RoomTemperature = value
+					temp := ConvertHvacRoomTemperature(value)
+					log.Printf("Set room temperature to: 0x%04X (%.2f°C)", value, temp)
 				default:
 					log.Printf("Unknown object: 0x%04X with value: 0x%04X", object, value)
 				}
@@ -732,26 +812,94 @@ func (a *App) ConstructResponse(command uint8, address uint32, length uint8, dat
 		frame = append(frame, 1)    // Length (1 byte of response data)
 		frame = append(frame, 0x01) // Response data (ACK)
 
-	case 0x03: // Equipment confirmation or wind direction command
-		// Equipment confirmation - response format: ACK + 4 bytes per query
-		// Expected response format: [00] [cls] [num] [00] for each query
-		payloadLength := length*2 + 1        // 4 bytes per object + 1 ACK byte
-		frame = append(frame, payloadLength) // Length
-		frame = append(frame, 0x01)          // ACK data
+	case 0x03: // Equipment confirmation or status request command
+		// Check if this is object-value pairs (4-byte groups) or class-number pairs (2-byte groups)
+		if length%4 == 0 && length >= 4 {
+			// Handle as status request with object-value pairs
+			// Response format: 03000000 [data length][01-ACK] 1000 xxxx 1001 xxx,....[2byte-checksum]
+			responseData := []byte{0x01} // Start with ACK byte
 
-		for i := 0; i < len(data); i += 2 {
-			if i+1 < len(data) {
-				cls := data[i]   // First byte is class
-				num := data[i+1] // Second byte is number
+			// Process input data as object pairs and provide status for each
+			for i := 0; i < len(data); i += 4 {
+				if i+3 < len(data) {
+					// Extract object ID (2 bytes, big-endian)
+					objectID := binary.BigEndian.Uint16(data[i : i+2])
+					// Skip the value bytes for status request (we'll return current status)
 
-				returnStatus := a.GetReturnStatus(cls, num)
+					log.Printf("Status requested for object: 0x%04X", objectID)
 
-				// Add response in format: [cls] [num] [status_high] [status_low]
-				// This matches the expected format: 2 byte request echo + 2 byte status
-				frame = append(frame, cls)                          // Request echo: Class
-				frame = append(frame, num)                          // Request echo: Number
-				frame = append(frame, byte((returnStatus>>8)&0xFF)) // Status high byte
-				frame = append(frame, byte(returnStatus&0xFF))      // Status low byte
+					// Add object ID to response (2 bytes, big-endian)
+					responseData = append(responseData, byte((objectID>>8)&0xFF))
+					responseData = append(responseData, byte(objectID&0xFF))
+
+					// Add current status value for this object (2 bytes, big-endian)
+					var statusValue uint16
+					switch objectID {
+					case OP_START_STOP: // 1000 - Power status
+						statusValue = uint16(a.protocol.SS)
+					case OP_MODE: // 1001 - Mode status
+						statusValue = a.protocol.Mode
+					case OP_TEMP_SETPOINT: // 1002 - Temperature Setpoint (Cooling: 18-30°C, Heating: 16-30°C)
+						statusValue = a.protocol.TempSetpoint
+						// Convert and log the actual temperature
+						actualTemp := float64(statusValue) / 10.0
+						log.Printf("Temperature setpoint: 0x%04X (%.1f°C)", statusValue, actualTemp)
+					case OP_AIR: // 1003 - Fan speed status
+						statusValue = a.protocol.Air
+					case VERTICAL_DIRECTION: // 1010 - Vertical direction status
+						statusValue = a.protocol.VerDir
+					case VERTICAL_DIRECTION_SWING: // 1011 - Vertical swing status
+						statusValue = a.protocol.VerticalWindSwing
+					case OP_ERROR_CODE_1030: // 1030 - Error Code (Large/Small/Detail Classification)
+						statusValue = a.protocol.ErrorCode1030
+					case OP_ERROR_CODE_1031: // 1031 - Error Code related object
+						statusValue = a.protocol.ErrorCode1031
+					case OP_ROOM_TEMPERATURE: // 1033 - Room Temperature by 0.01°C
+						statusValue = a.protocol.RoomTemperature
+						// Convert to actual temperature for logging
+						roomTemp := ConvertHvacRoomTemperature(statusValue)
+						log.Printf("Room temperature: 0x%04X = %.2f°C", statusValue, roomTemp)
+					case HORIZONTAL_DIRECTION_SWING: // 1023 - Horizontal swing status
+						statusValue = a.protocol.HorizontalWindSwing
+					case ECONOMY: // 1100 - Economy mode status
+						statusValue = a.protocol.Economy
+					default:
+						statusValue = 0 // Default status for unknown objects
+					}
+
+					// Add status value (2 bytes, big-endian)
+					responseData = append(responseData, byte((statusValue>>8)&0xFF))
+					responseData = append(responseData, byte(statusValue&0xFF))
+
+					log.Printf("Response for object 0x%04X: status=0x%04X", objectID, statusValue)
+				}
+			}
+
+			// Set the data length for the response
+			frame = append(frame, byte(len(responseData))) // Length of response data
+			frame = append(frame, responseData...)         // Append all response data
+		} else {
+			// Handle as equipment confirmation with class-number pairs (original behavior)
+			// Equipment confirmation - response format: ACK + 4 bytes per query
+			// Expected response format: [00] [cls] [num] [00] for each query
+			payloadLength := length*2 + 1        // 4 bytes per object + 1 ACK byte
+			frame = append(frame, payloadLength) // Length
+			frame = append(frame, 0x01)          // ACK data
+
+			for i := 0; i < len(data); i += 2 {
+				if i+1 < len(data) {
+					cls := data[i]   // First byte is class
+					num := data[i+1] // Second byte is number
+
+					returnStatus := a.GetReturnStatus(cls, num)
+
+					// Add response in format: [cls] [num] [status_high] [status_low]
+					// This matches the expected format: 2 byte request echo + 2 byte status
+					frame = append(frame, cls)                          // Request echo: Class
+					frame = append(frame, num)                          // Request echo: Number
+					frame = append(frame, byte((returnStatus>>8)&0xFF)) // Status high byte
+					frame = append(frame, byte(returnStatus&0xFF))      // Status low byte
+				}
 			}
 		}
 	}
@@ -807,9 +955,17 @@ func (a *App) updateACFromProtocol() {
 	}
 	a.ac.Swing = swing
 
-	// Update temperature
-	if a.protocol.Temp >= 16*10 && a.protocol.Temp <= 30*10 {
-		a.ac.Temperature = int(a.protocol.Temp / 10)
+	// Update temperature setpoint
+	if a.protocol.TempSetpoint >= 16*10 && a.protocol.TempSetpoint <= 30*10 {
+		a.ac.Temperature = int(a.protocol.TempSetpoint / 10)
+	}
+
+	// Update current (sensor) room temperature from object 0x1033
+	if a.protocol.RoomTemperature != 0xFFFF { // treat 0xFFFF as invalid/unset
+		room := ConvertHvacRoomTemperature(a.protocol.RoomTemperature)
+		if room > -50 && room < 80 { // plausible indoor range safeguard
+			a.ac.CurrentTemp = int(math.Round(room))
+		}
 	}
 }
 
