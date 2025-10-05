@@ -4,7 +4,7 @@
   "outputfilename": "FGA_Simulator",
   "frontend:install": "npm install",
   "frontend:build": "npm run build",
-  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:watcher": "npm run start",
   "frontend:dev:serverUrl": "auto",
   "author": {
     "name": "Nube IO",

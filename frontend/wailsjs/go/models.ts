@@ -56,24 +56,26 @@ export namespace main {
 	        this.horizontalVaneSupported = source["horizontalVaneSupported"];
 	    }
 	}
-	export class SerialConfig {
-	    port: string;
-	    baudRate: number;
-	    dataBits: number;
-	    parity: string;
-	    stopBits: number;
+	export class MQTTConfig {
+	    broker: string;
+	    port: number;
+	    username: string;
+	    password: string;
+	    clientId: string;
+	    deviceId: string;
 	
 	    static createFrom(source: any = {}) {
-	        return new SerialConfig(source);
+	        return new MQTTConfig(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.broker = source["broker"];
 	        this.port = source["port"];
-	        this.baudRate = source["baudRate"];
-	        this.dataBits = source["dataBits"];
-	        this.parity = source["parity"];
-	        this.stopBits = source["stopBits"];
+	        this.username = source["username"];
+	        this.password = source["password"];
+	        this.clientId = source["clientId"];
+	        this.deviceId = source["deviceId"];
 	    }
 	}
 
