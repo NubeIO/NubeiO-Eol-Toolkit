@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -84,13 +85,23 @@ type MQTTConfig struct {
 	DeviceID string `json:"deviceId"`
 }
 
+// DiscoveredDevice represents a discovered ESP32 device
+type DiscoveredDevice struct {
+	DeviceID    string          `json:"deviceId"`
+	LastSeen    time.Time       `json:"lastSeen"`
+	IPAddress   string          `json:"ipAddress,omitempty"`
+	FirmwareVer string          `json:"firmwareVersion,omitempty"`
+	State       *AirConditioner `json:"state,omitempty"` // Last known state of this device
+}
+
 // MQTTService handles MQTT communication for the AC simulator
 type MQTTService struct {
-	client    mqtt.Client
-	config    MQTTConfig
-	app       *App
-	ctx       context.Context
-	connected bool
+	client            mqtt.Client
+	config            MQTTConfig
+	app               *App
+	ctx               context.Context
+	connected         bool
+	discoveredDevices map[string]*DiscoveredDevice // Map of device ID to device info
 }
 
 // MQTTMessage represents a message structure for MQTT topics
@@ -294,8 +305,9 @@ func (a *App) SetPower(power bool) *AirConditioner {
 		a.protocol.SS = 0
 	}
 
-	// Publish status to MQTT
+	// Publish control command to ESP32
 	if a.mqtt != nil {
+		a.mqtt.publishControlCommand("set_power", power)
 		a.mqtt.publishStatus()
 	}
 
@@ -316,13 +328,15 @@ func (a *App) SetMode(mode string) *AirConditioner {
 		a.ac.Mode = mode
 		a.protocol.Mode = modeValue
 		log.Printf("Mode changed to: %s (protocol value: %d)", mode, modeValue)
+
+		// Publish control command to ESP32
+		if a.mqtt != nil {
+			// Convert mode to lowercase for ESP32
+			a.mqtt.publishControlCommand("set_mode", strings.ToLower(mode))
+			a.mqtt.publishStatus()
+		}
 	} else {
 		log.Printf("Invalid mode: %s", mode)
-	}
-
-	// Publish status to MQTT
-	if a.mqtt != nil {
-		a.mqtt.publishStatus()
 	}
 
 	return a.ac
@@ -346,13 +360,14 @@ func (a *App) SetTemperature(temp float64) *AirConditioner {
 		a.ac.Temperature = temp
 		a.protocol.TempSetpoint = uint16(temp * 10) // Protocol uses temperature * 10 (0.1°C precision)
 		log.Printf("Set temperature setpoint to: %.1f°C (mode: %s, range: %.1f-%.1f°C)", temp, a.ac.Mode, minTemp, maxTemp)
+
+		// Publish control command to ESP32
+		if a.mqtt != nil {
+			a.mqtt.publishControlCommand("set_target_temp", temp)
+			a.mqtt.publishStatus()
+		}
 	} else {
 		log.Printf("Temperature %.1f°C out of range for %s mode (valid: %.1f-%.1f°C)", temp, a.ac.Mode, minTemp, maxTemp)
-	}
-
-	// Publish status to MQTT
-	if a.mqtt != nil {
-		a.mqtt.publishStatus()
 	}
 
 	return a.ac
@@ -372,13 +387,24 @@ func (a *App) SetFanSpeed(speed string) *AirConditioner {
 		a.ac.FanSpeed = speed
 		a.protocol.Air = speedValue
 		log.Printf("Fan speed changed to: %s (protocol value: %d)", speed, speedValue)
+
+		// Publish control command to ESP32
+		if a.mqtt != nil {
+			// Map speed names to ESP32 expected values (0-3)
+			fanSpeedMap := map[string]int{
+				"Quiet":  0,
+				"Low":    1,
+				"Medium": 2,
+				"High":   3,
+				"Auto":   2, // Default to medium for auto
+			}
+			if fanValue, ok := fanSpeedMap[speed]; ok {
+				a.mqtt.publishControlCommand("set_fan_speed", fanValue)
+			}
+			a.mqtt.publishStatus()
+		}
 	} else {
 		log.Printf("Invalid fan speed: %s", speed)
-	}
-
-	// Publish status to MQTT
-	if a.mqtt != nil {
-		a.mqtt.publishStatus()
 	}
 
 	return a.ac
@@ -409,12 +435,12 @@ func (a *App) SetRoomTemperature(temp float64) *AirConditioner {
 		log.Printf("Room temperature %.2f°C out of valid range (-50.00°C to +605.34°C)", temp)
 		return a.ac
 	}
-
+	
 	// Convert to protocol value using the same formula as TemperatureToHex
 	protocolValue := uint16((temp + 50.0) * 100)
 	a.protocol.RoomTemperature = protocolValue
 	a.ac.CurrentTemp = int(temp + 0.5) // Round to nearest integer for display
-
+	
 	log.Printf("Set room temperature to: %.2f°C (protocol: 0x%04X)", temp, protocolValue)
 
 	// Publish status to MQTT
@@ -518,9 +544,10 @@ func NewMQTTService(app *App) *MQTTService {
 	}
 
 	return &MQTTService{
-		config:    config,
-		app:       app,
-		connected: false,
+		config:            config,
+		app:               app,
+		connected:         false,
+		discoveredDevices: make(map[string]*DiscoveredDevice),
 	}
 }
 
@@ -534,11 +561,13 @@ func getDeviceID() string {
 	// Try to read from config file
 	configPath := "device_id.txt"
 	if data, err := os.ReadFile(configPath); err == nil && len(data) > 0 {
-		return string(data)
+		return strings.TrimSpace(string(data))
 	}
 
-	// Generate new device ID
-	deviceID := fmt.Sprintf("ac_sim_%d", time.Now().Unix())
+	// Generate new device ID in format AC_SIM_XXXXXX (6 hex digits)
+	// Use random hex to match the device format
+	rand.Seed(time.Now().UnixNano())
+	deviceID := fmt.Sprintf("AC_SIM_%06X", rand.Intn(0xFFFFFF))
 	if err := os.WriteFile(configPath, []byte(deviceID), 0644); err != nil {
 		log.Printf("Warning: Could not save device ID: %v", err)
 	}
@@ -627,9 +656,10 @@ func (m *MQTTService) onReconnecting(client mqtt.Client, options *mqtt.ClientOpt
 func (m *MQTTService) subscribeToTopics() {
 	topics := map[string]byte{
 		fmt.Sprintf("ac_sim/%s/control", m.config.DeviceID): 1, // QoS 1
-		"ac_sim/all/control":       1, // Broadcast control
-		"ac_sim/broadcast/state":   1, // Broadcast state from ESP32
-		"ac_sim/+/state":           1, // All device states (wildcard)
+		"ac_sim/all/control":     1, // Broadcast control
+		"ac_sim/broadcast/state": 1, // Broadcast state from ESP32
+		"ac_sim/+/state":         1, // All device states (wildcard)
+		"ac_sim/discovery":       1, // ESP32 discovery messages
 		fmt.Sprintf("ac_sim/%s/state", m.config.DeviceID): 1, // Own state
 	}
 
@@ -661,14 +691,42 @@ func (m *MQTTService) messageHandler(client mqtt.Client, msg mqtt.Message) {
 			return
 		}
 
-		log.Printf("Parsed state message: %+v", stateMsg)
+		log.Printf("Parsed state message from device %s", stateMsg.DeviceID)
 
-		// Update local state if data is present
-		if dataMap, ok := stateMsg.Data.(map[string]interface{}); ok {
-			log.Printf("Updating state from message data")
-			m.updateStateFromMessage(dataMap)
-		} else {
-			log.Printf("No data map found in state message")
+		// Update the specific device's state if it's a discovered device
+		if device, exists := m.discoveredDevices[stateMsg.DeviceID]; exists {
+			if dataMap, ok := stateMsg.Data.(map[string]interface{}); ok {
+				// Initialize state if nil
+				if device.State == nil {
+					device.State = &AirConditioner{
+						Model: 1,
+					}
+				}
+				
+				// Update device state
+				if power, ok := dataMap["power"].(bool); ok {
+					device.State.Power = power
+				}
+				if mode, ok := dataMap["mode"].(string); ok {
+					device.State.Mode = mode
+				}
+				if temp, ok := dataMap["temperature"].(float64); ok {
+					device.State.Temperature = temp
+				}
+				if fanSpeed, ok := dataMap["fanSpeed"].(string); ok {
+					device.State.FanSpeed = fanSpeed
+				}
+				if swing, ok := dataMap["swing"].(bool); ok {
+					device.State.Swing = swing
+				}
+				if currentTemp, ok := dataMap["currentTemp"].(float64); ok {
+					device.State.CurrentTemp = int(currentTemp)
+				}
+				
+				device.LastSeen = time.Now()
+				log.Printf("Updated state for device %s: Power=%v, Mode=%s, Temp=%.1f", 
+					stateMsg.DeviceID, device.State.Power, device.State.Mode, device.State.Temperature)
+			}
 		}
 		return
 	}
@@ -692,6 +750,76 @@ func (m *MQTTService) messageHandler(client mqtt.Client, msg mqtt.Message) {
 			m.updateStateFromMessage(dataMap)
 		} else {
 			log.Printf("No data map found in broadcast state message")
+		}
+		return
+	}
+
+	// Check if this is a discovery message
+	if topic == "ac_sim/discovery" {
+		log.Printf("Detected discovery message")
+
+		// Parse discovery message
+		var discoveryData map[string]interface{}
+		if err := json.Unmarshal(payload, &discoveryData); err != nil {
+			log.Printf("Failed to parse discovery message: %v", err)
+			return
+		}
+
+		// Extract device ID - check both "device_id" and "deviceId" formats
+		var deviceID string
+		if id, ok := discoveryData["device_id"].(string); ok {
+			deviceID = id
+		} else if id, ok := discoveryData["deviceId"].(string); ok {
+			deviceID = id
+		}
+
+		if deviceID != "" {
+			// Ignore our own discovery messages
+			if deviceID == m.config.DeviceID {
+				log.Printf("Ignoring own discovery message from %s", deviceID)
+				return
+			}
+			
+			// Check if device already exists
+			device, exists := m.discoveredDevices[deviceID]
+			isNew := !exists
+			
+			if !exists {
+				// Create new device with default state
+				device = &DiscoveredDevice{
+					DeviceID: deviceID,
+					LastSeen: time.Now(),
+					State: &AirConditioner{
+						Power:       false,
+						Mode:        "Auto",
+						Temperature: 22,
+						FanSpeed:    "Auto",
+						Swing:       false,
+						CurrentTemp: 24,
+						Model:       1,
+					},
+				}
+			} else {
+				// Update last seen time
+				device.LastSeen = time.Now()
+			}
+			
+			// Extract optional fields
+			if ip, ok := discoveryData["ip"].(string); ok {
+				device.IPAddress = ip
+			}
+			if fw, ok := discoveryData["firmware_version"].(string); ok {
+				device.FirmwareVer = fw
+			}
+			
+			// Store device
+			m.discoveredDevices[deviceID] = device
+			
+			if isNew {
+				log.Printf("✓ Discovered new ESP32 device: %s (total: %d)", deviceID, len(m.discoveredDevices))
+			} else {
+				log.Printf("✓ Updated ESP32 device: %s", deviceID)
+			}
 		}
 		return
 	}
@@ -821,7 +949,7 @@ func (m *MQTTService) publishStatus() {
 	}
 
 	payload, err := json.Marshal(message)
-	if err != nil {
+		if err != nil {
 		log.Printf("Failed to marshal status message: %v", err)
 		return
 	}
@@ -866,6 +994,71 @@ func (m *MQTTService) publishUARTData(direction string, data []byte) {
 	}
 }
 
+// publishControlCommand publishes a control command to ESP32 devices (all discovered devices)
+func (m *MQTTService) publishControlCommand(action string, value interface{}) {
+	if !m.connected {
+		log.Printf("Cannot publish control command - MQTT not connected")
+		return
+	}
+
+	controlMsg := map[string]interface{}{
+		"action": action,
+		"value":  value,
+	}
+
+	payload, err := json.Marshal(controlMsg)
+	if err != nil {
+		log.Printf("Failed to marshal control command: %v", err)
+		return
+	}
+
+	// If we have discovered ESP32 devices, control them specifically
+	if len(m.discoveredDevices) > 0 {
+		for deviceID := range m.discoveredDevices {
+			topic := fmt.Sprintf("ac_sim/%s/control", deviceID)
+			if token := m.client.Publish(topic, 1, false, payload); token.Wait() && token.Error() != nil {
+				log.Printf("Failed to publish control command to %s: %v", deviceID, token.Error())
+			} else {
+				log.Printf("Published control command to %s: %s = %v", topic, action, value)
+			}
+		}
+	} else {
+		// Fallback to broadcast if no devices discovered yet
+		topic := "ac_sim/all/control"
+		if token := m.client.Publish(topic, 1, false, payload); token.Wait() && token.Error() != nil {
+			log.Printf("Failed to publish control command: %v", token.Error())
+		} else {
+			log.Printf("Published control command to %s (broadcast): %s = %v", topic, action, value)
+		}
+	}
+}
+
+// publishControlCommandToDevice publishes a control command to a specific ESP32 device
+func (m *MQTTService) publishControlCommandToDevice(deviceID string, action string, value interface{}) {
+	if !m.connected {
+		log.Printf("Cannot publish control command - MQTT not connected")
+		return
+	}
+
+	controlMsg := map[string]interface{}{
+		"action": action,
+		"value":  value,
+	}
+
+	payload, err := json.Marshal(controlMsg)
+	if err != nil {
+		log.Printf("Failed to marshal control command: %v", err)
+		return
+	}
+
+	topic := fmt.Sprintf("ac_sim/%s/control", deviceID)
+	if token := m.client.Publish(topic, 1, false, payload); token.Wait() && token.Error() != nil {
+		log.Printf("Failed to publish control command to %s: %v", deviceID, token.Error())
+	} else {
+		log.Printf("Published control command to %s: %s = %v", topic, action, value)
+	}
+}
+
 // publishDiscovery publishes device discovery information
 func (m *MQTTService) publishDiscovery() {
 	if !m.connected {
@@ -890,7 +1083,7 @@ func (m *MQTTService) publishDiscovery() {
 	topic := "ac_sim/discovery"
 	if token := m.client.Publish(topic, 1, false, payload); token.Wait() && token.Error() != nil {
 		log.Printf("Failed to publish discovery: %v", token.Error())
-	} else {
+		} else {
 		log.Printf("Published discovery to %s", topic)
 	}
 }
@@ -983,6 +1176,47 @@ func (a *App) PublishStatus() {
 func (a *App) PublishDiscovery() {
 	if a.mqtt != nil {
 		a.mqtt.publishDiscovery()
+	}
+}
+
+// GetDiscoveredDevices returns the list of discovered ESP32 devices
+func (a *App) GetDiscoveredDevices() []DiscoveredDevice {
+	if a.mqtt == nil {
+		return []DiscoveredDevice{}
+	}
+
+	devices := make([]DiscoveredDevice, 0, len(a.mqtt.discoveredDevices))
+	for _, device := range a.mqtt.discoveredDevices {
+		devices = append(devices, *device)
+	}
+	return devices
+}
+
+// SetDevicePower sets power for a specific device
+func (a *App) SetDevicePower(deviceID string, power bool) {
+	if a.mqtt != nil {
+		a.mqtt.publishControlCommandToDevice(deviceID, "power", power)
+	}
+}
+
+// SetDeviceMode sets mode for a specific device
+func (a *App) SetDeviceMode(deviceID string, mode string) {
+	if a.mqtt != nil {
+		a.mqtt.publishControlCommandToDevice(deviceID, "mode", mode)
+	}
+}
+
+// SetDeviceTemperature sets temperature for a specific device
+func (a *App) SetDeviceTemperature(deviceID string, temp float64) {
+	if a.mqtt != nil {
+		a.mqtt.publishControlCommandToDevice(deviceID, "temperature", temp)
+	}
+}
+
+// SetDeviceFanSpeed sets fan speed for a specific device
+func (a *App) SetDeviceFanSpeed(deviceID string, speed string) {
+	if a.mqtt != nil {
+		a.mqtt.publishControlCommandToDevice(deviceID, "fanSpeed", speed)
 	}
 }
 

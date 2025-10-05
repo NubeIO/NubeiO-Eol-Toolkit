@@ -10,6 +10,8 @@ export function GetAirConditionerState():Promise<main.AirConditioner>;
 
 export function GetCapabilities():Promise<main.CapabilityInfo>;
 
+export function GetDiscoveredDevices():Promise<Array<main.DiscoveredDevice>>;
+
 export function GetMQTTConfig():Promise<main.MQTTConfig>;
 
 export function GetMQTTStatus():Promise<boolean>;
@@ -17,6 +19,14 @@ export function GetMQTTStatus():Promise<boolean>;
 export function PublishDiscovery():Promise<void>;
 
 export function PublishStatus():Promise<void>;
+
+export function SetDeviceFanSpeed(arg1:string,arg2:string):Promise<void>;
+
+export function SetDeviceMode(arg1:string,arg2:string):Promise<void>;
+
+export function SetDevicePower(arg1:string,arg2:boolean):Promise<void>;
+
+export function SetDeviceTemperature(arg1:string,arg2:number):Promise<void>;
 
 export function SetFanSpeed(arg1:string):Promise<main.AirConditioner>;
 

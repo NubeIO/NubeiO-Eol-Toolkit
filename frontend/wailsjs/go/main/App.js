@@ -18,6 +18,10 @@ export function GetCapabilities() {
   return window['go']['main']['App']['GetCapabilities']();
 }
 
+export function GetDiscoveredDevices() {
+  return window['go']['main']['App']['GetDiscoveredDevices']();
+}
+
 export function GetMQTTConfig() {
   return window['go']['main']['App']['GetMQTTConfig']();
 }
@@ -32,6 +36,22 @@ export function PublishDiscovery() {
 
 export function PublishStatus() {
   return window['go']['main']['App']['PublishStatus']();
+}
+
+export function SetDeviceFanSpeed(arg1, arg2) {
+  return window['go']['main']['App']['SetDeviceFanSpeed'](arg1, arg2);
+}
+
+export function SetDeviceMode(arg1, arg2) {
+  return window['go']['main']['App']['SetDeviceMode'](arg1, arg2);
+}
+
+export function SetDevicePower(arg1, arg2) {
+  return window['go']['main']['App']['SetDevicePower'](arg1, arg2);
+}
+
+export function SetDeviceTemperature(arg1, arg2) {
+  return window['go']['main']['App']['SetDeviceTemperature'](arg1, arg2);
 }
 
 export function SetFanSpeed(arg1) {
