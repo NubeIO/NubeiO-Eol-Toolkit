@@ -1,17 +1,7 @@
 import React, { useState, useEffect } from 'react';
 
 const App = () => {
-  const [acState, setAcState] = useState({
-    power: false,
-    mode: 'Auto',
-    temperature: 22.0,
-    fanSpeed: 'Auto',
-    swing: false,
-    currentTemp: 18,
-    model: 1
-  });
   const [discoveredDevices, setDiscoveredDevices] = useState([]);
-  const [selectedDeviceId, setSelectedDeviceId] = useState(null);
   const [mqttConfig, setMqttConfig] = useState({
     broker: 'localhost',
     port: 1883,
@@ -64,100 +54,14 @@ const App = () => {
     try {
       const devices = await window.go.main.App.GetDiscoveredDevices();
       if (devices && devices.length > 0) {
-        setDiscoveredDevices(devices);
-        
-        // Auto-select first device if none selected
-        if (!selectedDeviceId || !devices.find(d => d.deviceId === selectedDeviceId)) {
-          const firstDevice = devices[0];
-          setSelectedDeviceId(firstDevice.deviceId);
-          if (firstDevice.state) {
-            setAcState(firstDevice.state);
-          }
-        } else {
-          // Update state for currently selected device
-          const selectedDevice = devices.find(d => d.deviceId === selectedDeviceId);
-          if (selectedDevice && selectedDevice.state) {
-            setAcState(selectedDevice.state);
-          }
-        }
+        // Sort devices by deviceId to maintain consistent order
+        const sortedDevices = [...devices].sort((a, b) => 
+          a.deviceId.localeCompare(b.deviceId)
+        );
+        setDiscoveredDevices(sortedDevices);
       }
     } catch (error) {
       console.error('Failed to load discovered devices:', error);
-    }
-  };
-
-  const handlePowerToggle = async () => {
-    if (!isConnected || !selectedDeviceId) return;
-    try {
-      await window.go.main.App.SetDevicePower(selectedDeviceId, !acState.power);
-      setTimeout(() => loadDiscoveredDevices(), 300);
-    } catch (error) {
-      console.error('Failed to toggle power:', error);
-    }
-  };
-
-  const handleModeClick = async () => {
-    if (!isConnected || !acState.power || !selectedDeviceId) return;
-    const modes = ['Auto', 'Cool', 'Dry', 'Fan', 'Heat'];
-    const currentIndex = modes.indexOf(acState.mode);
-    const nextMode = modes[(currentIndex + 1) % modes.length];
-    try {
-      await window.go.main.App.SetDeviceMode(selectedDeviceId, nextMode);
-      setTimeout(() => loadDiscoveredDevices(), 300);
-    } catch (error) {
-      console.error('Failed to change mode:', error);
-    }
-  };
-
-  const handleFanClick = async () => {
-    if (!isConnected || !acState.power || !selectedDeviceId) return;
-    const fanSpeeds = ['Auto', 'Quiet', 'Low', 'Medium', 'High'];
-    const currentIndex = fanSpeeds.indexOf(acState.fanSpeed);
-    const nextFan = fanSpeeds[(currentIndex + 1) % fanSpeeds.length];
-    try {
-      await window.go.main.App.SetDeviceFanSpeed(selectedDeviceId, nextFan);
-      setTimeout(() => loadDiscoveredDevices(), 300);
-    } catch (error) {
-      console.error('Failed to change fan speed:', error);
-    }
-  };
-
-  const handleTemperatureChange = async (delta) => {
-    if (!isConnected || !acState.power || !selectedDeviceId) return;
-    const newTemp = acState.temperature + delta;
-    if (newTemp < 16 || newTemp > 30) return;
-    try {
-      await window.go.main.App.SetDeviceTemperature(selectedDeviceId, newTemp);
-      setTimeout(() => loadDiscoveredDevices(), 300);
-    } catch (error) {
-      console.error('Failed to change temperature:', error);
-    }
-  };
-
-  const handleSwingToggle = async () => {
-    if (!isConnected || !acState.power || !selectedDeviceId) return;
-    try {
-      // Note: SetDeviceSwing doesn't exist, so we'll skip for now
-      // await window.go.main.App.SetDeviceSwing(selectedDeviceId, !acState.swing);
-      setTimeout(() => loadDiscoveredDevices(), 300);
-    } catch (error) {
-      console.error('Failed to toggle swing:', error);
-    }
-  };
-
-  const handleRefresh = () => {
-    loadDiscoveredDevices();
-  };
-
-  const handleRoomTempChange = async (delta) => {
-    if (!isConnected || !selectedDeviceId) return;
-    const newTemp = acState.currentTemp + delta;
-    if (newTemp < -50 || newTemp > 100) return; // Reasonable limits
-    try {
-      await window.go.main.App.SetDeviceRoomTemperature(selectedDeviceId, newTemp);
-      setTimeout(() => loadDiscoveredDevices(), 300);
-    } catch (error) {
-      console.error('Failed to change room temperature:', error);
     }
   };
 
@@ -169,7 +73,7 @@ const App = () => {
         loadDiscoveredDevices();
       }, 500);
     } catch (error) {
-      console.error('Failed to connect to MQTT:', error);
+      console.error('Failed to connect:', error);
     }
   };
 
@@ -178,35 +82,20 @@ const App = () => {
       await window.go.main.App.DisconnectMQTT();
       setTimeout(() => loadMqttStatus(), 500);
     } catch (error) {
-      console.error('Failed to disconnect from MQTT:', error);
+      console.error('Failed to disconnect:', error);
     }
   };
 
   const handleUpdateConfig = async (e) => {
     e.preventDefault();
     try {
-      await window.go.main.App.UpdateMQTTConfig(mqttConfig);
+      await window.go.main.App.UpdateMQTTConfig(mqttConfig.broker, mqttConfig.port, mqttConfig.username || '', mqttConfig.password || '');
       setShowConfig(false);
-      setTimeout(() => {
-        handleConnectMQTT();
-      }, 300);
+      await handleConnectMQTT();
     } catch (error) {
-      console.error('Failed to update MQTT config:', error);
+      console.error('Failed to update config:', error);
     }
   };
-
-  const getModeIcon = (mode) => {
-    const icons = {
-      'Auto': '≈',
-      'Cool': '❄',
-      'Dry': '💧',
-      'Fan': '🌀',
-      'Heat': '🔥'
-    };
-    return icons[mode] || '≈';
-  };
-
-  const getFanIcon = () => '≈';
 
   const formatTime = () => {
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -218,10 +107,299 @@ const App = () => {
     return `${day} ${displayHours}:${minutes}${ampm}`;
   };
 
+  // Device Control Panel Component
+  const DevicePanel = ({ device }) => {
+    const acState = device.state || {
+      power: false,
+      mode: 'Auto',
+      temperature: 22.0,
+      fanSpeed: 'Auto',
+      swing: false,
+      currentTemp: 18,
+      model: 1
+    };
+    const deviceId = device.deviceId;
+
+    const handlePowerToggle = async () => {
+      if (!isConnected) return;
+      try {
+        await window.go.main.App.SetDevicePower(deviceId, !acState.power);
+        setTimeout(() => loadDiscoveredDevices(), 300);
+      } catch (error) {
+        console.error('Failed to toggle power:', error);
+      }
+    };
+
+    const handleModeClick = async () => {
+      if (!isConnected || !acState.power) return;
+      const modes = ['Auto', 'Cool', 'Dry', 'Fan', 'Heat'];
+      const currentIndex = modes.indexOf(acState.mode);
+      const nextMode = modes[(currentIndex + 1) % modes.length];
+      try {
+        await window.go.main.App.SetDeviceMode(deviceId, nextMode);
+        setTimeout(() => loadDiscoveredDevices(), 300);
+      } catch (error) {
+        console.error('Failed to change mode:', error);
+      }
+    };
+
+    const handleFanClick = async () => {
+      if (!isConnected || !acState.power) return;
+      const fanSpeeds = ['Auto', 'Quiet', 'Low', 'Medium', 'High'];
+      const currentIndex = fanSpeeds.indexOf(acState.fanSpeed);
+      const nextFan = fanSpeeds[(currentIndex + 1) % fanSpeeds.length];
+      try {
+        await window.go.main.App.SetDeviceFanSpeed(deviceId, nextFan);
+        setTimeout(() => loadDiscoveredDevices(), 300);
+      } catch (error) {
+        console.error('Failed to change fan speed:', error);
+      }
+    };
+
+    const handleTemperatureChange = async (delta) => {
+      if (!isConnected || !acState.power) return;
+      const newTemp = acState.temperature + delta;
+      if (newTemp < 16 || newTemp > 30) return;
+      try {
+        await window.go.main.App.SetDeviceTemperature(deviceId, newTemp);
+        setTimeout(() => loadDiscoveredDevices(), 300);
+      } catch (error) {
+        console.error('Failed to change temperature:', error);
+      }
+    };
+
+    const handleSwingToggle = async () => {
+      if (!isConnected || !acState.power) return;
+      try {
+        // Swing control not implemented yet
+        setTimeout(() => loadDiscoveredDevices(), 300);
+      } catch (error) {
+        console.error('Failed to toggle swing:', error);
+      }
+    };
+
+    const handleRoomTempChange = async (delta) => {
+      if (!isConnected) return;
+      const newTemp = acState.currentTemp + delta;
+      if (newTemp < -50 || newTemp > 100) return;
+      try {
+        await window.go.main.App.SetDeviceRoomTemperature(deviceId, newTemp);
+        setTimeout(() => loadDiscoveredDevices(), 300);
+      } catch (error) {
+        console.error('Failed to change room temperature:', error);
+      }
+    };
+
+    const getModeIcon = (mode) => {
+      const icons = {
+        'Auto': '≈',
+        'Cool': '❄',
+        'Dry': '💧',
+        'Fan': '🌀',
+        'Heat': '🔥'
+      };
+      return icons[mode] || '≈';
+    };
+
+    const getFanIcon = () => '≈';
+
+    return (
+      <div className="bg-white rounded-3xl shadow-2xl overflow-hidden">
+        {/* Header */}
+        <div className="relative bg-white px-6 py-4 flex items-center justify-between border-b">
+          <h1 className="text-xl font-bold text-gray-700 tracking-wide">FUJITSU</h1>
+          <div className={`w-3 h-3 rounded-full ${acState.power ? 'bg-green-500' : 'bg-red-500'}`}></div>
+        </div>
+
+        {/* Main Control Panel */}
+        <div className="p-6">
+          {/* Status Card */}
+          <div className="bg-gradient-to-br from-green-100 to-green-200 rounded-2xl p-6 mb-6 shadow-md">
+            {/* Title and Time */}
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-gray-700 font-semibold text-sm">
+                {deviceId}
+              </h2>
+              <span className="text-gray-500 text-sm">{formatTime()}</span>
+            </div>
+
+            {/* Mode, Temp, Fan Display */}
+            <div className="grid grid-cols-3 gap-3 mb-6">
+              {/* Mode */}
+              <div className="text-center">
+                <div className="text-xs text-gray-500 mb-2">Mode</div>
+                <div className="bg-white rounded-xl p-3 shadow-sm">
+                  <div className="text-2xl mb-1">{getModeIcon(acState.mode)}</div>
+                  <div className="text-sm font-medium text-gray-700">{acState.mode}</div>
+                </div>
+              </div>
+
+              {/* Set Temperature */}
+              <div className="text-center">
+                <div className="text-xs text-gray-500 mb-2">Set Temp.</div>
+                <div className="bg-white rounded-xl p-3 shadow-sm">
+                  <div className="text-4xl font-bold text-gray-800">
+                    {acState.temperature.toFixed(1)}
+                  </div>
+                  <div className="text-xs text-gray-500">°C</div>
+                </div>
+              </div>
+
+              {/* Fan */}
+              <div className="text-center">
+                <div className="text-xs text-gray-500 mb-2">Fan</div>
+                <div className="bg-white rounded-xl p-3 shadow-sm">
+                  <div className="text-2xl mb-1">{getFanIcon()}</div>
+                  <div className="text-sm font-medium text-gray-700">{acState.fanSpeed}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Room Temperature with Controls */}
+            <div className="mb-4">
+              <div className="text-center mb-2">
+                <span className="text-gray-600 text-xs">Room Temp. </span>
+                <span className="text-gray-800 text-lg font-bold">
+                  {typeof acState.currentTemp === 'number' ? acState.currentTemp.toFixed(1) : '0.0'}°C
+                </span>
+              </div>
+              <div className="flex gap-2 justify-center">
+                <button
+                  onClick={() => handleRoomTempChange(-0.5)}
+                  disabled={!isConnected}
+                  className="w-12 h-8 bg-blue-100 hover:bg-blue-200 rounded text-gray-700 font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  −
+                </button>
+                <button
+                  onClick={() => handleRoomTempChange(0.5)}
+                  disabled={!isConnected}
+                  className="w-12 h-8 bg-blue-100 hover:bg-blue-200 rounded text-gray-700 font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+
+            {/* Bottom Icons and Buttons */}
+            <div className="flex justify-between items-center">
+              <div className="flex gap-3">
+                <button 
+                  onClick={handlePowerToggle}
+                  disabled={!isConnected}
+                  className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
+                    acState.power 
+                      ? 'bg-green-600 text-white' 
+                      : 'bg-gray-400 text-white'
+                  } ${!isConnected ? 'opacity-50' : 'hover:opacity-80'}`}
+                >
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd"/>
+                  </svg>
+                </button>
+                <button className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center hover:bg-gray-300 transition-colors">
+                  <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                </button>
+              </div>
+              <div className="flex gap-2">
+                <button className="px-4 py-2 bg-white rounded-lg text-gray-600 text-xs font-medium hover:bg-gray-50 transition-colors">
+                  Status
+                </button>
+                <button className="px-4 py-2 bg-white rounded-lg text-gray-600 text-xs font-medium hover:bg-gray-50 transition-colors">
+                  ☰ Menu
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Main ON/OFF Button */}
+          <button
+            onClick={handlePowerToggle}
+            disabled={!isConnected}
+            className={`w-full h-16 rounded-2xl font-bold text-lg shadow-md transition-all mb-4 ${
+              acState.power
+                ? 'bg-green-500 hover:bg-green-600 text-white'
+                : 'bg-gray-300 hover:bg-gray-400 text-gray-600'
+            } ${!isConnected ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            <div className="flex items-center justify-center gap-2">
+              <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd"/>
+              </svg>
+              ON/OFF
+            </div>
+          </button>
+
+          {/* Temperature Controls */}
+          <div className="grid grid-cols-2 gap-3 mb-3">
+            <button
+              onClick={() => handleTemperatureChange(0.5)}
+              disabled={!isConnected || !acState.power}
+              className="h-14 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-xl font-medium text-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+              </svg>
+              TEMP+
+            </button>
+            <button
+              onClick={() => handleTemperatureChange(-0.5)}
+              disabled={!isConnected || !acState.power}
+              className="h-14 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-xl font-medium text-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+              TEMP-
+            </button>
+          </div>
+
+          {/* Mode and Fan Controls */}
+          <div className="grid grid-cols-2 gap-3 mb-3">
+            <button
+              onClick={handleModeClick}
+              disabled={!isConnected || !acState.power}
+              className="h-14 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-xl font-medium text-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+              MODE
+            </button>
+            <button
+              onClick={handleFanClick}
+              disabled={!isConnected || !acState.power}
+              className="h-14 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-xl font-medium text-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              FAN
+            </button>
+          </div>
+
+          {/* Swing Control */}
+          <button
+            onClick={handleSwingToggle}
+            disabled={!isConnected || !acState.power}
+            className="w-full h-14 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-xl font-medium text-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            SWING
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-gray-100 p-4">
       {/* MQTT Connection Bar */}
-      <div className="max-w-6xl mx-auto mb-4">
+      <div className="max-w-7xl mx-auto mb-6">
         <div className="bg-white rounded-xl shadow-md p-4">
           <div className="flex items-center justify-between flex-wrap gap-4">
             {/* Connection Status */}
@@ -234,6 +412,9 @@ const App = () => {
               </div>
               <div className="text-sm text-gray-500 border-l pl-3">
                 {mqttConfig.broker}:{mqttConfig.port}
+              </div>
+              <div className="text-sm text-gray-600 border-l pl-3">
+                {discoveredDevices.length} {discoveredDevices.length === 1 ? 'Device' : 'Devices'}
               </div>
             </div>
 
@@ -324,219 +505,25 @@ const App = () => {
         </div>
       </div>
 
-      {/* Main Control Panel */}
-      <div className="max-w-md mx-auto">
-        <div className="bg-white rounded-3xl shadow-2xl overflow-hidden">
-          {/* Header */}
-          <div className="relative bg-white px-6 py-4 flex items-center justify-between border-b">
-            <h1 className="text-xl font-bold text-gray-700 tracking-wide">FUJITSU</h1>
-            <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+      {/* Device Grid */}
+      <div className="max-w-7xl mx-auto">
+        {discoveredDevices.length === 0 ? (
+          <div className="text-center py-20">
+            <div className="text-6xl mb-4">📡</div>
+            <h3 className="text-2xl font-bold text-gray-700 mb-2">No Devices Found</h3>
+            <p className="text-gray-500">
+              {isConnected 
+                ? 'Waiting for devices to connect...' 
+                : 'Please connect to MQTT broker first'}
+            </p>
           </div>
-
-        {/* Main Control Panel */}
-        <div className="p-6">
-          {/* Status Card */}
-          <div className="bg-gradient-to-br from-green-100 to-green-200 rounded-2xl p-6 mb-6 shadow-md">
-            {/* Title and Time */}
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-gray-700 font-semibold text-sm">
-                {selectedDeviceId || 'No Device Connected'}
-              </h2>
-              <span className="text-gray-500 text-sm">{formatTime()}</span>
-            </div>
-
-            {/* Mode, Temp, Fan Display */}
-            <div className="grid grid-cols-3 gap-3 mb-6">
-              {/* Mode */}
-              <div className="text-center">
-                <div className="text-xs text-gray-500 mb-2">Mode</div>
-                <div className="bg-white rounded-xl p-3 shadow-sm">
-                  <div className="text-2xl mb-1">{getModeIcon(acState.mode)}</div>
-                  <div className="text-sm font-medium text-gray-700">{acState.mode}</div>
-                </div>
-              </div>
-
-              {/* Set Temperature */}
-              <div className="text-center">
-                <div className="text-xs text-gray-500 mb-2">Set Temp.</div>
-                <div className="bg-white rounded-xl p-3 shadow-sm">
-                  <div className="text-4xl font-bold text-gray-800">
-                    {acState.temperature.toFixed(1)}
-                  </div>
-                  <div className="text-xs text-gray-500">°C</div>
-                </div>
-              </div>
-
-              {/* Fan */}
-              <div className="text-center">
-                <div className="text-xs text-gray-500 mb-2">Fan</div>
-                <div className="bg-white rounded-xl p-3 shadow-sm">
-                  <div className="text-2xl mb-1">{getFanIcon()}</div>
-                  <div className="text-sm font-medium text-gray-700">{acState.fanSpeed}</div>
-                </div>
-              </div>
-            </div>
-
-            {/* Room Temperature with Controls */}
-            <div className="mb-4">
-              <div className="text-center mb-2">
-                <span className="text-gray-600 text-xs">Room Temp. </span>
-                <span className="text-gray-800 text-lg font-bold">{typeof acState.currentTemp === 'number' ? acState.currentTemp.toFixed(1) : '0.0'}°C</span>
-              </div>
-              <div className="flex gap-2 justify-center">
-                <button
-                  onClick={() => handleRoomTempChange(-0.5)}
-                  disabled={!isConnected}
-                  className="w-12 h-8 bg-blue-100 hover:bg-blue-200 rounded text-gray-700 font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  −
-                </button>
-                <button
-                  onClick={() => handleRoomTempChange(0.5)}
-                  disabled={!isConnected}
-                  className="w-12 h-8 bg-blue-100 hover:bg-blue-200 rounded text-gray-700 font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  +
-                </button>
-              </div>
-            </div>
-
-            {/* Bottom Icons and Buttons */}
-            <div className="flex justify-between items-center">
-              <div className="flex gap-3">
-                <button 
-                  onClick={handlePowerToggle}
-                  disabled={!isConnected}
-                  className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
-                    acState.power 
-                      ? 'bg-green-600 text-white' 
-                      : 'bg-gray-400 text-white'
-                  } ${!isConnected ? 'opacity-50' : 'hover:opacity-80'}`}
-                >
-                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd"/>
-                  </svg>
-                </button>
-                <button 
-                  onClick={handleRefresh}
-                  disabled={!isConnected}
-                  className="w-10 h-10 rounded-full bg-gray-300 text-gray-600 flex items-center justify-center hover:bg-gray-400 transition-colors disabled:opacity-50"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                </button>
-              </div>
-              <div className="flex gap-3">
-                <button className="px-4 py-2 rounded-full bg-white text-gray-600 text-sm font-medium shadow-sm hover:bg-gray-50 transition-colors">
-                  Status
-                </button>
-                <button className="px-4 py-2 rounded-full bg-white text-gray-600 text-sm font-medium shadow-sm hover:bg-gray-50 transition-colors flex items-center gap-1">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                  </svg>
-                  Menu
-                </button>
-              </div>
-            </div>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+            {discoveredDevices.map((device) => (
+              <DevicePanel key={device.deviceId} device={device} />
+            ))}
           </div>
-
-          {/* Control Buttons */}
-          <div className="space-y-3">
-            {/* ON/OFF Button */}
-            <button
-              onClick={handlePowerToggle}
-              disabled={!isConnected}
-              className={`w-full py-4 rounded-xl font-semibold text-lg transition-all shadow-md ${
-                acState.power
-                  ? 'bg-green-500 text-white hover:bg-green-600'
-                  : 'bg-gray-300 text-gray-600 hover:bg-gray-400'
-              } ${!isConnected ? 'opacity-50 cursor-not-allowed' : ''}`}
-            >
-              <div className="flex items-center justify-center gap-2">
-                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd"/>
-                </svg>
-                ON/OFF
-              </div>
-            </button>
-
-            {/* Temperature Controls */}
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                onClick={() => handleTemperatureChange(0.5)}
-                disabled={!isConnected || !acState.power}
-                className="py-4 rounded-xl bg-gray-200 text-gray-700 font-semibold hover:bg-gray-300 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <div className="flex items-center justify-center gap-2">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 15l7-7 7 7" />
-                  </svg>
-                  TEMP+
-                </div>
-              </button>
-              <button
-                onClick={() => handleTemperatureChange(-0.5)}
-                disabled={!isConnected || !acState.power}
-                className="py-4 rounded-xl bg-gray-200 text-gray-700 font-semibold hover:bg-gray-300 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <div className="flex items-center justify-center gap-2">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M19 9l-7 7-7-7" />
-                  </svg>
-                  TEMP-
-                </div>
-              </button>
-            </div>
-
-            {/* Mode and Fan Controls */}
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                onClick={handleModeClick}
-                disabled={!isConnected || !acState.power}
-                className="py-4 rounded-xl bg-gray-200 text-gray-700 font-semibold hover:bg-gray-300 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <div className="flex items-center justify-center gap-2">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                  </svg>
-                  MODE
-                </div>
-              </button>
-              <button
-                onClick={handleFanClick}
-                disabled={!isConnected || !acState.power}
-                className="py-4 rounded-xl bg-gray-200 text-gray-700 font-semibold hover:bg-gray-300 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <div className="flex items-center justify-center gap-2">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
-                  </svg>
-                  FAN
-                </div>
-              </button>
-            </div>
-
-            {/* Swing Control */}
-            <button
-              onClick={handleSwingToggle}
-              disabled={!isConnected || !acState.power}
-              className={`w-full py-4 rounded-xl font-semibold transition-all shadow-sm ${
-                acState.swing
-                  ? 'bg-blue-500 text-white hover:bg-blue-600'
-                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-              } ${!isConnected || !acState.power ? 'opacity-50 cursor-not-allowed' : ''}`}
-            >
-              <div className="flex items-center justify-center gap-2">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                SWING
-              </div>
-            </button>
-          </div>
-        </div>
-      </div>
+        )}
       </div>
     </div>
   );
