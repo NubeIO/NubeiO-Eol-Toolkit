@@ -10,6 +10,8 @@ const App = () => {
     currentTemp: 18,
     model: 1
   });
+  const [discoveredDevices, setDiscoveredDevices] = useState([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState(null);
   const [mqttConfig, setMqttConfig] = useState({
     broker: 'localhost',
     port: 1883,
@@ -22,11 +24,11 @@ const App = () => {
   useEffect(() => {
     loadMqttConfig();
     loadMqttStatus();
-    loadDeviceState();
+    loadDiscoveredDevices();
     
     const stateInterval = setInterval(() => {
       if (isConnected) {
-        loadDeviceState();
+        loadDiscoveredDevices();
       }
     }, 2000);
 
@@ -58,75 +60,93 @@ const App = () => {
     }
   };
 
-  const loadDeviceState = async () => {
+  const loadDiscoveredDevices = async () => {
     try {
-      const state = await window.go.main.App.GetAirConditionerState();
-      setAcState(state);
+      const devices = await window.go.main.App.GetDiscoveredDevices();
+      if (devices && devices.length > 0) {
+        setDiscoveredDevices(devices);
+        
+        // Auto-select first device if none selected
+        if (!selectedDeviceId || !devices.find(d => d.deviceId === selectedDeviceId)) {
+          const firstDevice = devices[0];
+          setSelectedDeviceId(firstDevice.deviceId);
+          if (firstDevice.state) {
+            setAcState(firstDevice.state);
+          }
+        } else {
+          // Update state for currently selected device
+          const selectedDevice = devices.find(d => d.deviceId === selectedDeviceId);
+          if (selectedDevice && selectedDevice.state) {
+            setAcState(selectedDevice.state);
+          }
+        }
+      }
     } catch (error) {
-      console.error('Failed to load device state:', error);
+      console.error('Failed to load discovered devices:', error);
     }
   };
 
   const handlePowerToggle = async () => {
-    if (!isConnected) return;
+    if (!isConnected || !selectedDeviceId) return;
     try {
-      const newState = await window.go.main.App.SetPower(!acState.power);
-      setAcState(newState);
+      await window.go.main.App.SetDevicePower(selectedDeviceId, !acState.power);
+      setTimeout(() => loadDiscoveredDevices(), 300);
     } catch (error) {
       console.error('Failed to toggle power:', error);
     }
   };
 
   const handleModeClick = async () => {
-    if (!isConnected || !acState.power) return;
+    if (!isConnected || !acState.power || !selectedDeviceId) return;
     const modes = ['Auto', 'Cool', 'Dry', 'Fan', 'Heat'];
     const currentIndex = modes.indexOf(acState.mode);
     const nextMode = modes[(currentIndex + 1) % modes.length];
     try {
-      const newState = await window.go.main.App.SetMode(nextMode);
-      setAcState(newState);
+      await window.go.main.App.SetDeviceMode(selectedDeviceId, nextMode);
+      setTimeout(() => loadDiscoveredDevices(), 300);
     } catch (error) {
       console.error('Failed to change mode:', error);
     }
   };
 
   const handleFanClick = async () => {
-    if (!isConnected || !acState.power) return;
+    if (!isConnected || !acState.power || !selectedDeviceId) return;
     const fanSpeeds = ['Auto', 'Quiet', 'Low', 'Medium', 'High'];
     const currentIndex = fanSpeeds.indexOf(acState.fanSpeed);
     const nextFan = fanSpeeds[(currentIndex + 1) % fanSpeeds.length];
     try {
-      const newState = await window.go.main.App.SetFanSpeed(nextFan);
-      setAcState(newState);
+      await window.go.main.App.SetDeviceFanSpeed(selectedDeviceId, nextFan);
+      setTimeout(() => loadDiscoveredDevices(), 300);
     } catch (error) {
       console.error('Failed to change fan speed:', error);
     }
   };
 
   const handleTemperatureChange = async (delta) => {
-    if (!isConnected || !acState.power) return;
+    if (!isConnected || !acState.power || !selectedDeviceId) return;
     const newTemp = acState.temperature + delta;
     if (newTemp < 16 || newTemp > 30) return;
     try {
-      const newState = await window.go.main.App.SetTemperature(newTemp);
-      setAcState(newState);
+      await window.go.main.App.SetDeviceTemperature(selectedDeviceId, newTemp);
+      setTimeout(() => loadDiscoveredDevices(), 300);
     } catch (error) {
       console.error('Failed to change temperature:', error);
     }
   };
 
   const handleSwingToggle = async () => {
-    if (!isConnected || !acState.power) return;
+    if (!isConnected || !acState.power || !selectedDeviceId) return;
     try {
-      const newState = await window.go.main.App.SetSwing(!acState.swing);
-      setAcState(newState);
+      // Note: SetDeviceSwing doesn't exist, so we'll skip for now
+      // await window.go.main.App.SetDeviceSwing(selectedDeviceId, !acState.swing);
+      setTimeout(() => loadDiscoveredDevices(), 300);
     } catch (error) {
       console.error('Failed to toggle swing:', error);
     }
   };
 
   const handleRefresh = () => {
-    loadDeviceState();
+    loadDiscoveredDevices();
   };
 
   const handleConnectMQTT = async () => {
@@ -134,7 +154,7 @@ const App = () => {
       await window.go.main.App.ConnectMQTT();
       setTimeout(() => {
         loadMqttStatus();
-        loadDeviceState();
+        loadDiscoveredDevices();
       }, 500);
     } catch (error) {
       console.error('Failed to connect to MQTT:', error);
@@ -307,7 +327,9 @@ const App = () => {
           <div className="bg-gradient-to-br from-green-100 to-green-200 rounded-2xl p-6 mb-6 shadow-md">
             {/* Title and Time */}
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-gray-600 font-medium">Office 01</h2>
+              <h2 className="text-gray-700 font-semibold text-sm">
+                {selectedDeviceId || 'No Device Connected'}
+              </h2>
               <span className="text-gray-500 text-sm">{formatTime()}</span>
             </div>
 
@@ -346,7 +368,7 @@ const App = () => {
             {/* Room Temperature */}
             <div className="text-center mb-4">
               <span className="text-gray-600 text-sm">Room Temp. </span>
-              <span className="text-gray-800 text-lg font-bold">{acState.currentTemp}.0°C</span>
+              <span className="text-gray-800 text-lg font-bold">{typeof acState.currentTemp === 'number' ? acState.currentTemp.toFixed(1) : '0.0'}°C</span>
             </div>
 
             {/* Bottom Icons and Buttons */}

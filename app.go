@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -32,8 +31,8 @@ type AirConditioner struct {
 	Temperature float64 `json:"temperature"` // 16-30 degrees Celsius with 0.5°C precision
 	FanSpeed    string  `json:"fanSpeed"`    // Auto, Low, Medium, High, Quiet
 	Swing       bool    `json:"swing"`
-	CurrentTemp int     `json:"currentTemp"`
-	Model       int     `json:"model"` // 1: Office, 2: Horizontal, 3: VRF
+	CurrentTemp float64 `json:"currentTemp"` // Room temperature with 0.01°C precision
+	Model       int     `json:"model"`       // 1: Office, 2: Horizontal, 3: VRF
 }
 
 // FujitsuProtocol holds all protocol state variables
@@ -187,11 +186,11 @@ func NewApp() *App {
 	initModelCapabilities(protocol, storedModel)
 
 	// Derive initial current room temperature from protocol.RoomTemperature value
-	initialRoomTemp := 0
+	initialRoomTemp := 0.0
 	if protocol.RoomTemperature != 0xFFFF {
 		roomFloat := ConvertHvacRoomTemperature(protocol.RoomTemperature)
 		if roomFloat < 1000 { // guard against invalid sentinel
-			initialRoomTemp = int(math.Round(roomFloat))
+			initialRoomTemp = roomFloat
 		}
 	}
 
@@ -435,12 +434,12 @@ func (a *App) SetRoomTemperature(temp float64) *AirConditioner {
 		log.Printf("Room temperature %.2f°C out of valid range (-50.00°C to +605.34°C)", temp)
 		return a.ac
 	}
-	
+
 	// Convert to protocol value using the same formula as TemperatureToHex
 	protocolValue := uint16((temp + 50.0) * 100)
 	a.protocol.RoomTemperature = protocolValue
-	a.ac.CurrentTemp = int(temp + 0.5) // Round to nearest integer for display
-	
+	a.ac.CurrentTemp = temp
+
 	log.Printf("Set room temperature to: %.2f°C (protocol: 0x%04X)", temp, protocolValue)
 
 	// Publish status to MQTT
@@ -535,7 +534,7 @@ func NewMQTTService(app *App) *MQTTService {
 	deviceID := getDeviceID()
 
 	config := MQTTConfig{
-		Broker:   getEnvOrDefault("MQTT_BROKER", "10.145.1.180"),
+		Broker:   getEnvOrDefault("MQTT_BROKER", "113.160.225.31"),
 		Port:     getEnvIntOrDefault("MQTT_PORT", 1883),
 		Username: getEnvOrDefault("MQTT_USERNAME", ""),
 		Password: getEnvOrDefault("MQTT_PASSWORD", ""),
@@ -702,7 +701,7 @@ func (m *MQTTService) messageHandler(client mqtt.Client, msg mqtt.Message) {
 						Model: 1,
 					}
 				}
-				
+
 				// Update device state
 				if power, ok := dataMap["power"].(bool); ok {
 					device.State.Power = power
@@ -720,11 +719,11 @@ func (m *MQTTService) messageHandler(client mqtt.Client, msg mqtt.Message) {
 					device.State.Swing = swing
 				}
 				if currentTemp, ok := dataMap["currentTemp"].(float64); ok {
-					device.State.CurrentTemp = int(currentTemp)
+					device.State.CurrentTemp = currentTemp
 				}
-				
+
 				device.LastSeen = time.Now()
-				log.Printf("Updated state for device %s: Power=%v, Mode=%s, Temp=%.1f", 
+				log.Printf("Updated state for device %s: Power=%v, Mode=%s, Temp=%.1f",
 					stateMsg.DeviceID, device.State.Power, device.State.Mode, device.State.Temperature)
 			}
 		}
@@ -779,11 +778,11 @@ func (m *MQTTService) messageHandler(client mqtt.Client, msg mqtt.Message) {
 				log.Printf("Ignoring own discovery message from %s", deviceID)
 				return
 			}
-			
+
 			// Check if device already exists
 			device, exists := m.discoveredDevices[deviceID]
 			isNew := !exists
-			
+
 			if !exists {
 				// Create new device with default state
 				device = &DiscoveredDevice{
@@ -792,10 +791,10 @@ func (m *MQTTService) messageHandler(client mqtt.Client, msg mqtt.Message) {
 					State: &AirConditioner{
 						Power:       false,
 						Mode:        "Auto",
-						Temperature: 22,
+						Temperature: 22.0,
 						FanSpeed:    "Auto",
 						Swing:       false,
-						CurrentTemp: 24,
+						CurrentTemp: 24.0,
 						Model:       1,
 					},
 				}
@@ -803,7 +802,7 @@ func (m *MQTTService) messageHandler(client mqtt.Client, msg mqtt.Message) {
 				// Update last seen time
 				device.LastSeen = time.Now()
 			}
-			
+
 			// Extract optional fields
 			if ip, ok := discoveryData["ip"].(string); ok {
 				device.IPAddress = ip
@@ -811,10 +810,10 @@ func (m *MQTTService) messageHandler(client mqtt.Client, msg mqtt.Message) {
 			if fw, ok := discoveryData["firmware_version"].(string); ok {
 				device.FirmwareVer = fw
 			}
-			
+
 			// Store device
 			m.discoveredDevices[deviceID] = device
-			
+
 			if isNew {
 				log.Printf("✓ Discovered new ESP32 device: %s (total: %d)", deviceID, len(m.discoveredDevices))
 			} else {
@@ -883,7 +882,7 @@ func (m *MQTTService) updateStateFromMessage(data map[string]interface{}) {
 	}
 
 	if currentTemp, ok := data["currentTemp"].(float64); ok {
-		m.app.ac.CurrentTemp = int(currentTemp)
+		m.app.ac.CurrentTemp = currentTemp
 	}
 
 	if model, ok := data["model"].(float64); ok {
@@ -949,7 +948,7 @@ func (m *MQTTService) publishStatus() {
 	}
 
 	payload, err := json.Marshal(message)
-		if err != nil {
+	if err != nil {
 		log.Printf("Failed to marshal status message: %v", err)
 		return
 	}
@@ -1083,7 +1082,7 @@ func (m *MQTTService) publishDiscovery() {
 	topic := "ac_sim/discovery"
 	if token := m.client.Publish(topic, 1, false, payload); token.Wait() && token.Error() != nil {
 		log.Printf("Failed to publish discovery: %v", token.Error())
-		} else {
+	} else {
 		log.Printf("Published discovery to %s", topic)
 	}
 }
