@@ -38,13 +38,18 @@ def create_virtual_device(device_id):
             # Update device state based on command
             if action == 'power':
                 userdata['state']['power'] = value
-            elif action == 'set_mode':
-                userdata['state']['mode'] = value.capitalize()
-            elif action == 'set_target_temp':
+            elif action == 'mode' or action == 'set_mode':
+                userdata['state']['mode'] = value.capitalize() if isinstance(value, str) else ['Auto', 'Cool', 'Dry', 'Fan', 'Heat'][value]
+            elif action == 'temperature' or action == 'set_target_temp':
                 userdata['state']['temperature'] = value
-            elif action == 'set_fan_speed':
-                fan_map = {0: 'Quiet', 1: 'Low', 2: 'Medium', 3: 'High'}
-                userdata['state']['fanSpeed'] = fan_map.get(value, 'Auto')
+            elif action == 'fanSpeed' or action == 'set_fan_speed':
+                if isinstance(value, str):
+                    userdata['state']['fanSpeed'] = value.capitalize()
+                else:
+                    fan_map = {0: 'Auto', 1: 'Low', 2: 'Medium', 3: 'High', 4: 'Quiet'}
+                    userdata['state']['fanSpeed'] = fan_map.get(value, 'Auto')
+            elif action == 'roomTemperature' or action == 'currentTemp':
+                userdata['state']['currentTemp'] = value
             
             # Publish updated state immediately
             publish_state(client, device_id, userdata['state'])
@@ -62,7 +67,7 @@ def create_virtual_device(device_id):
             'temperature': random.randint(20, 26),
             'fanSpeed': random.choice(['Auto', 'Low', 'Medium', 'High', 'Quiet']),
             'swing': False,
-            'currentTemp': random.randint(22, 28),
+            'currentTemp': round(random.uniform(22.0, 28.0), 1),
             'model': 1
         }
     })
