@@ -1219,6 +1219,13 @@ func (a *App) SetDeviceFanSpeed(deviceID string, speed string) {
 	}
 }
 
+// SetDeviceRoomTemperature sets room temperature for a specific device
+func (a *App) SetDeviceRoomTemperature(deviceID string, temp float64) {
+	if a.mqtt != nil {
+		a.mqtt.publishControlCommandToDevice(deviceID, "roomTemperature", temp)
+	}
+}
+
 // ---------------- Persistence Helpers ----------------
 
 const configFileName = "fga_simulator_config.json"

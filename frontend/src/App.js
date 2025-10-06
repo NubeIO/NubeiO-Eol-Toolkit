@@ -149,6 +149,18 @@ const App = () => {
     loadDiscoveredDevices();
   };
 
+  const handleRoomTempChange = async (delta) => {
+    if (!isConnected || !selectedDeviceId) return;
+    const newTemp = acState.currentTemp + delta;
+    if (newTemp < -50 || newTemp > 100) return; // Reasonable limits
+    try {
+      await window.go.main.App.SetDeviceRoomTemperature(selectedDeviceId, newTemp);
+      setTimeout(() => loadDiscoveredDevices(), 300);
+    } catch (error) {
+      console.error('Failed to change room temperature:', error);
+    }
+  };
+
   const handleConnectMQTT = async () => {
     try {
       await window.go.main.App.ConnectMQTT();
@@ -365,10 +377,28 @@ const App = () => {
               </div>
             </div>
 
-            {/* Room Temperature */}
-            <div className="text-center mb-4">
-              <span className="text-gray-600 text-sm">Room Temp. </span>
-              <span className="text-gray-800 text-lg font-bold">{typeof acState.currentTemp === 'number' ? acState.currentTemp.toFixed(1) : '0.0'}°C</span>
+            {/* Room Temperature with Controls */}
+            <div className="mb-4">
+              <div className="text-center mb-2">
+                <span className="text-gray-600 text-xs">Room Temp. </span>
+                <span className="text-gray-800 text-lg font-bold">{typeof acState.currentTemp === 'number' ? acState.currentTemp.toFixed(1) : '0.0'}°C</span>
+              </div>
+              <div className="flex gap-2 justify-center">
+                <button
+                  onClick={() => handleRoomTempChange(-0.5)}
+                  disabled={!isConnected}
+                  className="w-12 h-8 bg-blue-100 hover:bg-blue-200 rounded text-gray-700 font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  −
+                </button>
+                <button
+                  onClick={() => handleRoomTempChange(0.5)}
+                  disabled={!isConnected}
+                  className="w-12 h-8 bg-blue-100 hover:bg-blue-200 rounded text-gray-700 font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  +
+                </button>
+              </div>
             </div>
 
             {/* Bottom Icons and Buttons */}
