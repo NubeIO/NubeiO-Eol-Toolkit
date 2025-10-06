@@ -1,187 +1,43 @@
 import React, { useState, useEffect } from 'react';
 
-// Compact Device Card Component
-const DeviceCard = ({ device, isConnected }) => {
-  const [acState, setAcState] = useState(device);
-
-  useEffect(() => {
-    setAcState(device);
-  }, [device]);
-
-  const handlePowerToggle = async () => {
-    if (!isConnected) return;
-    try {
-      // Send command to specific device
-      await window.go.main.App.SetDevicePower(device.deviceId, !acState.power);
-      // Don't update optimistically - wait for state update from backend
-    } catch (error) {
-      console.error('Failed to toggle power:', error);
-    }
-  };
-
-  const handleModeChange = async (mode) => {
-    if (!isConnected || !acState.power) return;
-    try {
-      // Send command to specific device
-      await window.go.main.App.SetDeviceMode(device.deviceId, mode);
-      // Don't update optimistically - wait for state update from backend
-    } catch (error) {
-      console.error('Failed to change mode:', error);
-    }
-  };
-
-  const handleFanSpeedChange = async (speed) => {
-    if (!isConnected || !acState.power) return;
-    try {
-      // Send command to specific device
-      await window.go.main.App.SetDeviceFanSpeed(device.deviceId, speed);
-      // Don't update optimistically - wait for state update from backend
-    } catch (error) {
-      console.error('Failed to change fan speed:', error);
-    }
-  };
-
-  const handleTemperatureChange = async (delta) => {
-    if (!isConnected || !acState.power) return;
-    const newTemp = acState.temperature + delta;
-    if (newTemp < 16 || newTemp > 30) return;
-    try {
-      // Send command to specific device
-      await window.go.main.App.SetDeviceTemperature(device.deviceId, newTemp);
-      // Don't update optimistically - wait for state update from backend
-    } catch (error) {
-      console.error('Failed to change temperature:', error);
-    }
-  };
-
-  const modes = [
-    { id: 'Auto', icon: '🔄' },
-    { id: 'Cool', icon: '❄️' },
-    { id: 'Dry', icon: '💧' },
-    { id: 'Fan', icon: '💨' },
-    { id: 'Heat', icon: '🔥' }
-  ];
-
-  const fanSpeeds = ['Auto', 'Low', 'Med', 'Hi'];
-
-  return (
-    <div className={`bg-white rounded-lg shadow-md p-3 border-2 ${acState.power ? 'border-green-400' : 'border-gray-300'}`}>
-      {/* Device Header */}
-      <div className="flex items-center justify-between mb-3 gap-2">
-        <div className="flex items-center gap-1 min-w-0 flex-1">
-          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${acState.power ? 'bg-green-500' : 'bg-gray-400'}`}></div>
-          <span className="font-semibold text-xs text-gray-900 truncate">
-            {device.deviceId.replace('AC_SIM_', '')}
-          </span>
-        </div>
-        <button
-          onClick={handlePowerToggle}
-          disabled={!isConnected}
-          className={`px-2 py-1 rounded text-xs font-medium flex-shrink-0 ${
-            acState.power
-              ? 'bg-red-500 hover:bg-red-600 text-white'
-              : 'bg-gray-300 hover:bg-gray-400 text-gray-700'
-          } ${!isConnected ? 'opacity-50 cursor-not-allowed' : ''}`}
-        >
-          {acState.power ? 'OFF' : 'ON'}
-        </button>
-      </div>
-
-      {/* Temperature Display */}
-      <div className="mb-3 text-center">
-        <div className="text-3xl font-bold text-blue-600">{acState.temperature}°C</div>
-        <div className="text-xs text-gray-500">Room: {acState.currentTemp}°C</div>
-      </div>
-
-      {/* Temperature Controls */}
-      <div className="flex gap-2 mb-3">
-        <button
-          onClick={() => handleTemperatureChange(-0.5)}
-          disabled={!isConnected || !acState.power}
-          className="flex-1 bg-gray-200 hover:bg-gray-300 rounded py-2 text-lg font-bold disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          −
-        </button>
-        <button
-          onClick={() => handleTemperatureChange(0.5)}
-          disabled={!isConnected || !acState.power}
-          className="flex-1 bg-gray-200 hover:bg-gray-300 rounded py-2 text-lg font-bold disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          +
-        </button>
-      </div>
-
-      {/* Mode Selection */}
-      <div className="mb-3">
-        <div className="text-xs text-gray-600 mb-1">Mode</div>
-        <div className="grid grid-cols-5 gap-1">
-          {modes.map((mode) => (
-            <button
-              key={mode.id}
-              onClick={() => handleModeChange(mode.id)}
-              disabled={!isConnected || !acState.power}
-              className={`p-2 rounded text-lg ${
-                acState.mode === mode.id
-                  ? 'bg-blue-500'
-                  : 'bg-gray-200 hover:bg-gray-300'
-              } ${!isConnected || !acState.power ? 'opacity-50 cursor-not-allowed' : ''}`}
-              title={mode.id}
-            >
-              {mode.icon}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Fan Speed Selection */}
-      <div>
-        <div className="text-xs text-gray-600 mb-1">Fan</div>
-        <div className="grid grid-cols-4 gap-1">
-          {fanSpeeds.map((speed) => (
-            <button
-              key={speed}
-              onClick={() => handleFanSpeedChange(speed === 'Med' ? 'Medium' : speed === 'Hi' ? 'High' : speed)}
-              disabled={!isConnected || !acState.power}
-              className={`p-1 rounded text-xs font-medium ${
-                (acState.fanSpeed === speed || 
-                 (speed === 'Med' && acState.fanSpeed === 'Medium') ||
-                 (speed === 'Hi' && acState.fanSpeed === 'High'))
-                  ? 'bg-green-500 text-white'
-                  : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
-              } ${!isConnected || !acState.power ? 'opacity-50 cursor-not-allowed' : ''}`}
-            >
-              {speed}
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-};
-
 const App = () => {
-  const [devices, setDevices] = useState([]);
-  const [deviceOrder, setDeviceOrder] = useState([]); // Custom order for drag & drop
+  const [acState, setAcState] = useState({
+    power: false,
+    mode: 'Auto',
+    temperature: 22.0,
+    fanSpeed: 'Auto',
+    swing: false,
+    currentTemp: 18,
+    model: 1
+  });
   const [mqttConfig, setMqttConfig] = useState({
     broker: 'localhost',
     port: 1883,
     deviceId: 'AC_SIM_01073C'
   });
   const [isConnected, setIsConnected] = useState(false);
+  const [currentTime, setCurrentTime] = useState(new Date());
   const [showConfig, setShowConfig] = useState(false);
-  const [draggedIndex, setDraggedIndex] = useState(null);
 
   useEffect(() => {
     loadMqttConfig();
     loadMqttStatus();
     loadDeviceState();
     
-    const interval = setInterval(() => {
+    const stateInterval = setInterval(() => {
       if (isConnected) {
         loadDeviceState();
       }
     }, 2000);
-    return () => clearInterval(interval);
+
+    const timeInterval = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+
+    return () => {
+      clearInterval(stateInterval);
+      clearInterval(timeInterval);
+    };
   }, [isConnected]);
 
   const loadMqttConfig = async () => {
@@ -204,88 +60,82 @@ const App = () => {
 
   const loadDeviceState = async () => {
     try {
-      // Get discovered ESP32 devices
-      const discoveredDevices = await window.go.main.App.GetDiscoveredDevices();
-      
-      if (discoveredDevices && discoveredDevices.length > 0) {
-        // Use each device's own state
-        const devicesWithState = discoveredDevices.map(device => ({
-          ...(device.state || {
-            power: false,
-            mode: 'Auto',
-            temperature: 22,
-            fanSpeed: 'Auto',
-            swing: false,
-            currentTemp: 24,
-            model: 1
-          }),
-          deviceId: device.deviceId,
-          ipAddress: device.ipAddress,
-          firmwareVersion: device.firmwareVer
-        }));
-        
-        // Sort devices by ID for consistent order
-        devicesWithState.sort((a, b) => a.deviceId.localeCompare(b.deviceId));
-        
-        // Initialize device order if empty
-        if (deviceOrder.length === 0) {
-          setDeviceOrder(devicesWithState.map(d => d.deviceId));
-        }
-        
-        // Apply custom order if exists
-        if (deviceOrder.length > 0) {
-          const orderedDevices = [];
-          deviceOrder.forEach(id => {
-            const device = devicesWithState.find(d => d.deviceId === id);
-            if (device) orderedDevices.push(device);
-          });
-          // Add any new devices not in order
-          devicesWithState.forEach(device => {
-            if (!deviceOrder.includes(device.deviceId)) {
-              orderedDevices.push(device);
-              setDeviceOrder([...deviceOrder, device.deviceId]);
-            }
-          });
-          setDevices(orderedDevices);
-        } else {
-          setDevices(devicesWithState);
-        }
-      } else {
-        // No devices discovered yet
-        setDevices([]);
-      }
+      const state = await window.go.main.App.GetAirConditionerState();
+      setAcState(state);
     } catch (error) {
       console.error('Failed to load device state:', error);
     }
   };
 
-  const handleDragStart = (index) => {
-    setDraggedIndex(index);
+  const handlePowerToggle = async () => {
+    if (!isConnected) return;
+    try {
+      const newState = await window.go.main.App.SetPower(!acState.power);
+      setAcState(newState);
+    } catch (error) {
+      console.error('Failed to toggle power:', error);
+    }
   };
 
-  const handleDragOver = (e, index) => {
-    e.preventDefault();
-    if (draggedIndex === null || draggedIndex === index) return;
-    
-    const newDevices = [...devices];
-    const draggedDevice = newDevices[draggedIndex];
-    newDevices.splice(draggedIndex, 1);
-    newDevices.splice(index, 0, draggedDevice);
-    
-    setDevices(newDevices);
-    setDraggedIndex(index);
-    setDeviceOrder(newDevices.map(d => d.deviceId));
+  const handleModeClick = async () => {
+    if (!isConnected || !acState.power) return;
+    const modes = ['Auto', 'Cool', 'Dry', 'Fan', 'Heat'];
+    const currentIndex = modes.indexOf(acState.mode);
+    const nextMode = modes[(currentIndex + 1) % modes.length];
+    try {
+      const newState = await window.go.main.App.SetMode(nextMode);
+      setAcState(newState);
+    } catch (error) {
+      console.error('Failed to change mode:', error);
+    }
   };
 
-  const handleDragEnd = () => {
-    setDraggedIndex(null);
+  const handleFanClick = async () => {
+    if (!isConnected || !acState.power) return;
+    const fanSpeeds = ['Auto', 'Quiet', 'Low', 'Medium', 'High'];
+    const currentIndex = fanSpeeds.indexOf(acState.fanSpeed);
+    const nextFan = fanSpeeds[(currentIndex + 1) % fanSpeeds.length];
+    try {
+      const newState = await window.go.main.App.SetFanSpeed(nextFan);
+      setAcState(newState);
+    } catch (error) {
+      console.error('Failed to change fan speed:', error);
+    }
+  };
+
+  const handleTemperatureChange = async (delta) => {
+    if (!isConnected || !acState.power) return;
+    const newTemp = acState.temperature + delta;
+    if (newTemp < 16 || newTemp > 30) return;
+    try {
+      const newState = await window.go.main.App.SetTemperature(newTemp);
+      setAcState(newState);
+    } catch (error) {
+      console.error('Failed to change temperature:', error);
+    }
+  };
+
+  const handleSwingToggle = async () => {
+    if (!isConnected || !acState.power) return;
+    try {
+      const newState = await window.go.main.App.SetSwing(!acState.swing);
+      setAcState(newState);
+    } catch (error) {
+      console.error('Failed to toggle swing:', error);
+    }
+  };
+
+  const handleRefresh = () => {
+    loadDeviceState();
   };
 
   const handleConnectMQTT = async () => {
     try {
       await window.go.main.App.ConnectMQTT();
-      loadMqttStatus();
-      loadDeviceState();
+      setTimeout(() => {
+        loadMqttStatus();
+        loadDeviceState();
+      }, 500);
     } catch (error) {
       console.error('Failed to connect to MQTT:', error);
     }
@@ -294,66 +144,101 @@ const App = () => {
   const handleDisconnectMQTT = async () => {
     try {
       await window.go.main.App.DisconnectMQTT();
-      loadMqttStatus();
+      setTimeout(() => loadMqttStatus(), 500);
     } catch (error) {
       console.error('Failed to disconnect from MQTT:', error);
     }
   };
 
-  const handleUpdateConfig = async (newConfig) => {
+  const handleUpdateConfig = async (e) => {
+    e.preventDefault();
     try {
-      await window.go.main.App.UpdateMQTTConfig(newConfig);
-      setMqttConfig(newConfig);
+      await window.go.main.App.UpdateMQTTConfig(mqttConfig);
       setShowConfig(false);
+      setTimeout(() => {
+        handleConnectMQTT();
+      }, 300);
     } catch (error) {
       console.error('Failed to update MQTT config:', error);
     }
   };
 
+  const getModeIcon = (mode) => {
+    const icons = {
+      'Auto': '≈',
+      'Cool': '❄',
+      'Dry': '💧',
+      'Fan': '🌀',
+      'Heat': '🔥'
+    };
+    return icons[mode] || '≈';
+  };
+
+  const getFanIcon = () => '≈';
+
+  const formatTime = () => {
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const day = days[currentTime.getDay()];
+    const hours = currentTime.getHours();
+    const minutes = currentTime.getMinutes().toString().padStart(2, '0');
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    const displayHours = hours % 12 || 12;
+    return `${day} ${displayHours}:${minutes}${ampm}`;
+  };
+
   return (
-    <div className="min-h-screen bg-gray-100">
-      {/* Compact Header */}
-      <div className="bg-white shadow-sm border-b sticky top-0 z-10">
-        <div className="container mx-auto px-4 py-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <h1 className="text-xl font-bold text-gray-900">FGA Simulator</h1>
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-gray-100 p-4">
+      {/* MQTT Connection Bar */}
+      <div className="max-w-6xl mx-auto mb-4">
+        <div className="bg-white rounded-xl shadow-md p-4">
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            {/* Connection Status */}
+            <div className="flex items-center gap-3">
               <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                <span className="text-xs text-gray-600">
-                  {isConnected ? 'Connected' : 'Disconnected'}
+                <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></div>
+                <span className="font-semibold text-gray-700">
+                  {isConnected ? 'MQTT Connected' : 'MQTT Disconnected'}
                 </span>
               </div>
+              <div className="text-sm text-gray-500 border-l pl-3">
+                {mqttConfig.broker}:{mqttConfig.port}
+              </div>
             </div>
-            <div className="flex items-center gap-3">
+
+            {/* Action Buttons */}
+            <div className="flex items-center gap-2">
               <button
                 onClick={() => setShowConfig(!showConfig)}
-                className="px-3 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded"
+                className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-sm font-medium transition-colors"
               >
                 ⚙️ Config
               </button>
               <button
                 onClick={isConnected ? handleDisconnectMQTT : handleConnectMQTT}
-                className={`px-4 py-1 rounded text-xs font-medium text-white ${
-                  isConnected ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'
+                className={`px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors ${
+                  isConnected 
+                    ? 'bg-red-500 hover:bg-red-600' 
+                    : 'bg-blue-500 hover:bg-blue-600'
                 }`}
               >
-                {isConnected ? 'Disconnect' : 'Connect'}
+                {isConnected ? '🔌 Disconnect' : '🔌 Connect'}
               </button>
             </div>
           </div>
 
-          {/* Config Panel */}
+          {/* Configuration Panel */}
           {showConfig && (
-            <div className="mt-3 p-3 bg-gray-50 rounded">
-              <div className="grid grid-cols-3 gap-3 text-sm">
+            <form onSubmit={handleUpdateConfig} className="mt-4 pt-4 border-t">
+              <h3 className="text-sm font-semibold text-gray-700 mb-3">MQTT Configuration</h3>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">Broker</label>
+                  <label className="block text-xs text-gray-600 mb-1">Broker Address</label>
                   <input
                     type="text"
                     value={mqttConfig.broker}
                     onChange={(e) => setMqttConfig({...mqttConfig, broker: e.target.value})}
-                    className="w-full px-2 py-1 border rounded text-xs"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="localhost"
                   />
                 </div>
                 <div>
@@ -361,53 +246,245 @@ const App = () => {
                   <input
                     type="number"
                     value={mqttConfig.port}
-                    onChange={(e) => setMqttConfig({...mqttConfig, port: parseInt(e.target.value)})}
-                    className="w-full px-2 py-1 border rounded text-xs"
+                    onChange={(e) => setMqttConfig({...mqttConfig, port: parseInt(e.target.value) || 1883})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="1883"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">Device ID</label>
+                  <label className="block text-xs text-gray-600 mb-1">Username (optional)</label>
                   <input
                     type="text"
-                    value={mqttConfig.deviceId}
-                    onChange={(e) => setMqttConfig({...mqttConfig, deviceId: e.target.value})}
-                    className="w-full px-2 py-1 border rounded text-xs"
+                    value={mqttConfig.username || ''}
+                    onChange={(e) => setMqttConfig({...mqttConfig, username: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="username"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Password (optional)</label>
+                  <input
+                    type="password"
+                    value={mqttConfig.password || ''}
+                    onChange={(e) => setMqttConfig({...mqttConfig, password: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="password"
                   />
                 </div>
               </div>
-              <button
-                onClick={() => handleUpdateConfig(mqttConfig)}
-                className="mt-2 px-3 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700"
-              >
-                Save Config
-              </button>
-            </div>
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-medium transition-colors"
+                >
+                  💾 Save & Connect
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowConfig(false)}
+                  className="px-4 py-2 bg-gray-300 hover:bg-gray-400 text-gray-700 rounded-lg text-sm font-medium transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
           )}
         </div>
       </div>
 
-      {/* Device Grid */}
-      <div className="container mx-auto px-4 py-4">
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-4">
-          {devices.map((device, index) => (
-            <div
-              key={device.deviceId || index}
-              draggable
-              onDragStart={() => handleDragStart(index)}
-              onDragOver={(e) => handleDragOver(e, index)}
-              onDragEnd={handleDragEnd}
-              className={`cursor-move transition-opacity ${draggedIndex === index ? 'opacity-50' : 'opacity-100'}`}
+      {/* Main Control Panel */}
+      <div className="max-w-md mx-auto">
+        <div className="bg-white rounded-3xl shadow-2xl overflow-hidden">
+          {/* Header */}
+          <div className="relative bg-white px-6 py-4 flex items-center justify-between border-b">
+            <h1 className="text-xl font-bold text-gray-700 tracking-wide">FUJITSU</h1>
+            <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+          </div>
+
+        {/* Main Control Panel */}
+        <div className="p-6">
+          {/* Status Card */}
+          <div className="bg-gradient-to-br from-green-100 to-green-200 rounded-2xl p-6 mb-6 shadow-md">
+            {/* Title and Time */}
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-gray-600 font-medium">Office 01</h2>
+              <span className="text-gray-500 text-sm">{formatTime()}</span>
+            </div>
+
+            {/* Mode, Temp, Fan Display */}
+            <div className="grid grid-cols-3 gap-3 mb-6">
+              {/* Mode */}
+              <div className="text-center">
+                <div className="text-xs text-gray-500 mb-2">Mode</div>
+                <div className="bg-white rounded-xl p-3 shadow-sm">
+                  <div className="text-2xl mb-1">{getModeIcon(acState.mode)}</div>
+                  <div className="text-sm font-medium text-gray-700">{acState.mode}</div>
+                </div>
+              </div>
+
+              {/* Set Temperature */}
+              <div className="text-center">
+                <div className="text-xs text-gray-500 mb-2">Set Temp.</div>
+                <div className="bg-white rounded-xl p-3 shadow-sm">
+                  <div className="text-4xl font-bold text-gray-800">
+                    {acState.temperature.toFixed(1)}
+                  </div>
+                  <div className="text-xs text-gray-500">°C</div>
+                </div>
+              </div>
+
+              {/* Fan */}
+              <div className="text-center">
+                <div className="text-xs text-gray-500 mb-2">Fan</div>
+                <div className="bg-white rounded-xl p-3 shadow-sm">
+                  <div className="text-2xl mb-1">{getFanIcon()}</div>
+                  <div className="text-sm font-medium text-gray-700">{acState.fanSpeed}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Room Temperature */}
+            <div className="text-center mb-4">
+              <span className="text-gray-600 text-sm">Room Temp. </span>
+              <span className="text-gray-800 text-lg font-bold">{acState.currentTemp}.0°C</span>
+            </div>
+
+            {/* Bottom Icons and Buttons */}
+            <div className="flex justify-between items-center">
+              <div className="flex gap-3">
+                <button 
+                  onClick={handlePowerToggle}
+                  disabled={!isConnected}
+                  className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
+                    acState.power 
+                      ? 'bg-green-600 text-white' 
+                      : 'bg-gray-400 text-white'
+                  } ${!isConnected ? 'opacity-50' : 'hover:opacity-80'}`}
+                >
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd"/>
+                  </svg>
+                </button>
+                <button 
+                  onClick={handleRefresh}
+                  disabled={!isConnected}
+                  className="w-10 h-10 rounded-full bg-gray-300 text-gray-600 flex items-center justify-center hover:bg-gray-400 transition-colors disabled:opacity-50"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                </button>
+              </div>
+              <div className="flex gap-3">
+                <button className="px-4 py-2 rounded-full bg-white text-gray-600 text-sm font-medium shadow-sm hover:bg-gray-50 transition-colors">
+                  Status
+                </button>
+                <button className="px-4 py-2 rounded-full bg-white text-gray-600 text-sm font-medium shadow-sm hover:bg-gray-50 transition-colors flex items-center gap-1">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                  Menu
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Control Buttons */}
+          <div className="space-y-3">
+            {/* ON/OFF Button */}
+            <button
+              onClick={handlePowerToggle}
+              disabled={!isConnected}
+              className={`w-full py-4 rounded-xl font-semibold text-lg transition-all shadow-md ${
+                acState.power
+                  ? 'bg-green-500 text-white hover:bg-green-600'
+                  : 'bg-gray-300 text-gray-600 hover:bg-gray-400'
+              } ${!isConnected ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
-              <DeviceCard device={device} isConnected={isConnected} />
+              <div className="flex items-center justify-center gap-2">
+                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd"/>
+                </svg>
+                ON/OFF
+              </div>
+            </button>
+
+            {/* Temperature Controls */}
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={() => handleTemperatureChange(0.5)}
+                disabled={!isConnected || !acState.power}
+                className="py-4 rounded-xl bg-gray-200 text-gray-700 font-semibold hover:bg-gray-300 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <div className="flex items-center justify-center gap-2">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 15l7-7 7 7" />
+                  </svg>
+                  TEMP+
+                </div>
+              </button>
+              <button
+                onClick={() => handleTemperatureChange(-0.5)}
+                disabled={!isConnected || !acState.power}
+                className="py-4 rounded-xl bg-gray-200 text-gray-700 font-semibold hover:bg-gray-300 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <div className="flex items-center justify-center gap-2">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M19 9l-7 7-7-7" />
+                  </svg>
+                  TEMP-
+                </div>
+              </button>
             </div>
-          ))}
-          {devices.length === 0 && (
-            <div className="col-span-full text-center py-12 text-gray-500">
-              <p>No devices connected</p>
-              <p className="text-sm mt-2">Connect to MQTT to see devices</p>
+
+            {/* Mode and Fan Controls */}
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={handleModeClick}
+                disabled={!isConnected || !acState.power}
+                className="py-4 rounded-xl bg-gray-200 text-gray-700 font-semibold hover:bg-gray-300 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <div className="flex items-center justify-center gap-2">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                  MODE
+                </div>
+              </button>
+              <button
+                onClick={handleFanClick}
+                disabled={!isConnected || !acState.power}
+                className="py-4 rounded-xl bg-gray-200 text-gray-700 font-semibold hover:bg-gray-300 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <div className="flex items-center justify-center gap-2">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                  </svg>
+                  FAN
+                </div>
+              </button>
             </div>
-          )}
+
+            {/* Swing Control */}
+            <button
+              onClick={handleSwingToggle}
+              disabled={!isConnected || !acState.power}
+              className={`w-full py-4 rounded-xl font-semibold transition-all shadow-sm ${
+                acState.swing
+                  ? 'bg-blue-500 text-white hover:bg-blue-600'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+              } ${!isConnected || !acState.power ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              <div className="flex items-center justify-center gap-2">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                SWING
+              </div>
+            </button>
+          </div>
         </div>
+      </div>
       </div>
     </div>
   );
