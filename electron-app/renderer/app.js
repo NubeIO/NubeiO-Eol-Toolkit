@@ -292,14 +292,14 @@ class App {
             </div>
             <div class="flex gap-2 justify-center">
               <button
-                onclick="console.log('Room temp button clicked:', '${device.deviceId}', -0.5); app.handleRoomTempChange('${device.deviceId}', -0.5)"
+                onclick="alert('Button clicked!'); console.log('Room temp button clicked:', '${device.deviceId}', -0.5); app.handleRoomTempChange('${device.deviceId}', -0.5)"
                 ${!this.isConnected ? 'disabled' : ''}
                 class="w-12 h-8 bg-blue-100 hover:bg-blue-200 rounded text-gray-700 font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 −
               </button>
               <button
-                onclick="console.log('Room temp button clicked:', '${device.deviceId}', 0.5); app.handleRoomTempChange('${device.deviceId}', 0.5)"
+                onclick="alert('Button clicked!'); console.log('Room temp button clicked:', '${device.deviceId}', 0.5); app.handleRoomTempChange('${device.deviceId}', 0.5)"
                 ${!this.isConnected ? 'disabled' : ''}
                 class="w-12 h-8 bg-blue-100 hover:bg-blue-200 rounded text-gray-700 font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
