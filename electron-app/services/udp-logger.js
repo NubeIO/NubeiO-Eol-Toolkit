@@ -135,19 +135,27 @@ class UDPLogger {
       
       switch (format.toLowerCase()) {
         case 'json':
+          // Clean logs by stripping ANSI codes
+          const cleanLogsForJson = this.logs.map(log => ({
+            timestamp: log.timestamp,
+            from: log.from,
+            size: log.size,
+            message: this.stripAnsiCodes(log.message)
+          }));
+          
           if (append && fileExists) {
             // For JSON append, we need to merge arrays
             try {
               const existingContent = fs.readFileSync(filePath, 'utf8');
               const existingLogs = JSON.parse(existingContent);
-              const mergedLogs = [...existingLogs, ...this.logs];
+              const mergedLogs = [...existingLogs, ...cleanLogsForJson];
               content = JSON.stringify(mergedLogs, null, 2);
             } catch (e) {
               // If existing file is invalid JSON, overwrite it
-              content = JSON.stringify(this.logs, null, 2);
+              content = JSON.stringify(cleanLogsForJson, null, 2);
             }
           } else {
-            content = JSON.stringify(this.logs, null, 2);
+            content = JSON.stringify(cleanLogsForJson, null, 2);
           }
           break;
           
@@ -158,8 +166,9 @@ class UDPLogger {
           }
           // CSV rows
           this.logs.forEach(log => {
-            const message = log.message.replace(/"/g, '""'); // Escape quotes
-            content += `"${log.timestamp}","${log.from}",${log.size},"${message}"\n`;
+            const cleanMessage = this.stripAnsiCodes(log.message);
+            const escapedMessage = cleanMessage.replace(/"/g, '""'); // Escape quotes
+            content += `"${log.timestamp}","${log.from}",${log.size},"${escapedMessage}"\n`;
           });
           break;
           
@@ -167,7 +176,8 @@ class UDPLogger {
         default:
           // Plain text format
           this.logs.forEach(log => {
-            content += `[${log.timestamp}] [${log.from}] ${log.message}\n`;
+            const cleanMessage = this.stripAnsiCodes(log.message);
+            content += `[${log.timestamp}] [${log.from}] ${cleanMessage}\n`;
           });
           break;
       }
@@ -218,21 +228,30 @@ class UDPLogger {
     
     switch (format.toLowerCase()) {
       case 'json':
-        content = JSON.stringify(this.logs, null, 2);
+        // Clean logs by stripping ANSI codes
+        const cleanLogs = this.logs.map(log => ({
+          timestamp: log.timestamp,
+          from: log.from,
+          size: log.size,
+          message: this.stripAnsiCodes(log.message)
+        }));
+        content = JSON.stringify(cleanLogs, null, 2);
         break;
         
       case 'csv':
         content = 'Timestamp,Source,Size,Message\n';
         this.logs.forEach(log => {
-          const message = log.message.replace(/"/g, '""');
-          content += `"${log.timestamp}","${log.from}",${log.size},"${message}"\n`;
+          const cleanMessage = this.stripAnsiCodes(log.message);
+          const escapedMessage = cleanMessage.replace(/"/g, '""');
+          content += `"${log.timestamp}","${log.from}",${log.size},"${escapedMessage}"\n`;
         });
         break;
         
       case 'txt':
       default:
         this.logs.forEach(log => {
-          content += `[${log.timestamp}] [${log.from}] ${log.message}\n`;
+          const cleanMessage = this.stripAnsiCodes(log.message);
+          content += `[${log.timestamp}] [${log.from}] ${cleanMessage}\n`;
         });
         break;
     }
@@ -336,6 +355,9 @@ class UDPLogger {
     try {
       if (!this.autoSaveFilePath) return;
 
+      // Strip ANSI codes from message for file output
+      const cleanMessage = this.stripAnsiCodes(log.message);
+      
       let content = '';
       
       switch (this.autoSaveFormat) {
@@ -344,19 +366,27 @@ class UDPLogger {
           const existingContent = fs.readFileSync(this.autoSaveFilePath, 'utf8');
           const needsComma = existingContent.trim().length > 1 && !existingContent.trim().endsWith('[');
           
-          content = (needsComma ? ',\n' : '') + '  ' + JSON.stringify(log);
+          // Create clean log object for JSON
+          const cleanLog = {
+            timestamp: log.timestamp,
+            from: log.from,
+            size: log.size,
+            message: cleanMessage
+          };
+          
+          content = (needsComma ? ',\n' : '') + '  ' + JSON.stringify(cleanLog);
           fs.appendFileSync(this.autoSaveFilePath, content, 'utf8');
           break;
           
         case 'csv':
-          const message = log.message.replace(/"/g, '""');
-          content = `"${log.timestamp}","${log.from}",${log.size},"${message}"\n`;
+          const escapedMessage = cleanMessage.replace(/"/g, '""');
+          content = `"${log.timestamp}","${log.from}",${log.size},"${escapedMessage}"\n`;
           fs.appendFileSync(this.autoSaveFilePath, content, 'utf8');
           break;
           
         case 'txt':
         default:
-          content = `[${log.timestamp}] [${log.from}] ${log.message}\n`;
+          content = `[${log.timestamp}] [${log.from}] ${cleanMessage}\n`;
           fs.appendFileSync(this.autoSaveFilePath, content, 'utf8');
           break;
       }
