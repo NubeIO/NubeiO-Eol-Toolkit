@@ -497,13 +497,22 @@ class App {
   }
 
   async handleRoomTempChange(deviceId, delta) {
+    console.log('handleRoomTempChange called with:', deviceId, delta);
     const device = this.discoveredDevices.find(d => d.deviceId === deviceId);
-    if (!device || !this.isConnected) return;
+    if (!device || !this.isConnected) {
+      console.log('Device not found or not connected:', device, this.isConnected);
+      return;
+    }
     
     const newTemp = device.state.currentTemp + delta;
-    if (newTemp < -50 || newTemp > 100) return;
+    console.log('Current temp:', device.state.currentTemp, 'New temp:', newTemp);
+    if (newTemp < -50 || newTemp > 100) {
+      console.log('Temperature out of range:', newTemp);
+      return;
+    }
     
     try {
+      console.log('Sending room temperature change:', deviceId, newTemp);
       await window.electronAPI.setDeviceRoomTemperature(deviceId, newTemp);
       setTimeout(() => this.loadDiscoveredDevices(), 300);
     } catch (error) {
