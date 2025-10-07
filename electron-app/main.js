@@ -89,6 +89,7 @@ class MQTTService {
       // Subscribe to discovery and control topics
       this.client.subscribe('ac_sim/discovery');
       this.client.subscribe('ac_sim/+/state');
+      this.client.subscribe('ac_sim/broadcast/state');
       this.client.subscribe(`ac_sim/${this.config.deviceId}/control`);
       this.client.subscribe('ac_sim/all/control');
       
@@ -400,7 +401,7 @@ ipcMain.handle('device:setFanSpeed', (event, deviceId, fanSpeed) => {
 });
 
 ipcMain.handle('device:setRoomTemperature', (event, deviceId, temperature) => {
-  mqttService.sendControlCommand(deviceId, 'room_temperature', temperature);
+  mqttService.sendControlCommand(deviceId, 'roomTemperature', temperature);
   return true;
 });
 
