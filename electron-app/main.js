@@ -114,6 +114,7 @@ class MQTTService {
   handleMessage(topic, message) {
     try {
       const payload = JSON.parse(message.toString());
+      console.log('MQTT Message received:', topic, payload);
 
       // Handle discovery messages
       if (topic === 'ac_sim/discovery') {
@@ -141,17 +142,26 @@ class MQTTService {
       // Handle state updates
       if (topic.startsWith('ac_sim/') && topic.endsWith('/state')) {
         const deviceId = topic.split('/')[1];
+        console.log('State update for device:', deviceId, 'Payload:', payload);
+        
         if (deviceId !== this.config.deviceId) {
           const device = this.discoveredDevices.get(deviceId);
           if (device) {
+            console.log('Updating device state. Old state:', device.state);
             device.state = { ...device.state, ...payload };
             device.lastSeen = new Date();
             this.discoveredDevices.set(deviceId, device);
+            console.log('New state:', device.state);
+          } else {
+            console.log('Device not found in discoveredDevices:', deviceId);
+            console.log('Available devices:', Array.from(this.discoveredDevices.keys()));
           }
+        } else {
+          console.log('Ignoring state update for own device:', deviceId);
         }
       }
     } catch (error) {
-      console.error('Error handling message:', error);
+      console.error('Error handling message:', error, error.stack);
     }
   }
 
