@@ -152,8 +152,8 @@ ipcMain.handle('udp:stop', () => {
   return true;
 });
 
-ipcMain.handle('udp:saveLogs', async (event, filePath, format) => {
-  return await udpLogger.saveLogs(filePath, format);
+ipcMain.handle('udp:saveLogs', async (event, filePath, format, append) => {
+  return await udpLogger.saveLogs(filePath, format, append);
 });
 
 ipcMain.handle('udp:exportLogsAsString', (event, format) => {

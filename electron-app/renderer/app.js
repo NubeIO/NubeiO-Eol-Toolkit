@@ -119,7 +119,7 @@ class App {
     }
   }
 
-  async saveUDPLogs() {
+  async saveUDPLogs(append = false) {
     try {
       // Check if there are logs to save
       if (this.udpStatus.logCount === 0) {
@@ -143,11 +143,12 @@ class App {
       if (ext === 'json') format = 'json';
       else if (ext === 'csv') format = 'csv';
       
-      // Save logs
-      const saveResult = await window.electronAPI.saveUDPLogs(filePath, format);
+      // Save logs with append option
+      const saveResult = await window.electronAPI.saveUDPLogs(filePath, format, append);
       
       if (saveResult.success) {
-        alert(`✅ Successfully saved ${saveResult.logCount} logs to:\n${saveResult.filePath}`);
+        const action = append ? 'appended' : 'saved';
+        alert(`✅ Successfully ${action} ${saveResult.logCount} logs to:\n${saveResult.filePath}`);
       } else {
         alert(`❌ Failed to save logs:\n${saveResult.message}`);
       }
@@ -697,8 +698,11 @@ class App {
             </div>
           </div>
           <div class="flex gap-2">
-            <button onclick="app.saveUDPLogs()" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2" ${this.udpStatus.logCount === 0 ? 'disabled' : ''}>
+            <button onclick="app.saveUDPLogs(false)" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2" ${this.udpStatus.logCount === 0 ? 'disabled' : ''}>
               💾 Save Logs
+            </button>
+            <button onclick="app.saveUDPLogs(true)" class="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2" ${this.udpStatus.logCount === 0 ? 'disabled' : ''}>
+              ➕ Append Logs
             </button>
             <button onclick="app.clearUDPLogs()" class="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm font-medium transition-colors">
               🗑️ Clear Logs

@@ -109,9 +109,10 @@ class UDPLogger {
    * Save logs to a file
    * @param {string} filePath - Path to save the log file
    * @param {string} format - Format to save logs in ('txt', 'json', 'csv')
+   * @param {boolean} append - Whether to append to existing file (default: false)
    * @returns {Promise<object>} - Result object with success status and message
    */
-  async saveLogs(filePath, format = 'txt') {
+  async saveLogs(filePath, format = 'txt', append = false) {
     try {
       if (this.logs.length === 0) {
         return {
@@ -121,15 +122,31 @@ class UDPLogger {
       }
 
       let content = '';
+      const fileExists = fs.existsSync(filePath);
       
       switch (format.toLowerCase()) {
         case 'json':
-          content = JSON.stringify(this.logs, null, 2);
+          if (append && fileExists) {
+            // For JSON append, we need to merge arrays
+            try {
+              const existingContent = fs.readFileSync(filePath, 'utf8');
+              const existingLogs = JSON.parse(existingContent);
+              const mergedLogs = [...existingLogs, ...this.logs];
+              content = JSON.stringify(mergedLogs, null, 2);
+            } catch (e) {
+              // If existing file is invalid JSON, overwrite it
+              content = JSON.stringify(this.logs, null, 2);
+            }
+          } else {
+            content = JSON.stringify(this.logs, null, 2);
+          }
           break;
           
         case 'csv':
-          // CSV header
-          content = 'Timestamp,Source,Size,Message\n';
+          // CSV header (only if not appending or file doesn't exist)
+          if (!append || !fileExists) {
+            content = 'Timestamp,Source,Size,Message\n';
+          }
           // CSV rows
           this.logs.forEach(log => {
             const message = log.message.replace(/"/g, '""'); // Escape quotes
@@ -152,14 +169,21 @@ class UDPLogger {
         fs.mkdirSync(dir, { recursive: true });
       }
 
-      // Write file
-      fs.writeFileSync(filePath, content, 'utf8');
+      // Write or append file
+      if (append && fileExists && format.toLowerCase() !== 'json') {
+        fs.appendFileSync(filePath, content, 'utf8');
+      } else {
+        fs.writeFileSync(filePath, content, 'utf8');
+      }
 
       return {
         success: true,
-        message: `Logs saved successfully to ${filePath}`,
+        message: append 
+          ? `Logs appended successfully to ${filePath}` 
+          : `Logs saved successfully to ${filePath}`,
         logCount: this.logs.length,
-        filePath: filePath
+        filePath: filePath,
+        mode: append ? 'append' : 'overwrite'
       };
     } catch (error) {
       console.error('Error saving logs:', error);

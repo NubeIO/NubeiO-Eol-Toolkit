@@ -24,7 +24,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   clearUDPLogs: () => ipcRenderer.invoke('udp:clearLogs'),
   startUDP: () => ipcRenderer.invoke('udp:start'),
   stopUDP: () => ipcRenderer.invoke('udp:stop'),
-  saveUDPLogs: (filePath, format) => ipcRenderer.invoke('udp:saveLogs', filePath, format),
+  saveUDPLogs: (filePath, format, append) => ipcRenderer.invoke('udp:saveLogs', filePath, format, append),
   exportUDPLogsAsString: (format) => ipcRenderer.invoke('udp:exportLogsAsString', format),
   showSaveDialog: () => ipcRenderer.invoke('udp:showSaveDialog')
 });
