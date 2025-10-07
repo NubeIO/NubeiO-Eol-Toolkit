@@ -119,6 +119,44 @@ class App {
     }
   }
 
+  async saveUDPLogs() {
+    try {
+      // Check if there are logs to save
+      if (this.udpStatus.logCount === 0) {
+        alert('No logs to save');
+        return;
+      }
+
+      // Show save dialog
+      const dialogResult = await window.electronAPI.showSaveDialog();
+      
+      if (dialogResult.canceled) {
+        console.log('Save canceled by user');
+        return;
+      }
+      
+      // Get file extension to determine format
+      const filePath = dialogResult.filePath;
+      const ext = filePath.split('.').pop().toLowerCase();
+      let format = 'txt';
+      
+      if (ext === 'json') format = 'json';
+      else if (ext === 'csv') format = 'csv';
+      
+      // Save logs
+      const saveResult = await window.electronAPI.saveUDPLogs(filePath, format);
+      
+      if (saveResult.success) {
+        alert(`✅ Successfully saved ${saveResult.logCount} logs to:\n${saveResult.filePath}`);
+      } else {
+        alert(`❌ Failed to save logs:\n${saveResult.message}`);
+      }
+    } catch (error) {
+      console.error('Error saving logs:', error);
+      alert(`❌ Error: ${error.message}`);
+    }
+  }
+
   switchPage(page) {
     this.currentPage = page;
     if (page === 'udp-logs') {
@@ -658,9 +696,14 @@ class App {
               <span class="text-sm text-gray-500">| <span id="udp-log-count">${this.udpStatus.logCount}</span> logs</span>
             </div>
           </div>
-          <button onclick="app.clearUDPLogs()" class="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm font-medium transition-colors">
-            🗑️ Clear Logs
-          </button>
+          <div class="flex gap-2">
+            <button onclick="app.saveUDPLogs()" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2" ${this.udpStatus.logCount === 0 ? 'disabled' : ''}>
+              💾 Save Logs
+            </button>
+            <button onclick="app.clearUDPLogs()" class="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm font-medium transition-colors">
+              🗑️ Clear Logs
+            </button>
+          </div>
         </div>
         
         <div id="udp-log-container" class="bg-gray-900 rounded-lg p-4 overflow-y-auto font-mono text-sm" style="height: calc(100vh - 280px);">
