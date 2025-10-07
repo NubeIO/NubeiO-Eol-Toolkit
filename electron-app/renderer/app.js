@@ -323,13 +323,13 @@ class App {
           <div class="flex justify-between items-center">
             <div class="flex gap-3">
               <button 
-                onclick="app.handleDevicePower('${device.deviceId}', ${!acState.power})"
+                onclick="app.handleDevicePower('${device.deviceId}')"
                 ${!this.isConnected ? 'disabled' : ''}
                 class="w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
                   acState.power 
-                    ? 'bg-green-600 text-white' 
-                    : 'bg-gray-400 text-white'
-                } ${!this.isConnected ? 'opacity-50' : 'hover:opacity-80'}"
+                    ? 'bg-green-500 hover:bg-green-600 text-white' 
+                    : 'bg-gray-400 hover:bg-gray-500 text-white'
+                } ${!this.isConnected ? 'opacity-50' : ''}"
               >
                 <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                   <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"/>
@@ -355,7 +355,7 @@ class App {
         <!-- Main ON/OFF Button -->
         <div class="px-6">
           <button
-            onclick="app.handleDevicePower('${device.deviceId}', ${!acState.power})"
+            onclick="app.handleDevicePower('${device.deviceId}')"
             ${!this.isConnected ? 'disabled' : ''}
             class="w-full h-16 rounded-2xl font-bold text-lg shadow-md transition-all mb-4 ${
               acState.power
@@ -436,10 +436,13 @@ class App {
   }
 
   // Helper methods for onclick handlers
-  async handleDevicePower(deviceId, power) {
-    if (!this.isConnected) return;
+  async handleDevicePower(deviceId) {
+    const device = this.discoveredDevices.find(d => d.deviceId === deviceId);
+    if (!device || !this.isConnected) return;
+    
+    const newPowerState = !device.state.power;
     try {
-      await window.electronAPI.setDevicePower(deviceId, power);
+      await window.electronAPI.setDevicePower(deviceId, newPowerState);
       setTimeout(() => this.loadDiscoveredDevices(), 300);
     } catch (error) {
       console.error('Failed to toggle power:', error);
