@@ -1,0 +1,16 @@
+# Dockerfile for cross-platform Electron builds
+FROM electronuserland/builder:wine
+
+WORKDIR /project
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy project files
+COPY . .
+
+# Build for all platforms (Linux, Windows, macOS)
+CMD ["npm", "run", "build:all"]
