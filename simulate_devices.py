@@ -18,7 +18,7 @@ def create_virtual_device(device_id):
         client.subscribe(f"ac_sim/{device_id}/control")
         # Publish discovery
         discovery = {
-            "deviceId": device_id,
+            "device_id": device_id,
             "model": 1,
             "modelName": "Office Model",
             "ip": f"192.168.1.{random.randint(100,200)}",
