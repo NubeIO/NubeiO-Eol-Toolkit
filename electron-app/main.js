@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 
 // Import services
@@ -150,4 +150,26 @@ ipcMain.handle('udp:start', () => {
 ipcMain.handle('udp:stop', () => {
   udpLogger.stop();
   return true;
+});
+
+ipcMain.handle('udp:saveLogs', async (event, filePath, format) => {
+  return await udpLogger.saveLogs(filePath, format);
+});
+
+ipcMain.handle('udp:exportLogsAsString', (event, format) => {
+  return udpLogger.exportLogsAsString(format);
+});
+
+ipcMain.handle('udp:showSaveDialog', async () => {
+  const result = await dialog.showSaveDialog({
+    title: 'Save UDP Logs',
+    defaultPath: `udp-logs-${new Date().toISOString().split('T')[0]}.txt`,
+    filters: [
+      { name: 'Text Files', extensions: ['txt'] },
+      { name: 'JSON Files', extensions: ['json'] },
+      { name: 'CSV Files', extensions: ['csv'] },
+      { name: 'All Files', extensions: ['*'] }
+    ]
+  });
+  return result;
 });

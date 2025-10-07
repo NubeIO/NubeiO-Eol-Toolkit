@@ -37,11 +37,38 @@ Handles UDP logging functionality for ESP32 devices:
 **Key Methods:**
 - `start(port, onLog)` - Start UDP logger on specified port
 - `stop()` - Stop UDP logger
+- `getLogs()` - Get all stored logs
+- `clearLogs()` - Clear all stored logs
+- `saveLogs(filePath, format)` - Save logs to file (txt, json, csv)
+- `exportLogsAsString(format)` - Export logs as formatted string
 - `getStatus()` - Get logger status
 
 **Configuration:**
 - Default port: `56789`
 - Listens on: `0.0.0.0` (all interfaces)
+- Max logs: `1000` entries (FIFO)
+
+**Supported Export Formats:**
+- **TXT** - Plain text format with timestamps
+  ```
+  [2025-10-07T10:30:45.123Z] [192.168.1.100:12345] Log message here
+  ```
+- **JSON** - Structured JSON format
+  ```json
+  [
+    {
+      "timestamp": "2025-10-07T10:30:45.123Z",
+      "from": "192.168.1.100:12345",
+      "size": 128,
+      "message": "Log message here"
+    }
+  ]
+  ```
+- **CSV** - Comma-separated values
+  ```csv
+  Timestamp,Source,Size,Message
+  "2025-10-07T10:30:45.123Z","192.168.1.100:12345",128,"Log message here"
+  ```
 
 ## Architecture
 
@@ -84,6 +111,13 @@ udpLogger.start(56789, (log) => {
 // Use services
 mqttService.sendControlCommand('AC_SIM_123456', 'power', true);
 const devices = mqttService.getDiscoveredDevices();
+
+// Save UDP logs
+const result = await udpLogger.saveLogs('/path/to/logs.txt', 'txt');
+console.log(result.message); // "Logs saved successfully to /path/to/logs.txt"
+
+// Export logs as string
+const logsContent = udpLogger.exportLogsAsString('json');
 
 // Stop services
 mqttService.disconnect();

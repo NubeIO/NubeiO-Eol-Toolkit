@@ -1,4 +1,6 @@
 const dgram = require('dgram');
+const fs = require('fs');
+const path = require('path');
 
 /**
  * UDP Logger Service
@@ -101,6 +103,108 @@ class UDPLogger {
    */
   clearLogs() {
     this.logs = [];
+  }
+
+  /**
+   * Save logs to a file
+   * @param {string} filePath - Path to save the log file
+   * @param {string} format - Format to save logs in ('txt', 'json', 'csv')
+   * @returns {Promise<object>} - Result object with success status and message
+   */
+  async saveLogs(filePath, format = 'txt') {
+    try {
+      if (this.logs.length === 0) {
+        return {
+          success: false,
+          message: 'No logs to save'
+        };
+      }
+
+      let content = '';
+      
+      switch (format.toLowerCase()) {
+        case 'json':
+          content = JSON.stringify(this.logs, null, 2);
+          break;
+          
+        case 'csv':
+          // CSV header
+          content = 'Timestamp,Source,Size,Message\n';
+          // CSV rows
+          this.logs.forEach(log => {
+            const message = log.message.replace(/"/g, '""'); // Escape quotes
+            content += `"${log.timestamp}","${log.from}",${log.size},"${message}"\n`;
+          });
+          break;
+          
+        case 'txt':
+        default:
+          // Plain text format
+          this.logs.forEach(log => {
+            content += `[${log.timestamp}] [${log.from}] ${log.message}\n`;
+          });
+          break;
+      }
+
+      // Ensure directory exists
+      const dir = path.dirname(filePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+
+      // Write file
+      fs.writeFileSync(filePath, content, 'utf8');
+
+      return {
+        success: true,
+        message: `Logs saved successfully to ${filePath}`,
+        logCount: this.logs.length,
+        filePath: filePath
+      };
+    } catch (error) {
+      console.error('Error saving logs:', error);
+      return {
+        success: false,
+        message: `Failed to save logs: ${error.message}`,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Export logs as a formatted string
+   * @param {string} format - Format to export ('txt', 'json', 'csv')
+   * @returns {string} - Formatted log content
+   */
+  exportLogsAsString(format = 'txt') {
+    if (this.logs.length === 0) {
+      return '';
+    }
+
+    let content = '';
+    
+    switch (format.toLowerCase()) {
+      case 'json':
+        content = JSON.stringify(this.logs, null, 2);
+        break;
+        
+      case 'csv':
+        content = 'Timestamp,Source,Size,Message\n';
+        this.logs.forEach(log => {
+          const message = log.message.replace(/"/g, '""');
+          content += `"${log.timestamp}","${log.from}",${log.size},"${message}"\n`;
+        });
+        break;
+        
+      case 'txt':
+      default:
+        this.logs.forEach(log => {
+          content += `[${log.timestamp}] [${log.from}] ${log.message}\n`;
+        });
+        break;
+    }
+
+    return content;
   }
 
   /**
