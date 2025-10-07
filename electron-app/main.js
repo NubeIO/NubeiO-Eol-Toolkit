@@ -173,3 +173,11 @@ ipcMain.handle('udp:showSaveDialog', async () => {
   });
   return result;
 });
+
+ipcMain.handle('udp:enableAutoSave', (event, filePath, format) => {
+  return udpLogger.enableAutoSave(filePath, format);
+});
+
+ipcMain.handle('udp:disableAutoSave', () => {
+  return udpLogger.disableAutoSave();
+});

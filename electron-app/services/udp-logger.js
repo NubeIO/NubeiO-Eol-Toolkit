@@ -14,6 +14,10 @@ class UDPLogger {
     this.onLogCallback = null;
     this.logs = [];
     this.maxLogs = 1000; // Keep last 1000 logs
+    this.autoSaveEnabled = false;
+    this.autoSaveFilePath = null;
+    this.autoSaveFormat = 'txt';
+    this.autoSaveStream = null;
   }
 
   /**
@@ -52,6 +56,11 @@ class UDPLogger {
       
       const logEntry = `UDP [${log.from}]: ${log.message}`;
       console.log(logEntry);
+      
+      // Auto-save to file if enabled
+      if (this.autoSaveEnabled && this.autoSaveFilePath) {
+        this.appendLogToFile(log);
+      }
       
       if (this.onLogCallback) {
         this.onLogCallback(logEntry);
@@ -232,6 +241,132 @@ class UDPLogger {
   }
 
   /**
+   * Enable auto-save to file (real-time logging)
+   * @param {string} filePath - Path to save logs to
+   * @param {string} format - Format ('txt', 'json', 'csv')
+   * @returns {object} - Result object
+   */
+  enableAutoSave(filePath, format = 'txt') {
+    try {
+      this.autoSaveFilePath = filePath;
+      this.autoSaveFormat = format.toLowerCase();
+      this.autoSaveEnabled = true;
+
+      // Ensure directory exists
+      const dir = path.dirname(filePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+
+      // Initialize file with header if needed
+      if (!fs.existsSync(filePath)) {
+        if (this.autoSaveFormat === 'csv') {
+          fs.writeFileSync(filePath, 'Timestamp,Source,Size,Message\n', 'utf8');
+        } else if (this.autoSaveFormat === 'json') {
+          fs.writeFileSync(filePath, '[\n', 'utf8');
+        }
+      }
+
+      console.log(`Auto-save enabled: ${filePath} (${format})`);
+      
+      return {
+        success: true,
+        message: `Auto-save enabled to ${filePath}`,
+        filePath: filePath,
+        format: format
+      };
+    } catch (error) {
+      console.error('Error enabling auto-save:', error);
+      this.autoSaveEnabled = false;
+      return {
+        success: false,
+        message: `Failed to enable auto-save: ${error.message}`,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Disable auto-save
+   * @returns {object} - Result object
+   */
+  disableAutoSave() {
+    try {
+      // Close JSON array if needed
+      if (this.autoSaveEnabled && this.autoSaveFormat === 'json' && this.autoSaveFilePath) {
+        if (fs.existsSync(this.autoSaveFilePath)) {
+          const content = fs.readFileSync(this.autoSaveFilePath, 'utf8');
+          if (content.trim().endsWith(',')) {
+            // Remove trailing comma and close array
+            const newContent = content.trim().slice(0, -1) + '\n]';
+            fs.writeFileSync(this.autoSaveFilePath, newContent, 'utf8');
+          } else if (!content.trim().endsWith(']')) {
+            fs.appendFileSync(this.autoSaveFilePath, '\n]', 'utf8');
+          }
+        }
+      }
+
+      this.autoSaveEnabled = false;
+      const filePath = this.autoSaveFilePath;
+      this.autoSaveFilePath = null;
+      this.autoSaveFormat = 'txt';
+
+      console.log('Auto-save disabled');
+      
+      return {
+        success: true,
+        message: 'Auto-save disabled',
+        filePath: filePath
+      };
+    } catch (error) {
+      console.error('Error disabling auto-save:', error);
+      return {
+        success: false,
+        message: `Failed to disable auto-save: ${error.message}`,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Append a single log entry to the auto-save file
+   * @param {object} log - Log entry object
+   */
+  appendLogToFile(log) {
+    try {
+      if (!this.autoSaveFilePath) return;
+
+      let content = '';
+      
+      switch (this.autoSaveFormat) {
+        case 'json':
+          // Read existing content to check if we need a comma
+          const existingContent = fs.readFileSync(this.autoSaveFilePath, 'utf8');
+          const needsComma = existingContent.trim().length > 1 && !existingContent.trim().endsWith('[');
+          
+          content = (needsComma ? ',\n' : '') + '  ' + JSON.stringify(log);
+          fs.appendFileSync(this.autoSaveFilePath, content, 'utf8');
+          break;
+          
+        case 'csv':
+          const message = log.message.replace(/"/g, '""');
+          content = `"${log.timestamp}","${log.from}",${log.size},"${message}"\n`;
+          fs.appendFileSync(this.autoSaveFilePath, content, 'utf8');
+          break;
+          
+        case 'txt':
+        default:
+          content = `[${log.timestamp}] [${log.from}] ${log.message}\n`;
+          fs.appendFileSync(this.autoSaveFilePath, content, 'utf8');
+          break;
+      }
+    } catch (error) {
+      console.error('Error appending log to file:', error);
+      // Don't disable auto-save on error, just log it
+    }
+  }
+
+  /**
    * Get the current status
    * @returns {object} - Status object
    */
@@ -239,7 +374,10 @@ class UDPLogger {
     return {
       isRunning: this.isRunning,
       port: this.port,
-      logCount: this.logs.length
+      logCount: this.logs.length,
+      autoSaveEnabled: this.autoSaveEnabled,
+      autoSaveFilePath: this.autoSaveFilePath,
+      autoSaveFormat: this.autoSaveFormat
     };
   }
 }
