@@ -148,7 +148,12 @@ class MQTTService {
           const device = this.discoveredDevices.get(deviceId);
           if (device) {
             console.log('Updating device state. Old state:', device.state);
-            device.state = { ...device.state, ...payload };
+            // Extract the actual state data from the payload.data field
+            if (payload.data) {
+              device.state = { ...device.state, ...payload.data };
+            } else {
+              device.state = { ...device.state, ...payload };
+            }
             device.lastSeen = new Date();
             this.discoveredDevices.set(deviceId, device);
             console.log('New state:', device.state);
