@@ -819,7 +819,9 @@ class App {
 }
 
 // Initialize app when DOM is ready
+let app = null;
 window.app = null;
 document.addEventListener('DOMContentLoaded', () => {
-  window.app = new App();
+  app = new App();
+  window.app = app;
 });
