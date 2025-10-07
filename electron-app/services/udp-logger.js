@@ -10,6 +10,8 @@ class UDPLogger {
     this.port = 56789;
     this.isRunning = false;
     this.onLogCallback = null;
+    this.logs = [];
+    this.maxLogs = 1000; // Keep last 1000 logs
   }
 
   /**
@@ -33,9 +35,20 @@ class UDPLogger {
     });
 
     this.server.on('message', (msg, rinfo) => {
-      const logMessage = this.stripAnsiCodes(msg.toString());
-      const logEntry = `UDP [${rinfo.address}:${rinfo.port}]: ${logMessage}`;
+      const log = {
+        timestamp: new Date().toISOString(),
+        message: msg.toString(),
+        from: `${rinfo.address}:${rinfo.port}`,
+        size: rinfo.size
+      };
       
+      // Add to logs array
+      this.logs.unshift(log); // Add to beginning
+      if (this.logs.length > this.maxLogs) {
+        this.logs.pop(); // Remove oldest
+      }
+      
+      const logEntry = `UDP [${log.from}]: ${log.message}`;
       console.log(logEntry);
       
       if (this.onLogCallback) {
@@ -76,13 +89,29 @@ class UDPLogger {
   }
 
   /**
+   * Get all stored logs
+   * @returns {Array} - Array of log objects
+   */
+  getLogs() {
+    return this.logs;
+  }
+
+  /**
+   * Clear all stored logs
+   */
+  clearLogs() {
+    this.logs = [];
+  }
+
+  /**
    * Get the current status
    * @returns {object} - Status object
    */
   getStatus() {
     return {
       isRunning: this.isRunning,
-      port: this.port
+      port: this.port,
+      logCount: this.logs.length
     };
   }
 }
