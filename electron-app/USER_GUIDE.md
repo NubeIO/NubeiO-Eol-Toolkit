@@ -22,7 +22,10 @@ The FGA AC Simulator Electron app allows you to save UDP logs from ESP32 devices
 
 #### 3. Save Logs to File
 
-1. Click the **"💾 Save Logs"** button in the top-right corner
+You have two options:
+
+**Option A: Save Logs (Overwrite)**
+1. Click the **"💾 Save Logs"** button (blue button)
 2. A file save dialog will appear
 3. Choose where to save the file
 4. Select the file format by changing the extension:
@@ -30,7 +33,21 @@ The FGA AC Simulator Electron app allows you to save UDP logs from ESP32 devices
    - **`.json`** - JSON format (for programmatic processing)
    - **`.csv`** - CSV format (for Excel/Google Sheets)
 5. Click **"Save"**
-6. You'll see a success message showing how many logs were saved
+6. The file will be created or **overwritten** if it exists
+7. You'll see a success message showing how many logs were saved
+
+**Option B: Append Logs (Add to Existing File)**
+1. Click the **"➕ Append Logs"** button (green button)
+2. A file save dialog will appear
+3. Select an **existing file** or create a new one
+4. The new logs will be **added to the end** of the file
+5. Perfect for continuous logging sessions
+6. You'll see a success message showing how many logs were appended
+
+**Append Mode Behavior:**
+- **TXT files**: New logs are appended to the end
+- **CSV files**: New rows are added (no duplicate header)
+- **JSON files**: Arrays are merged together
 
 #### 4. Clear Logs (Optional)
 
@@ -76,22 +93,31 @@ Timestamp,Source,Size,Message
    - The logger keeps only the last 1000 logs
    - Save important logs before they're automatically removed
 
-2. **Choose the Right Format**
+2. **Use Append for Continuous Logging**
+   - Use **"Append Logs"** to add new logs to the same file
+   - Perfect for long-running sessions
+   - Example: Append logs every hour to `daily-log.txt`
+
+3. **Choose the Right Format**
    - Use TXT for quick viewing
    - Use JSON for automation
    - Use CSV for spreadsheets
 
-3. **File Naming**
+4. **File Naming**
    - Default filename includes the date: `udp-logs-2025-10-07.txt`
    - You can rename it to anything you want
 
-4. **No Logs Available**
-   - If the "Save Logs" button is disabled, there are no logs to save
+5. **No Logs Available**
+   - If the buttons are disabled, there are no logs to save
    - Wait for ESP32 devices to send UDP messages
 
-5. **Large Log Files**
+6. **Large Log Files**
    - JSON and CSV files may be larger than TXT
    - Saving many logs may take a few seconds
+
+7. **Append vs Save**
+   - **Save (Blue)**: Overwrites the file - use for new log sessions
+   - **Append (Green)**: Adds to existing file - use for continuous logging
 
 ### Troubleshooting
 
