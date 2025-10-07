@@ -231,17 +231,6 @@ class App {
       }
     };
 
-    const handleRoomTempChange = async (delta) => {
-      if (!this.isConnected) return;
-      const newTemp = acState.currentTemp + delta;
-      if (newTemp < -50 || newTemp > 100) return;
-      try {
-        await window.electronAPI.setDeviceRoomTemperature(device.deviceId, newTemp);
-        setTimeout(() => this.loadDiscoveredDevices(), 300);
-      } catch (error) {
-        console.error('Failed to change room temperature:', error);
-      }
-    };
 
     return `
       <div class="bg-white rounded-3xl shadow-2xl overflow-hidden">
