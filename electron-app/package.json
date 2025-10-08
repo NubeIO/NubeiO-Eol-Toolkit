@@ -35,7 +35,7 @@
   },
   "build": {
     "appId": "com.nubeio.fga-simulator",
-    "productName": "FGA Simulator",
+    "productName": "FGA_Simulator",
     "directories": {
       "output": "dist"
     },
@@ -43,6 +43,7 @@
       "main.js",
       "preload.js",
       "renderer/**/*",
+      "services/**/*",
       "node_modules/**/*"
     ],
     "linux": {
