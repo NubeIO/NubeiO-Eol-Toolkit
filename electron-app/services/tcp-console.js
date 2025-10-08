@@ -12,6 +12,7 @@ class TCPConsoleClient extends EventEmitter {
     this.maxMessages = 1000;
     this.reconnectTimer = null;
     this.autoReconnect = false;
+    this.isDestroyed = false; // Flag to prevent events after cleanup
   }
 
   connect(host = '192.168.15.10', port = 56789) {
@@ -20,6 +21,8 @@ class TCPConsoleClient extends EventEmitter {
       return;
     }
 
+    // Reset destroyed flag when reconnecting
+    this.isDestroyed = false;
     this.host = host;
     this.port = port;
 
@@ -30,12 +33,16 @@ class TCPConsoleClient extends EventEmitter {
     this.client.connect(port, host, () => {
       console.log(`TCP Console Client: Connected to ${host}:${port}`);
       this.isConnected = true;
-      this.emit('status-change', { 
-        isConnected: true, 
-        host: this.host, 
-        port: this.port,
-        message: 'Connected successfully'
-      });
+      try {
+        this.emit('status-change', { 
+          isConnected: true, 
+          host: this.host, 
+          port: this.port,
+          message: 'Connected successfully'
+        });
+      } catch (error) {
+        console.log('TCP Console: Ignoring emit error during shutdown');
+      }
       
       // Don't add system message to display, just emit status change
       // this.addMessage('SYSTEM', `Connected to ${host}:${port}`, 'system');
@@ -44,6 +51,11 @@ class TCPConsoleClient extends EventEmitter {
     this.client.on('data', (data) => {
       const message = data.toString();
       console.log(`TCP Console Client: Received: ${message}`);
+      
+      // Don't process data if client is being destroyed
+      if (this.isDestroyed) {
+        return;
+      }
       
       // Split by lines and add each line as a message (including empty lines)
       const lines = message.split(/\r?\n/);
@@ -55,40 +67,54 @@ class TCPConsoleClient extends EventEmitter {
         this.addMessage('SERVER', line, 'received');
       });
       
-      this.emit('data', message);
+      try {
+        this.emit('data', message);
+      } catch (error) {
+        console.log('TCP Console: Ignoring emit error during shutdown');
+      }
     });
 
     this.client.on('close', () => {
       console.log('TCP Console Client: Connection closed');
       this.isConnected = false;
-      this.emit('status-change', { 
-        isConnected: false, 
-        host: this.host, 
-        port: this.port,
-        message: 'Connection closed'
-      });
       
-      // Don't add system message to display, just emit status change
-      // this.addMessage('SYSTEM', 'Connection closed', 'system');
-      
-      if (this.autoReconnect) {
-        this.scheduleReconnect();
+      // Don't emit events if client is being destroyed
+      if (!this.isDestroyed) {
+        try {
+          this.emit('status-change', { 
+            isConnected: false, 
+            host: this.host, 
+            port: this.port,
+            message: 'Connection closed'
+          });
+        } catch (error) {
+          console.log('TCP Console: Ignoring emit error during shutdown');
+        }
+        
+        if (this.autoReconnect) {
+          this.scheduleReconnect();
+        }
       }
     });
 
     this.client.on('error', (err) => {
       console.error(`TCP Console Client: Error - ${err.message}`);
       this.isConnected = false;
-      this.emit('status-change', { 
-        isConnected: false, 
-        host: this.host, 
-        port: this.port,
-        error: err.message,
-        message: `Error: ${err.message}`
-      });
       
-      // Don't add error message to display, status message shown in UI already
-      // this.addMessage('SYSTEM', `Error: ${err.message}`, 'error');
+      // Don't emit events if client is being destroyed
+      if (!this.isDestroyed) {
+        try {
+          this.emit('status-change', { 
+            isConnected: false, 
+            host: this.host, 
+            port: this.port,
+            error: err.message,
+            message: `Error: ${err.message}`
+          });
+        } catch (error) {
+          console.log('TCP Console: Ignoring emit error during shutdown');
+        }
+      }
     });
   }
 
@@ -99,25 +125,38 @@ class TCPConsoleClient extends EventEmitter {
     }
 
     this.autoReconnect = false;
+    
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
 
     if (this.client) {
+      // Remove all listeners to prevent events after destruction
+      this.client.removeAllListeners();
       this.client.destroy();
       this.client = null;
     }
     
     this.isConnected = false;
-    // Don't add system message to display
-    // this.addMessage('SYSTEM', 'Disconnected', 'system');
-    this.emit('status-change', { 
-      isConnected: false, 
-      host: this.host, 
-      port: this.port,
-      message: 'Disconnected'
-    });
+    
+    // Emit final status change before marking as destroyed
+    if (!this.isDestroyed) {
+      try {
+        this.emit('status-change', { 
+          isConnected: false, 
+          host: this.host, 
+          port: this.port,
+          message: 'Disconnected'
+        });
+      } catch (error) {
+        // Ignore errors during shutdown - objects may already be destroyed
+        console.log('TCP Console: Ignoring emit error during shutdown');
+      }
+    }
+    
+    // Mark as destroyed to prevent further event emissions
+    this.isDestroyed = true;
   }
 
   send(message) {
@@ -154,7 +193,14 @@ class TCPConsoleClient extends EventEmitter {
       this.messages.pop();
     }
     
-    this.emit('message', logEntry);
+    // Don't emit events if client is being destroyed
+    if (!this.isDestroyed) {
+      try {
+        this.emit('message', logEntry);
+      } catch (error) {
+        console.log('TCP Console: Ignoring emit error during shutdown');
+      }
+    }
   }
 
   scheduleReconnect() {
@@ -184,7 +230,13 @@ class TCPConsoleClient extends EventEmitter {
 
   clearMessages() {
     this.messages = [];
-    this.emit('messages-cleared');
+    if (!this.isDestroyed) {
+      try {
+        this.emit('messages-cleared');
+      } catch (error) {
+        console.log('TCP Console: Ignoring emit error during shutdown');
+      }
+    }
   }
 
   setAutoReconnect(enabled) {
