@@ -717,20 +717,29 @@ class App {
 
   render() {
     const appDiv = document.getElementById('app');
-    
+
     // If config panel is open, don't re-render (preserve input focus)
     if (this.showConfig && document.getElementById('config-panel')) {
       // Only update non-input elements
       this.updateDynamicContent();
       return;
     }
-    
+
     // If TCP Console inputs have focus, don't re-render (preserve input focus)
     const activeElement = document.activeElement;
-    if (activeElement && 
-        (activeElement.id === 'tcp-host-input' || 
-         activeElement.id === 'tcp-port-input' || 
+    if (activeElement &&
+        (activeElement.id === 'tcp-host-input' ||
+         activeElement.id === 'tcp-port-input' ||
          activeElement.id === 'tcp-message-input')) {
+      return;
+    }
+
+    // If flasher page dropdown or any select/input has focus, don't re-render
+    if (activeElement &&
+        (activeElement.id === 'serial-port-select' ||
+         activeElement.id === 'baud-rate' ||
+         activeElement.id === 'erase-flash' ||
+         activeElement.tagName === 'SELECT')) {
       return;
     }
     
@@ -1136,11 +1145,16 @@ class App {
         .filter(port => {
           // Filter out system ports that are unlikely to be ESP32
           const path = port.path.toLowerCase();
+          const manufacturer = (port.manufacturer || '').toLowerCase();
+          
+          // Filter out:
+          // - Bluetooth ports
+          // - ttySx ports (ttyS0, ttyS1, ttyS2, etc.)
+          // - Unknown manufacturers
           return !path.includes('bluetooth') && 
-                 !path.includes('ttyS0') && 
-                 !path.includes('ttyS1') &&
-                 !path.includes('ttyS2') &&
-                 !path.includes('ttyS3');
+                 !path.match(/ttys\d+/) &&
+                 manufacturer !== '' &&
+                 manufacturer !== 'unknown';
         })
         .sort((a, b) => {
           // Prioritize known ESP32 manufacturers
