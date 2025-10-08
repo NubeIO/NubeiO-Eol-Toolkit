@@ -137,7 +137,7 @@ function createMenu() {
           click: () => {
             const mainWindow = BrowserWindow.getFocusedWindow();
             if (mainWindow) {
-              mainWindow.webContents.send('menu:show-tcp-console');
+              mainWindow.webContents.send('menu:switch-page', 'tcp-console');
             }
           }
         },

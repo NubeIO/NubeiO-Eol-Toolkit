@@ -24,11 +24,6 @@ class TCPConsoleModule {
     }
 
     // Listen for TCP events via menu
-    electronAPI.onMenuEvent('menu:show-tcp-console', () => {
-      this.showConsole = true;
-      this.render();
-    });
-
     electronAPI.onMenuEvent('menu:clear-tcp-console', async () => {
       await this.clearMessages();
     });
