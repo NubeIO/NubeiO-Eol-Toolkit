@@ -4,6 +4,7 @@ const path = require('path');
 // Import services
 const MQTTService = require('./services/mqtt-service');
 const UDPLogger = require('./services/udp-logger');
+const TCPConsole = require('./services/tcp-console');
 
 // Disable hardware acceleration to avoid libva errors
 app.disableHardwareAcceleration();
@@ -11,6 +12,7 @@ app.disableHardwareAcceleration();
 // Global service instances
 let mqttService = null;
 let udpLogger = null;
+let tcpConsole = null;
 
 // Create application menu
 function createMenu() {
@@ -127,6 +129,31 @@ function createMenu() {
       ]
     },
     {
+      label: 'Console',
+      submenu: [
+        {
+          label: 'TCP Console',
+          accelerator: 'CmdOrCtrl+T',
+          click: () => {
+            const mainWindow = BrowserWindow.getFocusedWindow();
+            if (mainWindow) {
+              mainWindow.webContents.send('menu:show-tcp-console');
+            }
+          }
+        },
+        {
+          label: 'Clear Console',
+          accelerator: 'CmdOrCtrl+Shift+K',
+          click: () => {
+            const mainWindow = BrowserWindow.getFocusedWindow();
+            if (mainWindow) {
+              mainWindow.webContents.send('menu:clear-tcp-console');
+            }
+          }
+        }
+      ]
+    },
+    {
       label: 'Window',
       submenu: [
         { label: 'Minimize', accelerator: 'CmdOrCtrl+M', role: 'minimize' },
@@ -229,6 +256,19 @@ function createWindow() {
   mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
     console.error('Failed to load:', errorCode, errorDescription);
   });
+
+  // Forward TCP Console events to renderer
+  tcpConsole.on('message', (messageData) => {
+    mainWindow.webContents.send('tcp:message', messageData);
+  });
+
+  tcpConsole.on('status-change', (status) => {
+    mainWindow.webContents.send('tcp:status-change', status);
+  });
+
+  tcpConsole.on('messages-cleared', () => {
+    mainWindow.webContents.send('tcp:messages-cleared');
+  });
 }
 
 // App lifecycle
@@ -239,11 +279,13 @@ app.whenReady().then(() => {
   // Initialize services
   mqttService = new MQTTService(app);
   udpLogger = new UDPLogger();
+  tcpConsole = new TCPConsole();
   
   createWindow();
   
-  // Start UDP logger automatically
+  // Start UDP logger and TCP console automatically
   udpLogger.start();
+  tcpConsole.start(56789);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -255,6 +297,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   mqttService.disconnect();
   udpLogger.stop();
+  tcpConsole.stop();
   if (process.platform !== 'darwin') {
     app.quit();
   }
@@ -370,5 +413,34 @@ ipcMain.handle('udp:disableAutoSave', () => {
 // External link handler
 ipcMain.handle('open-external', (event, url) => {
   require('electron').shell.openExternal(url);
+  return true;
+});
+
+// TCP Console IPC Handlers
+ipcMain.handle('tcp:getStatus', () => {
+  return tcpConsole.getStatus();
+});
+
+ipcMain.handle('tcp:getMessages', () => {
+  return tcpConsole.getMessages();
+});
+
+ipcMain.handle('tcp:clearMessages', () => {
+  tcpConsole.clearMessages();
+  return true;
+});
+
+ipcMain.handle('tcp:broadcast', (event, message) => {
+  tcpConsole.broadcast(message);
+  return true;
+});
+
+ipcMain.handle('tcp:start', (event, port) => {
+  tcpConsole.start(port || 56789);
+  return true;
+});
+
+ipcMain.handle('tcp:stop', () => {
+  tcpConsole.stop();
   return true;
 });

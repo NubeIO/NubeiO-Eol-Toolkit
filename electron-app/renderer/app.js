@@ -10,7 +10,7 @@ class App {
     // Initialize modules
     this.helpModule = new HelpModule(this);
     this.configLoaded = false; // Track if config has been loaded
-    this.currentPage = 'devices'; // 'devices' or 'udp-logs'
+    this.currentPage = 'devices'; // 'devices', 'udp-logs', or 'tcp-console'
     this.udpLogs = [];
     this.udpStatus = { isRunning: false, port: 56789, logCount: 0 };
     this.lastLogCount = 0; // Track last log count to detect new logs
@@ -24,6 +24,9 @@ class App {
     await this.loadMqttStatus();
     await this.loadDiscoveredDevices();
     await this.loadUDPStatus();
+    
+    // Initialize TCP Console module
+    await tcpConsole.init();
     
     // Start intervals
     setInterval(() => {
@@ -283,6 +286,10 @@ class App {
       this.lastLogCount = this.udpLogs.length;
       this.loadUDPLogs();
       this.loadUDPStatus();
+    } else if (page === 'tcp-console') {
+      tcpConsole.showConsole = true;
+    } else {
+      tcpConsole.showConsole = false;
     }
     this.render();
     console.log('Current page after switch:', this.currentPage);
@@ -738,6 +745,14 @@ class App {
                 }">
                 📡 UDP Logs
               </button>
+              <button onclick="app.switchPage('tcp-console')" 
+                class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  this.currentPage === 'tcp-console' 
+                    ? 'bg-blue-500 text-white' 
+                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                }">
+                💻 TCP Console
+              </button>
             </div>
 
             ${this.showConfig ? `
@@ -771,7 +786,12 @@ class App {
 
         <!-- Content Area -->
         <div class="max-w-7xl mx-auto">
-          ${this.currentPage === 'devices' ? this.renderDevicesPage() : this.renderUDPLogsPage()}
+          ${
+            this.currentPage === 'devices' ? this.renderDevicesPage() : 
+            this.currentPage === 'udp-logs' ? this.renderUDPLogsPage() :
+            this.currentPage === 'tcp-console' ? tcpConsole.render() :
+            this.renderDevicesPage()
+          }
         </div>
       </div>
       
