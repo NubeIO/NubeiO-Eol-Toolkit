@@ -16,9 +16,6 @@ class TCPConsoleModule {
     
     // Throttle message updates to prevent flickering
     this.updatePending = false;
-    
-    // Track user scroll interaction
-    this.userHasScrolled = false;
   }
 
   async init() {
@@ -181,39 +178,13 @@ class TCPConsoleModule {
   }
 
   setupScrollHandler() {
-    const container = document.getElementById('tcp-messages-container');
-    if (!container || container.dataset.scrollHandlerAdded) return;
-    
-    container.dataset.scrollHandlerAdded = 'true';
-    
-    // Detect any scroll interaction
-    container.addEventListener('scroll', () => {
-      // If user scrolled away from bottom, mark as user interaction
-      const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 5;
-      if (!isAtBottom) {
-        this.userHasScrolled = true;
-      } else {
-        // Reset flag when user scrolls back to bottom
-        this.userHasScrolled = false;
-      }
-    });
-    
-    // Also detect mouse/touch interaction that might lead to scrolling
-    container.addEventListener('mousedown', () => {
-      this.userHasScrolled = true;
-    });
-    
-    container.addEventListener('touchstart', () => {
-      this.userHasScrolled = true;
-    });
+    // Don't add scroll handlers - let user control scrolling completely
+    // Auto-scroll is disabled by default and can be enabled via checkbox
   }
 
   updateMessagesOnly() {
     const container = document.getElementById('tcp-messages-container');
     if (!container) return;
-
-    // Setup scroll handler if not already done
-    this.setupScrollHandler();
 
     // Only add the newest messages (that aren't already rendered)
     const currentMessageCount = container.children.length;
@@ -235,8 +206,8 @@ class TCPConsoleModule {
       // Add all messages at once (single DOM update)
       container.appendChild(fragment);
 
-      // Only auto-scroll if: checkbox enabled AND (user at bottom OR hasn't manually scrolled yet)
-      if (this.autoScroll && (isAtBottom || !this.userHasScrolled)) {
+      // Only auto-scroll if checkbox is enabled AND user is already at bottom
+      if (this.autoScroll && isAtBottom) {
         container.scrollTop = container.scrollHeight;
       }
     }
