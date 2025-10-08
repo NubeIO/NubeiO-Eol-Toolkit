@@ -696,6 +696,15 @@ class App {
       return;
     }
     
+    // If TCP Console inputs have focus, don't re-render (preserve input focus)
+    const activeElement = document.activeElement;
+    if (activeElement && 
+        (activeElement.id === 'tcp-host-input' || 
+         activeElement.id === 'tcp-port-input' || 
+         activeElement.id === 'tcp-message-input')) {
+      return;
+    }
+    
     appDiv.innerHTML = `
       <div class="min-h-screen bg-gradient-to-br from-blue-50 to-gray-100 p-4">
         <!-- Header Bar -->
