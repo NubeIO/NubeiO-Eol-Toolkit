@@ -52,7 +52,8 @@
         "deb"
       ],
       "category": "Utility",
-      "maintainer": "Nube IO <info@nube-io.com>"
+      "maintainer": "Nube IO <info@nube-io.com>",
+      "icon": "build/icon.png"
     },
     "win": {
       "target": [
