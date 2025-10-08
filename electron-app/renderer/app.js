@@ -1281,32 +1281,32 @@ class App {
               <p class="text-xs text-gray-400">Connect your ESP32 device and click Refresh Ports</p>
             </div>
           ` : `
-            <div class="grid grid-cols-1 gap-3 overflow-y-auto" style="max-height: 400px;">
+            <div class="grid grid-cols-2 gap-3 overflow-y-auto" style="max-height: 300px;">
               ${this.serialPorts.map(port => `
                 <button
                   onclick="app.selectedPort = '${port.path}'; app.render();"
-                  class="p-4 rounded-lg border-2 transition-all text-left ${
+                  class="p-3 rounded-lg border-2 transition-all text-left ${
                     this.selectedPort === port.path
                       ? 'border-blue-500 bg-blue-50'
                       : 'border-gray-200 bg-white hover:border-blue-300'
                   }"
                 >
-                  <div class="flex items-center justify-between">
-                    <div>
-                      <div class="font-bold text-gray-800">${port.path}</div>
-                      <div class="text-sm text-gray-600">
-                        ${port.manufacturer || 'Unknown Manufacturer'}
-                        ${port.serialNumber ? ` • SN: ${port.serialNumber}` : ''}
-                      </div>
-                    </div>
+                  <div class="flex items-center justify-between mb-1">
+                    <div class="font-bold text-gray-800 text-sm">${port.path}</div>
                     ${this.selectedPort === port.path ? `
-                      <div class="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center">
-                        <svg class="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                      <div class="w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
+                        <svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
                           <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
                         </svg>
                       </div>
                     ` : ''}
                   </div>
+                  <div class="text-xs text-gray-600 truncate">
+                    ${port.manufacturer || 'Unknown'}
+                  </div>
+                  ${port.serialNumber ? `
+                    <div class="text-xs text-gray-500 truncate">SN: ${port.serialNumber}</div>
+                  ` : ''}
                 </button>
               `).join('')}
             </div>
