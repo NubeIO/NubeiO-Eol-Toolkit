@@ -1298,43 +1298,34 @@ class App {
               <p class="text-xs text-gray-400">Connect your ESP32 device and click Refresh Ports</p>
             </div>
           ` : `
-            <div class="max-w-2xl">
-              <div class="grid grid-cols-1 gap-2 max-h-64 overflow-y-auto pr-2">
+            <div>
+              <label class="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                Serial Port
+              </label>
+              <select 
+                id="serial-port-select" 
+                onchange="app.handlePortChange(this.value)"
+                class="max-w-md px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white font-medium shadow-sm transition-all text-sm"
+              >
                 ${this.serialPorts.map(port => `
-                  <label class="flex items-center p-3 rounded-xl border-2 cursor-pointer transition-all ${
-                    this.selectedPort === port.path
-                      ? 'border-blue-500 bg-gradient-to-r from-blue-50 to-blue-100 shadow-md'
-                      : 'border-gray-200 bg-white hover:border-blue-300 hover:shadow-sm'
-                  }">
-                    <input 
-                      type="radio" 
-                      name="serial-port" 
-                      value="${port.path}"
-                      ${this.selectedPort === port.path ? 'checked' : ''}
-                      onchange="app.handlePortChange(this.value)"
-                      class="w-5 h-5 text-blue-500 focus:ring-2 focus:ring-blue-500"
-                    >
-                    <div class="ml-3 flex-1">
-                      <div class="flex items-center gap-2">
-                        <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                        </svg>
-                        <span class="font-bold text-gray-800 text-sm">${port.path}</span>
-                      </div>
-                      <div class="text-xs text-gray-600 mt-1">
-                        ${port.manufacturer || 'Unknown'} ${port.serialNumber ? `• SN: ${port.serialNumber}` : ''}
-                      </div>
-                    </div>
-                    ${this.selectedPort === port.path ? `
-                      <div class="w-6 h-6 bg-gradient-to-br from-green-400 to-green-500 rounded-full flex items-center justify-center flex-shrink-0 ml-2">
-                        <svg class="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
-                          <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
-                        </svg>
-                      </div>
-                    ` : ''}
-                  </label>
+                  <option value="${port.path}" ${this.selectedPort === port.path ? 'selected' : ''}>
+                    ${port.path} - ${port.manufacturer || 'Unknown'} ${port.serialNumber ? `(SN: ${port.serialNumber})` : ''}
+                  </option>
                 `).join('')}
-              </div>
+              </select>
+              
+              ${this.selectedPort ? `
+                <div class="mt-3 p-3 bg-gradient-to-r from-blue-50 to-blue-100 rounded-lg border border-blue-200 max-w-md">
+                  <div class="flex items-center gap-2 text-sm">
+                    <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                    <span class="font-semibold text-gray-700">Selected:</span>
+                    <span class="text-gray-600">${this.selectedPort}</span>
+                  </div>
+                </div>
+              ` : ''}
             </div>
           `}
         </div>
