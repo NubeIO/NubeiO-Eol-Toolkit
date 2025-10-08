@@ -1,0 +1,16 @@
+{
+  "esp32Flasher": {
+    "enabled": true,
+    "description": "ESP32 Firmware Flasher - Flash firmware to ESP32 devices",
+    "requiresEsptool": true
+  },
+  "udpLogger": {
+    "enabled": true,
+    "description": "UDP Logger - Log UDP messages from devices"
+  },
+  "tcpConsole": {
+    "enabled": true,
+    "description": "TCP Console - Connect to devices via TCP"
+  }
+}
+

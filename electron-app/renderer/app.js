@@ -10,6 +10,7 @@ class App {
     // Initialize modules
     this.helpModule = new HelpModule(this);
     this.configLoaded = false; // Track if config has been loaded
+    this.features = {}; // Feature toggles
     this.currentPage = 'devices'; // 'devices', 'udp-logs', 'tcp-console', or 'esp32-flasher'
     this.flasherStatus = { isFlashing: false, hasProcess: false, portsAvailable: 0 };
     this.serialPorts = [];
@@ -26,6 +27,7 @@ class App {
 
   async init() {
     // Load config from backend only once
+    await this.loadFeatures();
     await this.loadMqttConfig();
     await this.loadMqttStatus();
     await this.loadDiscoveredDevices();
@@ -121,6 +123,22 @@ class App {
       console.log('All menu listeners registered');
     } else {
       console.log('electronAPI not available');
+    }
+  }
+
+  async loadFeatures() {
+    try {
+      const response = await fetch('./config/features.json');
+      this.features = await response.json();
+      console.log('Features loaded:', this.features);
+    } catch (error) {
+      console.error('Failed to load features:', error);
+      // Default to all features enabled if config not found
+      this.features = {
+        esp32Flasher: { enabled: true },
+        udpLogger: { enabled: true },
+        tcpConsole: { enabled: true }
+      };
     }
   }
 
@@ -757,6 +775,7 @@ class App {
                 }">
                 🏠 Devices
               </button>
+              ${this.features.udpLogger?.enabled !== false ? `
               <button onclick="app.switchPage('udp-logs')" 
                 class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   this.currentPage === 'udp-logs' 
@@ -765,6 +784,8 @@ class App {
                 }">
                 📡 UDP Logs
               </button>
+              ` : ''}
+              ${this.features.tcpConsole?.enabled !== false ? `
               <button onclick="app.switchPage('tcp-console')" 
                 class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   this.currentPage === 'tcp-console' 
@@ -773,6 +794,8 @@ class App {
                 }">
                 💻 TCP Console
               </button>
+              ` : ''}
+              ${this.features.esp32Flasher?.enabled !== false ? `
               <button onclick="app.switchPage('esp32-flasher')" 
                 class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   this.currentPage === 'esp32-flasher' 
@@ -781,6 +804,7 @@ class App {
                 }">
                 ⚡ ESP32 Flasher
               </button>
+              ` : ''}
             </div>
 
             ${this.showConfig ? `
