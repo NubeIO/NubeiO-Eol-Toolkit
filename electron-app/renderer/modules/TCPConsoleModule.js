@@ -186,6 +186,9 @@ class TCPConsoleModule {
     const newMessagesCount = this.messages.length - currentMessageCount;
 
     if (newMessagesCount > 0) {
+      // Check if user is near bottom before adding messages
+      const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 50;
+      
       // Create a document fragment to batch DOM operations
       const fragment = document.createDocumentFragment();
       
@@ -198,8 +201,8 @@ class TCPConsoleModule {
       // Add all messages at once (single DOM update)
       container.appendChild(fragment);
 
-      // Auto-scroll to bottom if enabled
-      if (this.autoScroll) {
+      // Auto-scroll to bottom only if enabled AND user was near bottom
+      if (this.autoScroll && isNearBottom) {
         container.scrollTop = container.scrollHeight;
       }
     }
