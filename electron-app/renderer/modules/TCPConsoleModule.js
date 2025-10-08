@@ -16,6 +16,9 @@ class TCPConsoleModule {
     
     // Throttle message updates to prevent flickering
     this.updatePending = false;
+    
+    // Track user scroll interaction
+    this.userHasScrolled = false;
   }
 
   async init() {
@@ -177,17 +180,37 @@ class TCPConsoleModule {
     }
   }
 
+  setupScrollHandler() {
+    const container = document.getElementById('tcp-messages-container');
+    if (!container || container.dataset.scrollHandlerAdded) return;
+    
+    container.dataset.scrollHandlerAdded = 'true';
+    
+    container.addEventListener('wheel', () => {
+      // User manually scrolled with mouse wheel
+      this.userHasScrolled = true;
+    });
+    
+    container.addEventListener('touchmove', () => {
+      // User manually scrolled with touch
+      this.userHasScrolled = true;
+    });
+  }
+
   updateMessagesOnly() {
     const container = document.getElementById('tcp-messages-container');
     if (!container) return;
+
+    // Setup scroll handler if not already done
+    this.setupScrollHandler();
 
     // Only add the newest messages (that aren't already rendered)
     const currentMessageCount = container.children.length;
     const newMessagesCount = this.messages.length - currentMessageCount;
 
     if (newMessagesCount > 0) {
-      // Check if user is near bottom before adding messages
-      const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 50;
+      // Check if user is at bottom before adding messages
+      const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 5;
       
       // Create a document fragment to batch DOM operations
       const fragment = document.createDocumentFragment();
@@ -201,8 +224,8 @@ class TCPConsoleModule {
       // Add all messages at once (single DOM update)
       container.appendChild(fragment);
 
-      // Auto-scroll to bottom only if enabled AND user was near bottom
-      if (this.autoScroll && isNearBottom) {
+      // Only auto-scroll if: checkbox enabled AND (user at bottom OR hasn't manually scrolled yet)
+      if (this.autoScroll && (isAtBottom || !this.userHasScrolled)) {
         container.scrollTop = container.scrollHeight;
       }
     }
