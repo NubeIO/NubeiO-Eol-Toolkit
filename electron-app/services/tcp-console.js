@@ -44,12 +44,14 @@ class TCPConsoleClient extends EventEmitter {
       const message = data.toString();
       console.log(`TCP Console Client: Received: ${message}`);
       
-      // Split by lines and add each line as a message
+      // Split by lines and add each line as a message (including empty lines)
       const lines = message.split(/\r?\n/);
-      lines.forEach(line => {
-        if (line.trim()) {
-          this.addMessage('SERVER', line, 'received');
+      lines.forEach((line, index) => {
+        // Skip the last empty line from split (if message ends with \n)
+        if (index === lines.length - 1 && line === '') {
+          return;
         }
+        this.addMessage('SERVER', line, 'received');
       });
       
       this.emit('data', message);
