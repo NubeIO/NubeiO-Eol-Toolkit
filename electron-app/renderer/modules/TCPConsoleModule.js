@@ -200,6 +200,7 @@ class TCPConsoleModule {
     messageEl.style.fontSize = '13px';
     messageEl.style.padding = '2px 8px';
     messageEl.style.borderBottom = '1px solid #e5e7eb';
+    messageEl.style.whiteSpace = 'pre-wrap'; // Preserve spaces and line breaks
 
     const time = new Date(msg.timestamp).toLocaleTimeString();
     
@@ -224,7 +225,7 @@ class TCPConsoleModule {
     messageEl.innerHTML = `
       <span style="color: #6b7280">${time}</span>
       <span style="color: ${fromColor}; margin-left: 12px; font-weight: 500">[${fromLabel}]</span>
-      <span style="color: #1f2937; margin-left: 12px">${this.escapeHtml(msg.message)}</span>
+      <span style="color: #1f2937; margin-left: 12px; white-space: pre-wrap;">${this.escapeHtml(msg.message)}</span>
     `;
 
     return messageEl;
