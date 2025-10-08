@@ -7,14 +7,14 @@ class TCPConsoleClient extends EventEmitter {
     this.client = null;
     this.messages = [];
     this.isConnected = false;
-    this.host = 'localhost';
+    this.host = '192.168.15.10';
     this.port = 56789;
     this.maxMessages = 1000;
     this.reconnectTimer = null;
     this.autoReconnect = false;
   }
 
-  connect(host = 'localhost', port = 56789) {
+  connect(host = '192.168.15.10', port = 56789) {
     if (this.isConnected) {
       console.log('TCP Console Client: Already connected');
       return;
