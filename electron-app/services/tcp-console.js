@@ -37,7 +37,8 @@ class TCPConsoleClient extends EventEmitter {
         message: 'Connected successfully'
       });
       
-      this.addMessage('SYSTEM', `Connected to ${host}:${port}`, 'system');
+      // Don't add system message to display, just emit status change
+      // this.addMessage('SYSTEM', `Connected to ${host}:${port}`, 'system');
     });
 
     this.client.on('data', (data) => {
@@ -67,7 +68,8 @@ class TCPConsoleClient extends EventEmitter {
         message: 'Connection closed'
       });
       
-      this.addMessage('SYSTEM', 'Connection closed', 'system');
+      // Don't add system message to display, just emit status change
+      // this.addMessage('SYSTEM', 'Connection closed', 'system');
       
       if (this.autoReconnect) {
         this.scheduleReconnect();
@@ -85,7 +87,8 @@ class TCPConsoleClient extends EventEmitter {
         message: `Error: ${err.message}`
       });
       
-      this.addMessage('SYSTEM', `Error: ${err.message}`, 'error');
+      // Don't add error message to display, status message shown in UI already
+      // this.addMessage('SYSTEM', `Error: ${err.message}`, 'error');
     });
   }
 
@@ -107,7 +110,8 @@ class TCPConsoleClient extends EventEmitter {
     }
     
     this.isConnected = false;
-    this.addMessage('SYSTEM', 'Disconnected', 'system');
+    // Don't add system message to display
+    // this.addMessage('SYSTEM', 'Disconnected', 'system');
     this.emit('status-change', { 
       isConnected: false, 
       host: this.host, 
@@ -119,7 +123,8 @@ class TCPConsoleClient extends EventEmitter {
   send(message) {
     if (!this.isConnected || !this.client) {
       console.error('TCP Console Client: Not connected');
-      this.addMessage('SYSTEM', 'Cannot send: Not connected', 'error');
+      // Don't add error to display, status is shown in UI
+      // this.addMessage('SYSTEM', 'Cannot send: Not connected', 'error');
       return false;
     }
 
@@ -130,7 +135,8 @@ class TCPConsoleClient extends EventEmitter {
       return true;
     } catch (err) {
       console.error(`TCP Console Client: Send error - ${err.message}`);
-      this.addMessage('SYSTEM', `Send error: ${err.message}`, 'error');
+      // Don't add error to display
+      // this.addMessage('SYSTEM', `Send error: ${err.message}`, 'error');
       return false;
     }
   }

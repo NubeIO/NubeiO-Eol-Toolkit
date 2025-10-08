@@ -1,14 +1,14 @@
 class TCPConsoleModule {
   constructor() {
     this.messages = [];
-    this.status = { isConnected: false, host: 'localhost', port: 56789 };
+    this.status = { isConnected: false, host: '192.168.15.10', port: 56789 };
     this.autoScroll = true;
     this.messageInput = '';
     this.showConsole = false;
     this.autoReconnect = false;
     
     // Connection settings
-    this.host = 'localhost';
+    this.host = '192.168.15.10';
     this.port = 56789;
     
     // Cache last rendered HTML to prevent re-render when inputs have focus
