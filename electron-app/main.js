@@ -4,6 +4,7 @@ const path = require('path');
 // Import services
 const MQTTService = require('./services/mqtt-service');
 const UDPLogger = require('./services/udp-logger');
+const ESP32Flasher = require('./services/esp32-flasher');
 const TCPConsoleClient = require('./services/tcp-console');
 
 // Disable hardware acceleration to avoid libva errors
@@ -12,6 +13,7 @@ app.disableHardwareAcceleration();
 // Global service instances
 let mqttService = null;
 let udpLogger = null;
+let esp32Flasher = null;
 let tcpConsole = null;
 
 // Create application menu
@@ -280,6 +282,7 @@ app.whenReady().then(() => {
   mqttService = new MQTTService(app);
   udpLogger = new UDPLogger();
   tcpConsole = new TCPConsoleClient();
+  esp32Flasher = new ESP32Flasher();
   
   createWindow();
   
@@ -414,6 +417,39 @@ ipcMain.handle('udp:disableAutoSave', () => {
 ipcMain.handle('open-external', (event, url) => {
   require('electron').shell.openExternal(url);
   return true;
+});
+
+// ESP32 Flasher IPC Handlers
+ipcMain.handle('flasher:getSerialPorts', async () => {
+  return await esp32Flasher.getSerialPorts();
+});
+
+ipcMain.handle('flasher:getStatus', () => {
+  return esp32Flasher.getStatus();
+});
+
+ipcMain.handle('flasher:verifyFirmware', (event, filePath) => {
+  return esp32Flasher.verifyFirmware(filePath);
+});
+
+ipcMain.handle('flasher:flashFirmware', async (event, options) => {
+  return await esp32Flasher.flashFirmware(options);
+});
+
+ipcMain.handle('flasher:cancelFlash', () => {
+  return esp32Flasher.cancelFlash();
+});
+
+ipcMain.handle('flasher:showFirmwareDialog', async () => {
+  const result = await dialog.showOpenDialog({
+    title: 'Select Firmware File',
+    filters: [
+      { name: 'Firmware Files', extensions: ['bin', 'elf'] },
+      { name: 'All Files', extensions: ['*'] }
+    ],
+    properties: ['openFile']
+  });
+  return result;
 });
 
 // TCP Console Client IPC Handlers

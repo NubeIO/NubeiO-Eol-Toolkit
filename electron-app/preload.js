@@ -63,7 +63,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   sendTCP: (message) => ipcRenderer.invoke('tcp:send', message),
   connectTCP: (host, port) => ipcRenderer.invoke('tcp:connect', host, port),
   disconnectTCP: () => ipcRenderer.invoke('tcp:disconnect'),
-  setTCPAutoReconnect: (enabled) => ipcRenderer.invoke('tcp:setAutoReconnect', enabled)
+  setTCPAutoReconnect: (enabled) => ipcRenderer.invoke('tcp:setAutoReconnect', enabled),
+  
+  // ESP32 Flasher methods
+  getSerialPorts: () => ipcRenderer.invoke('flasher:getSerialPorts'),
+  getFlasherStatus: () => ipcRenderer.invoke('flasher:getStatus'),
+  verifyFirmware: (filePath) => ipcRenderer.invoke('flasher:verifyFirmware', filePath),
+  flashFirmware: (options) => ipcRenderer.invoke('flasher:flashFirmware', options),
+  cancelFlash: () => ipcRenderer.invoke('flasher:cancelFlash'),
+  showFirmwareDialog: () => ipcRenderer.invoke('flasher:showFirmwareDialog')
 });
 
 console.log('electronAPI exposed to window');
