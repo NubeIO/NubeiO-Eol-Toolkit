@@ -1302,7 +1302,7 @@ class App {
               <select 
                 id="serial-port-select" 
                 onchange="app.selectedPort = this.value; app.render();"
-                class="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white font-medium shadow-sm transition-all"
+                class="max-w-md px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white font-medium shadow-sm transition-all"
               >
                 ${this.serialPorts.map(port => `
                   <option value="${port.path}" ${this.selectedPort === port.path ? 'selected' : ''}>
