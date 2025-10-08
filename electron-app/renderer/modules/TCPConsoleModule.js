@@ -86,6 +86,14 @@ class TCPConsoleModule {
         if (inputEl) {
           inputEl.value = '';
         }
+        
+        // Scroll to bottom after sending a command
+        setTimeout(() => {
+          const container = document.getElementById('tcp-messages-container');
+          if (container) {
+            container.scrollTop = container.scrollHeight;
+          }
+        }, 100);
       }
     } catch (error) {
       console.error('Failed to send TCP message:', error);
@@ -191,8 +199,22 @@ class TCPConsoleModule {
     const newMessagesCount = this.messages.length - currentMessageCount;
 
     if (newMessagesCount > 0) {
+      // Store current scroll position to preserve it
+      const scrollTop = container.scrollTop;
+      const scrollHeight = container.scrollHeight;
+      
       // Check if user is at bottom before adding messages
-      const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 5;
+      const isAtBottom = scrollHeight - scrollTop - container.clientHeight < 5;
+      
+      // Check if any of the new messages are received data (not sent messages)
+      let hasReceivedData = false;
+      for (let i = newMessagesCount - 1; i >= 0; i--) {
+        const msg = this.messages[i];
+        if (msg.type === 'received') {
+          hasReceivedData = true;
+          break;
+        }
+      }
       
       // Create a document fragment to batch DOM operations
       const fragment = document.createDocumentFragment();
@@ -206,10 +228,13 @@ class TCPConsoleModule {
       // Add all messages at once (single DOM update)
       container.appendChild(fragment);
 
-      // Only auto-scroll if checkbox is enabled AND user is already at bottom
-      if (this.autoScroll && isAtBottom) {
+      // Auto-scroll if:
+      // 1. Auto-scroll checkbox is enabled AND user was already at bottom, OR
+      // 2. New received data arrived (always scroll to see server response)
+      if ((this.autoScroll && isAtBottom) || hasReceivedData) {
         container.scrollTop = container.scrollHeight;
       }
+      // Otherwise, maintain the user's scroll position
     }
   }
 
@@ -226,9 +251,7 @@ class TCPConsoleModule {
     // Only show prefix for sent messages and special cases (not for received messages)
     if (msg.type === 'sent') {
       messageEl.innerHTML = `
-        <span style="color: #6b7280">${time}</span>
-        <span style="color: #0066cc; margin-left: 12px; font-weight: 500">[CLIENT]</span>
-        <span style="color: #1f2937; margin-left: 12px; white-space: pre-wrap;">${this.escapeHtml(msg.message)}</span>
+        <span style="color: #1f2937; white-space: pre-wrap;">${this.escapeHtml(msg.message)}</span>
       `;
     } else if (msg.type === 'system') {
       messageEl.innerHTML = `
@@ -435,8 +458,30 @@ class TCPConsoleModule {
       return this.lastRenderedHtml || this.renderConsole();
     }
     
+    // Store scroll position before re-render
+    const container = document.getElementById('tcp-messages-container');
+    let savedScrollTop = 0;
+    if (container) {
+      savedScrollTop = container.scrollTop;
+    }
+    
     // This will be called by the main app render
     this.lastRenderedHtml = this.renderConsole();
+    
+    // Restore scroll position after re-render (use both setTimeout and requestAnimationFrame for reliability)
+    if (container && savedScrollTop > 0) {
+      const restoreScroll = () => {
+        const newContainer = document.getElementById('tcp-messages-container');
+        if (newContainer) {
+          newContainer.scrollTop = savedScrollTop;
+        }
+      };
+      
+      // Try both methods to ensure scroll position is restored
+      setTimeout(restoreScroll, 0);
+      requestAnimationFrame(restoreScroll);
+    }
+    
     return this.lastRenderedHtml;
   }
 }
