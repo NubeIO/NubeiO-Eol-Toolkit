@@ -1301,7 +1301,7 @@ class App {
               </label>
               <select 
                 id="serial-port-select" 
-                onchange="app.selectedPort = this.value; app.render();"
+                onchange="app.selectedPort = this.value;"
                 class="max-w-md px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white font-medium shadow-sm transition-all"
               >
                 ${this.serialPorts.map(port => `
@@ -1311,15 +1311,27 @@ class App {
                 `).join('')}
               </select>
               
-              ${this.selectedPort ? `
-                <div class="mt-3 p-3 bg-gradient-to-r from-blue-50 to-blue-100 rounded-lg border border-blue-200">
-                  <div class="flex items-center gap-2 text-sm">
-                    <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                    <span class="font-semibold text-gray-700">Selected:</span>
-                    <span class="text-gray-600">${this.selectedPort}</span>
-                  </div>
+              <div id="selected-port-display" class="mt-3 p-3 bg-gradient-to-r from-blue-50 to-blue-100 rounded-lg border border-blue-200" style="${this.selectedPort ? '' : 'display: none;'}">
+                <div class="flex items-center gap-2 text-sm">
+                  <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                  <span class="font-semibold text-gray-700">Selected:</span>
+                  <span id="selected-port-text" class="text-gray-600">${this.selectedPort || ''}</span>
                 </div>
-              ` : ''}
+              </div>
+              <script>
+                const portSelect = document.getElementById('serial-port-select');
+                if (portSelect) {
+                  portSelect.onchange = function() {
+                    app.selectedPort = this.value;
+                    const display = document.getElementById('selected-port-display');
+                    const text = document.getElementById('selected-port-text');
+                    if (display && text) {
+                      display.style.display = '';
+                      text.textContent = this.value;
+                    }
+                  };
+                }
+              </script>
             </div>
           `}
         </div>
