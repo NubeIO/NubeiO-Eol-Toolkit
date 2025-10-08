@@ -94,9 +94,7 @@ class HelpModule {
         <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
           <!-- Header -->
           <div class="text-center p-8 border-b">
-            <div class="w-20 h-20 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl mx-auto mb-4 flex items-center justify-center">
-              <span class="text-3xl">🏠</span>
-            </div>
+            <img src="assets/Logo.svg" alt="FGA Simulator Logo" class="h-16 mx-auto mb-4" />
             <h1 class="text-3xl font-bold text-gray-800 mb-2">FGA AC Simulator</h1>
             <p class="text-lg text-gray-600">Fujitsu AC Simulator with MQTT - Electron Version</p>
             <div class="mt-2 px-4 py-2 bg-blue-100 text-blue-800 rounded-full text-sm font-medium inline-block">

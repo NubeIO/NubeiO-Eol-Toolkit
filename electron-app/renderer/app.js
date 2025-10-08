@@ -696,10 +696,13 @@ class App {
           <div class="bg-white rounded-2xl shadow-lg p-4">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-4">
-                <h1 class="text-2xl font-bold text-gray-800">FGA Simulator</h1>
-                <div class="flex items-center gap-2">
-                  <div class="w-3 h-3 rounded-full ${this.isConnected ? 'bg-green-500' : 'bg-red-500'}"></div>
-                  <span class="text-sm text-gray-600">${this.isConnected ? 'Connected' : 'Disconnected'}</span>
+                <img src="assets/Logo.svg" alt="FGA Simulator Logo" class="h-10" />
+                <div>
+                  <h1 class="text-2xl font-bold text-gray-800">FGA Simulator</h1>
+                  <div class="flex items-center gap-2">
+                    <div class="w-3 h-3 rounded-full ${this.isConnected ? 'bg-green-500' : 'bg-red-500'}"></div>
+                    <span class="text-sm text-gray-600">${this.isConnected ? 'Connected' : 'Disconnected'}</span>
+                  </div>
                 </div>
               </div>
               <div class="flex items-center gap-3">
