@@ -2,7 +2,7 @@ class TCPConsoleModule {
   constructor() {
     this.messages = [];
     this.status = { isConnected: false, host: '192.168.15.10', port: 56789 };
-    this.autoScroll = true;
+    this.autoScroll = false; // Disabled by default to prevent annoying scrolling
     this.messageInput = '';
     this.showConsole = false;
     this.autoReconnect = false;
@@ -186,13 +186,24 @@ class TCPConsoleModule {
     
     container.dataset.scrollHandlerAdded = 'true';
     
-    container.addEventListener('wheel', () => {
-      // User manually scrolled with mouse wheel
+    // Detect any scroll interaction
+    container.addEventListener('scroll', () => {
+      // If user scrolled away from bottom, mark as user interaction
+      const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 5;
+      if (!isAtBottom) {
+        this.userHasScrolled = true;
+      } else {
+        // Reset flag when user scrolls back to bottom
+        this.userHasScrolled = false;
+      }
+    });
+    
+    // Also detect mouse/touch interaction that might lead to scrolling
+    container.addEventListener('mousedown', () => {
       this.userHasScrolled = true;
     });
     
-    container.addEventListener('touchmove', () => {
-      // User manually scrolled with touch
+    container.addEventListener('touchstart', () => {
       this.userHasScrolled = true;
     });
   }

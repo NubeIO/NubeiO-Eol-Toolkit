@@ -819,15 +819,15 @@ class App {
       }, 0);
     }
     
-    // Auto-scroll to bottom for TCP Console on initial render
-    if (this.currentPage === 'tcp-console') {
-      setTimeout(() => {
-        const tcpContainer = document.getElementById('tcp-messages-container');
-        if (tcpContainer) {
-          tcpContainer.scrollTop = tcpContainer.scrollHeight;
-        }
-      }, 0);
-    }
+    // Don't auto-scroll TCP Console on render - let user control it
+    // if (this.currentPage === 'tcp-console') {
+    //   setTimeout(() => {
+    //     const tcpContainer = document.getElementById('tcp-messages-container');
+    //     if (tcpContainer) {
+    //       tcpContainer.scrollTop = tcpContainer.scrollHeight;
+    //     }
+    //   }, 0);
+    // }
   }
 
   renderDevicesPage() {
