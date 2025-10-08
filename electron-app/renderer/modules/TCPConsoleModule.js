@@ -174,9 +174,6 @@ class TCPConsoleModule {
     const container = document.getElementById('tcp-messages-container');
     if (!container) return;
 
-    // Check if user is near bottom before adding new messages
-    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
-
     // Only add the newest messages (that aren't already rendered)
     const currentMessageCount = container.children.length;
     const newMessagesCount = this.messages.length - currentMessageCount;
@@ -188,8 +185,8 @@ class TCPConsoleModule {
         container.appendChild(messageEl);
       }
 
-      // Auto-scroll if user was near bottom
-      if (this.autoScroll && isNearBottom) {
+      // Auto-scroll to bottom if enabled
+      if (this.autoScroll) {
         requestAnimationFrame(() => {
           container.scrollTop = container.scrollHeight;
         });
