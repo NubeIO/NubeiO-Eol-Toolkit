@@ -13,6 +13,9 @@ class TCPConsoleModule {
     
     // Cache last rendered HTML to prevent re-render when inputs have focus
     this.lastRenderedHtml = '';
+    
+    // Throttle message updates to prevent flickering
+    this.updatePending = false;
   }
 
   async init() {
@@ -36,8 +39,12 @@ class TCPConsoleModule {
       if (this.messages.length > 1000) {
         this.messages.pop();
       }
-      if (this.showConsole) {
-        this.updateMessagesOnly();
+      if (this.showConsole && !this.updatePending) {
+        this.updatePending = true;
+        requestAnimationFrame(() => {
+          this.updateMessagesOnly();
+          this.updatePending = false;
+        });
       }
     });
 
@@ -179,17 +186,21 @@ class TCPConsoleModule {
     const newMessagesCount = this.messages.length - currentMessageCount;
 
     if (newMessagesCount > 0) {
+      // Create a document fragment to batch DOM operations
+      const fragment = document.createDocumentFragment();
+      
       for (let i = newMessagesCount - 1; i >= 0; i--) {
         const msg = this.messages[i];
         const messageEl = this.createMessageElement(msg);
-        container.appendChild(messageEl);
+        fragment.appendChild(messageEl);
       }
+      
+      // Add all messages at once (single DOM update)
+      container.appendChild(fragment);
 
       // Auto-scroll to bottom if enabled
       if (this.autoScroll) {
-        requestAnimationFrame(() => {
-          container.scrollTop = container.scrollHeight;
-        });
+        container.scrollTop = container.scrollHeight;
       }
     }
   }
