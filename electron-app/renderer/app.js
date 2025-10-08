@@ -1257,23 +1257,34 @@ class App {
 
   renderFlasherPage() {
     return `
-      <div class="bg-white rounded-2xl shadow-lg p-6">
-        <div class="mb-6">
+      <div class="bg-gradient-to-br from-white to-blue-50 rounded-2xl shadow-2xl p-8">
+        <div class="mb-8">
           <div class="flex items-center justify-between mb-4">
-            <h2 class="text-2xl font-bold text-gray-800">⚡ ESP32 Firmware Flasher</h2>
+            <div>
+              <h2 class="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent flex items-center gap-3">
+                <span class="text-4xl">⚡</span>
+                ESP32 Firmware Flasher
+              </h2>
+              <p class="text-gray-600 text-sm mt-2 ml-1">Flash firmware to ESP32 devices via serial port</p>
+            </div>
             <button 
               onclick="app.loadSerialPorts(); app.render();" 
-              class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+              class="px-5 py-2.5 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-xl text-sm font-semibold transition-all shadow-lg hover:shadow-xl flex items-center gap-2 transform hover:scale-105"
             >
-              🔄 Refresh Ports
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Refresh Ports
             </button>
           </div>
-          <p class="text-gray-600 text-sm">Flash firmware to ESP32 devices via serial port</p>
         </div>
 
         <!-- Serial Port Selection -->
-        <div class="mb-6 p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border border-blue-200">
-          <h3 class="text-lg font-semibold text-gray-700 mb-3">1️⃣ Select Serial Port</h3>
+        <div class="mb-6 p-6 bg-gradient-to-r from-blue-50 to-purple-50 rounded-2xl border-2 border-blue-200 shadow-lg">
+          <h3 class="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+            <span class="w-8 h-8 bg-blue-500 text-white rounded-full flex items-center justify-center text-sm font-bold">1</span>
+            Select Serial Port
+          </h3>
           
           ${this.serialPorts.length === 0 ? `
             <div class="text-center py-8">
@@ -1281,31 +1292,36 @@ class App {
               <p class="text-xs text-gray-400">Connect your ESP32 device and click Refresh Ports</p>
             </div>
           ` : `
-            <div class="grid grid-cols-2 gap-3 overflow-y-auto" style="max-height: 300px;">
+            <div class="grid grid-cols-2 gap-3 overflow-y-auto pr-2" style="max-height: 300px;">
               ${this.serialPorts.map(port => `
                 <button
                   onclick="app.selectedPort = '${port.path}'; app.render();"
-                  class="p-3 rounded-lg border-2 transition-all text-left ${
+                  class="p-4 rounded-xl border-2 transition-all text-left shadow-md hover:shadow-lg transform hover:-translate-y-1 ${
                     this.selectedPort === port.path
-                      ? 'border-blue-500 bg-blue-50'
+                      ? 'border-blue-500 bg-gradient-to-br from-blue-50 to-blue-100 shadow-blue-200'
                       : 'border-gray-200 bg-white hover:border-blue-300'
                   }"
                 >
-                  <div class="flex items-center justify-between mb-1">
-                    <div class="font-bold text-gray-800 text-sm">${port.path}</div>
+                  <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                      <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
+                      <div class="font-bold text-gray-800 text-sm">${port.path}</div>
+                    </div>
                     ${this.selectedPort === port.path ? `
-                      <div class="w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
-                        <svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                      <div class="w-6 h-6 bg-gradient-to-br from-green-400 to-green-500 rounded-full flex items-center justify-center flex-shrink-0 shadow-md">
+                        <svg class="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
                           <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
                         </svg>
                       </div>
                     ` : ''}
                   </div>
-                  <div class="text-xs text-gray-600 truncate">
+                  <div class="text-xs text-gray-600 truncate font-medium">
                     ${port.manufacturer || 'Unknown'}
                   </div>
                   ${port.serialNumber ? `
-                    <div class="text-xs text-gray-500 truncate">SN: ${port.serialNumber}</div>
+                    <div class="text-xs text-gray-500 truncate mt-1">🔢 ${port.serialNumber}</div>
                   ` : ''}
                 </button>
               `).join('')}
@@ -1314,87 +1330,115 @@ class App {
         </div>
 
         <!-- Firmware Selection -->
-        <div class="mb-6 p-4 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg border border-green-200">
-          <h3 class="text-lg font-semibold text-gray-700 mb-3">2️⃣ Select Firmware File</h3>
+        <div class="mb-6 p-6 bg-gradient-to-r from-green-50 to-emerald-50 rounded-2xl border-2 border-green-200 shadow-lg">
+          <h3 class="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+            <span class="w-8 h-8 bg-green-500 text-white rounded-full flex items-center justify-center text-sm font-bold">2</span>
+            Select Firmware File
+          </h3>
           
           <div class="flex items-center gap-3 mb-3">
             <button
               onclick="app.selectFirmwareFile()"
-              class="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+              class="px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white rounded-xl text-sm font-semibold transition-all shadow-lg hover:shadow-xl flex items-center gap-2 transform hover:scale-105"
             >
-              📁 Browse Firmware (.bin / .elf)
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+              </svg>
+              Browse Firmware (.bin / .elf)
             </button>
             
             ${this.selectedFirmware ? `
-              <div class="flex-1 px-4 py-2 bg-white rounded-lg border border-green-300">
+              <div class="flex-1 px-5 py-3 bg-gradient-to-r from-white to-green-50 rounded-xl border-2 border-green-300 shadow-md">
                 <div class="flex items-center justify-between">
-                  <div>
-                    <div class="text-sm font-medium text-gray-800">${this.selectedFirmware.split('/').pop()}</div>
-                    <div class="text-xs text-gray-500">${this.selectedFirmware}</div>
+                  <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                      <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <div class="text-sm font-bold text-gray-800">${this.selectedFirmware.split('/').pop()}</div>
+                      <div class="text-xs text-gray-500 truncate max-w-md">${this.selectedFirmware}</div>
+                    </div>
                   </div>
                   <button
                     onclick="app.selectedFirmware = ''; app.render();"
-                    class="text-red-500 hover:text-red-700"
+                    class="w-8 h-8 bg-red-100 hover:bg-red-200 rounded-lg text-red-600 hover:text-red-700 transition-all flex items-center justify-center font-bold"
                   >
                     ✕
                   </button>
                 </div>
               </div>
             ` : `
-              <div class="flex-1 px-4 py-2 bg-gray-50 rounded-lg border border-gray-300">
-                <p class="text-sm text-gray-500">No firmware file selected</p>
+              <div class="flex-1 px-5 py-3 bg-gray-50 rounded-xl border-2 border-dashed border-gray-300">
+                <p class="text-sm text-gray-500 text-center">📁 No firmware file selected</p>
               </div>
             `}
           </div>
         </div>
 
         <!-- Flash Options -->
-        <div class="mb-6 p-4 bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg border border-purple-200">
-          <h3 class="text-lg font-semibold text-gray-700 mb-3">3️⃣ Flash Options</h3>
+        <div class="mb-6 p-6 bg-gradient-to-r from-purple-50 to-pink-50 rounded-2xl border-2 border-purple-200 shadow-lg">
+          <h3 class="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+            <span class="w-8 h-8 bg-purple-500 text-white rounded-full flex items-center justify-center text-sm font-bold">3</span>
+            Flash Options
+          </h3>
           
           <div class="grid grid-cols-2 gap-4">
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-2">Baud Rate</label>
-              <select id="baud-rate" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent">
-                <option value="115200">115200</option>
-                <option value="460800" selected>460800 (Default)</option>
-                <option value="921600">921600 (Fast)</option>
+              <label class="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                <svg class="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                Baud Rate
+              </label>
+              <select id="baud-rate" class="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 bg-white font-medium shadow-sm transition-all">
+                <option value="115200">115200 (Safe)</option>
+                <option value="460800" selected>460800 (Recommended) ⭐</option>
+                <option value="921600">921600 (Fast) 🚀</option>
               </select>
             </div>
             
             <div class="flex items-center">
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" id="erase-flash" class="w-5 h-5 text-purple-500 rounded focus:ring-2 focus:ring-purple-500">
-                <span class="text-sm font-medium text-gray-700">Erase Flash Before Writing</span>
+              <label class="flex items-center gap-3 cursor-pointer p-4 bg-white rounded-xl border-2 border-gray-300 hover:border-purple-400 transition-all w-full">
+                <input type="checkbox" id="erase-flash" class="w-6 h-6 text-purple-500 rounded-lg focus:ring-2 focus:ring-purple-500">
+                <div>
+                  <div class="text-sm font-bold text-gray-800">Erase Flash</div>
+                  <div class="text-xs text-gray-500">Clear before writing</div>
+                </div>
               </label>
             </div>
           </div>
         </div>
 
         <!-- Flash Button -->
-        <div class="mb-6">
+        <div class="mb-8">
           <button
             onclick="app.flashESP32()"
             ${!this.selectedPort || !this.selectedFirmware || this.flasherStatus.isFlashing ? 'disabled' : ''}
-            class="w-full h-16 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white rounded-xl font-bold text-lg shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
+            class="w-full h-20 bg-gradient-to-r from-orange-500 via-red-500 to-pink-500 hover:from-orange-600 hover:via-red-600 hover:to-pink-600 text-white rounded-2xl font-bold text-xl shadow-2xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 transform hover:scale-105 hover:shadow-red-500/50 relative overflow-hidden"
           >
+            <div class="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent transform -skew-x-12 animate-shimmer"></div>
             ${this.flasherStatus.isFlashing ? `
-              <svg class="animate-spin h-6 w-6" fill="none" viewBox="0 0 24 24">
+              <svg class="animate-spin h-7 w-7" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              Flashing... ${this.flashProgress}%
+              <span>Flashing... ${this.flashProgress}%</span>
             ` : `
-              ⚡ FLASH ESP32 FIRMWARE
+              <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              <span>FLASH ESP32 FIRMWARE</span>
             `}
           </button>
         </div>
 
         <!-- Progress Info -->
         ${this.flasherStatus.isFlashing || this.flashStage ? `
-          <div class="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-            <div class="flex items-center gap-3 mb-2">
-              <div class="text-2xl">
+          <div class="p-6 bg-gradient-to-r from-yellow-50 to-orange-50 border-2 border-yellow-300 rounded-2xl shadow-lg">
+            <div class="flex items-center gap-4 mb-4">
+              <div class="text-5xl animate-pulse">
                 ${this.flashStage === 'connecting' ? '🔌' : 
                   this.flashStage === 'erasing' ? '🗑️' :
                   this.flashStage === 'writing' ? '📝' :
@@ -1402,8 +1446,8 @@ class App {
                   this.flashStage === 'complete' ? '🎉' :
                   this.flashStage === 'failed' ? '❌' : '⏳'}
               </div>
-              <div>
-                <div class="font-semibold text-gray-800">
+              <div class="flex-1">
+                <div class="font-bold text-xl text-gray-800">
                   ${this.flashStage === 'connecting' ? 'Connecting to ESP32...' :
                     this.flashStage === 'erasing' ? 'Erasing flash memory...' :
                     this.flashStage === 'writing' ? 'Writing firmware...' :
@@ -1411,28 +1455,53 @@ class App {
                     this.flashStage === 'complete' ? 'Flash Complete!' :
                     this.flashStage === 'failed' ? 'Flash Failed' : 'Starting...'}
                 </div>
-                <div class="text-sm text-gray-600">
+                <div class="text-sm text-gray-600 mt-1">
                   ${this.flashProgress > 0 ? `Progress: ${this.flashProgress}%` : 'Please wait...'}
                 </div>
               </div>
             </div>
             
             ${this.flashProgress > 0 && this.flashProgress < 100 ? `
-              <div class="w-full bg-gray-200 rounded-full h-2.5">
-                <div class="bg-blue-600 h-2.5 rounded-full transition-all duration-300" style="width: ${this.flashProgress}%"></div>
+              <div class="w-full bg-gray-200 rounded-full h-4 shadow-inner">
+                <div class="bg-gradient-to-r from-blue-500 to-purple-500 h-4 rounded-full transition-all duration-300 flex items-center justify-end pr-2" style="width: ${this.flashProgress}%">
+                  <span class="text-xs text-white font-bold">${this.flashProgress}%</span>
+                </div>
               </div>
             ` : ''}
           </div>
         ` : `
-          <div class="p-4 bg-gray-50 border border-gray-200 rounded-lg">
-            <h4 class="font-semibold text-gray-700 mb-2">📋 Instructions:</h4>
-            <ol class="text-sm text-gray-600 space-y-1 list-decimal list-inside">
-              <li>Connect your ESP32 device via USB</li>
-              <li>Select the correct serial port (usually /dev/ttyUSB0 or COM port)</li>
-              <li>Select your firmware .bin or .elf file</li>
-              <li>Adjust baud rate if needed (460800 is recommended)</li>
-              <li>Click "FLASH ESP32 FIRMWARE" button</li>
-              <li>Wait 1-2 minutes for flashing to complete</li>
+          <div class="p-6 bg-gradient-to-br from-gray-50 to-blue-50 border-2 border-gray-200 rounded-2xl shadow-md">
+            <h4 class="font-bold text-lg text-gray-800 mb-4 flex items-center gap-2">
+              <svg class="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              Quick Start Guide
+            </h4>
+            <ol class="text-sm text-gray-700 space-y-2 list-none">
+              <li class="flex items-start gap-3">
+                <span class="w-6 h-6 bg-blue-500 text-white rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold">1</span>
+                <span>Connect your ESP32 device via USB</span>
+              </li>
+              <li class="flex items-start gap-3">
+                <span class="w-6 h-6 bg-blue-500 text-white rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold">2</span>
+                <span>Select the correct serial port (usually /dev/ttyACM0 or /dev/ttyUSB0)</span>
+              </li>
+              <li class="flex items-start gap-3">
+                <span class="w-6 h-6 bg-green-500 text-white rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold">3</span>
+                <span>Browse and select your firmware .bin or .elf file</span>
+              </li>
+              <li class="flex items-start gap-3">
+                <span class="w-6 h-6 bg-purple-500 text-white rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold">4</span>
+                <span>Adjust baud rate if needed (460800 is recommended)</span>
+              </li>
+              <li class="flex items-start gap-3">
+                <span class="w-6 h-6 bg-orange-500 text-white rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold">5</span>
+                <span>Click the big "FLASH ESP32 FIRMWARE" button</span>
+              </li>
+              <li class="flex items-start gap-3">
+                <span class="w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold">6</span>
+                <span>Wait 1-2 minutes for flashing to complete 🎉</span>
+              </li>
             </ol>
           </div>
         `}
