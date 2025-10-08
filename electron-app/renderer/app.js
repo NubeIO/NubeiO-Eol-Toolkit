@@ -10,7 +10,13 @@ class App {
     // Initialize modules
     this.helpModule = new HelpModule(this);
     this.configLoaded = false; // Track if config has been loaded
-    this.currentPage = 'devices'; // 'devices', 'udp-logs', or 'tcp-console'
+    this.currentPage = 'devices'; // 'devices', 'udp-logs', 'tcp-console', or 'esp32-flasher'
+    this.flasherStatus = { isFlashing: false, hasProcess: false, portsAvailable: 0 };
+    this.serialPorts = [];
+    this.selectedPort = '';
+    this.selectedFirmware = '';
+    this.flashProgress = 0;
+    this.flashStage = '';
     this.udpLogs = [];
     this.udpStatus = { isRunning: false, port: 56789, logCount: 0 };
     this.lastLogCount = 0; // Track last log count to detect new logs
@@ -288,6 +294,11 @@ class App {
       this.loadUDPStatus();
     } else if (page === 'tcp-console') {
       tcpConsole.showConsole = true;
+    } else if (page === 'esp32-flasher') {
+      // Load serial ports when switching to flasher page
+      this.loadSerialPorts();
+      this.loadFlasherStatus();
+      tcpConsole.showConsole = false;
     } else {
       tcpConsole.showConsole = false;
     }
@@ -762,6 +773,14 @@ class App {
                 }">
                 💻 TCP Console
               </button>
+              <button onclick="app.switchPage('esp32-flasher')" 
+                class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  this.currentPage === 'esp32-flasher' 
+                    ? 'bg-blue-500 text-white' 
+                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                }">
+                ⚡ ESP32 Flasher
+              </button>
             </div>
 
             ${this.showConfig ? `
@@ -799,6 +818,7 @@ class App {
             this.currentPage === 'devices' ? this.renderDevicesPage() : 
             this.currentPage === 'udp-logs' ? this.renderUDPLogsPage() :
             this.currentPage === 'tcp-console' ? tcpConsole.render() :
+            this.currentPage === 'esp32-flasher' ? this.renderFlasherPage() :
             this.renderDevicesPage()
           }
         </div>
@@ -1071,6 +1091,292 @@ class App {
     
     this.showConfig = false;
     this.handleConnectMQTT();
+  }
+
+  // ============================================
+  // ESP32 Flasher Methods
+  // ============================================
+  
+  async loadSerialPorts() {
+    try {
+      this.serialPorts = await window.electronAPI.getSerialPorts();
+      if (this.serialPorts.length > 0 && !this.selectedPort) {
+        this.selectedPort = this.serialPorts[0].path;
+      }
+    } catch (error) {
+      console.error('Failed to load serial ports:', error);
+    }
+  }
+
+  async loadFlasherStatus() {
+    try {
+      this.flasherStatus = await window.electronAPI.getFlasherStatus();
+    } catch (error) {
+      console.error('Failed to load flasher status:', error);
+    }
+  }
+
+  async selectFirmwareFile() {
+    try {
+      const result = await window.electronAPI.showFirmwareDialog();
+      if (!result.canceled && result.filePaths && result.filePaths.length > 0) {
+        this.selectedFirmware = result.filePaths[0];
+        
+        // Verify firmware
+        const verification = await window.electronAPI.verifyFirmware(this.selectedFirmware);
+        if (verification.success) {
+          alert(`✅ Firmware verified!\n\nFile: ${this.selectedFirmware.split('/').pop()}\nSize: ${verification.sizeHuman}\nType: ${verification.extension}`);
+        } else {
+          alert(`❌ Firmware verification failed:\n${verification.message}`);
+          this.selectedFirmware = '';
+        }
+        
+        this.render();
+      }
+    } catch (error) {
+      console.error('Error selecting firmware:', error);
+      alert(`❌ Error: ${error.message}`);
+    }
+  }
+
+  async flashESP32() {
+    if (!this.selectedPort) {
+      alert('❌ Please select a serial port');
+      return;
+    }
+    
+    if (!this.selectedFirmware) {
+      alert('❌ Please select a firmware file');
+      return;
+    }
+    
+    const baudRate = document.getElementById('baud-rate')?.value || '460800';
+    const eraseFlash = document.getElementById('erase-flash')?.checked || false;
+    
+    const confirmed = confirm(
+      `Flash ESP32?\n\n` +
+      `Port: ${this.selectedPort}\n` +
+      `Firmware: ${this.selectedFirmware.split('/').pop()}\n` +
+      `Baud Rate: ${baudRate}\n` +
+      `Erase Flash: ${eraseFlash ? 'Yes' : 'No'}\n\n` +
+      `This will take 1-2 minutes. Continue?`
+    );
+    
+    if (!confirmed) return;
+    
+    try {
+      this.flashProgress = 0;
+      this.flashStage = 'starting';
+      this.render();
+      
+      const result = await window.electronAPI.flashFirmware({
+        port: this.selectedPort,
+        baudRate: parseInt(baudRate),
+        firmwarePath: this.selectedFirmware,
+        eraseFlash: eraseFlash
+      });
+      
+      if (result.success) {
+        alert(`✅ Firmware flashed successfully!\n\n${result.message}`);
+        this.flashProgress = 100;
+        this.flashStage = 'complete';
+      } else {
+        alert(`❌ Flash failed:\n${result.message}`);
+        this.flashStage = 'failed';
+      }
+    } catch (error) {
+      console.error('Flash error:', error);
+      alert(`❌ Flash error:\n${error.message || JSON.stringify(error)}`);
+      this.flashStage = 'failed';
+    }
+    
+    await this.loadFlasherStatus();
+    this.render();
+  }
+
+  renderFlasherPage() {
+    return `
+      <div class="bg-white rounded-2xl shadow-lg p-6">
+        <div class="mb-6">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-2xl font-bold text-gray-800">⚡ ESP32 Firmware Flasher</h2>
+            <button 
+              onclick="app.loadSerialPorts(); app.render();" 
+              class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+            >
+              🔄 Refresh Ports
+            </button>
+          </div>
+          <p class="text-gray-600 text-sm">Flash firmware to ESP32 devices via serial port</p>
+        </div>
+
+        <!-- Serial Port Selection -->
+        <div class="mb-6 p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border border-blue-200">
+          <h3 class="text-lg font-semibold text-gray-700 mb-3">1️⃣ Select Serial Port</h3>
+          
+          ${this.serialPorts.length === 0 ? `
+            <div class="text-center py-8">
+              <p class="text-gray-500 mb-3">No serial ports detected</p>
+              <p class="text-xs text-gray-400">Connect your ESP32 device and click Refresh Ports</p>
+            </div>
+          ` : `
+            <div class="grid grid-cols-1 gap-3">
+              ${this.serialPorts.map(port => `
+                <button
+                  onclick="app.selectedPort = '${port.path}'; app.render();"
+                  class="p-4 rounded-lg border-2 transition-all text-left ${
+                    this.selectedPort === port.path
+                      ? 'border-blue-500 bg-blue-50'
+                      : 'border-gray-200 bg-white hover:border-blue-300'
+                  }"
+                >
+                  <div class="flex items-center justify-between">
+                    <div>
+                      <div class="font-bold text-gray-800">${port.path}</div>
+                      <div class="text-sm text-gray-600">
+                        ${port.manufacturer || 'Unknown Manufacturer'}
+                        ${port.serialNumber ? ` • SN: ${port.serialNumber}` : ''}
+                      </div>
+                    </div>
+                    ${this.selectedPort === port.path ? `
+                      <div class="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center">
+                        <svg class="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                          <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                        </svg>
+                      </div>
+                    ` : ''}
+                  </div>
+                </button>
+              `).join('')}
+            </div>
+          `}
+        </div>
+
+        <!-- Firmware Selection -->
+        <div class="mb-6 p-4 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg border border-green-200">
+          <h3 class="text-lg font-semibold text-gray-700 mb-3">2️⃣ Select Firmware File</h3>
+          
+          <div class="flex items-center gap-3 mb-3">
+            <button
+              onclick="app.selectFirmwareFile()"
+              class="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+            >
+              📁 Browse Firmware (.bin / .elf)
+            </button>
+            
+            ${this.selectedFirmware ? `
+              <div class="flex-1 px-4 py-2 bg-white rounded-lg border border-green-300">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div class="text-sm font-medium text-gray-800">${this.selectedFirmware.split('/').pop()}</div>
+                    <div class="text-xs text-gray-500">${this.selectedFirmware}</div>
+                  </div>
+                  <button
+                    onclick="app.selectedFirmware = ''; app.render();"
+                    class="text-red-500 hover:text-red-700"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            ` : `
+              <div class="flex-1 px-4 py-2 bg-gray-50 rounded-lg border border-gray-300">
+                <p class="text-sm text-gray-500">No firmware file selected</p>
+              </div>
+            `}
+          </div>
+        </div>
+
+        <!-- Flash Options -->
+        <div class="mb-6 p-4 bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg border border-purple-200">
+          <h3 class="text-lg font-semibold text-gray-700 mb-3">3️⃣ Flash Options</h3>
+          
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-2">Baud Rate</label>
+              <select id="baud-rate" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+                <option value="115200">115200</option>
+                <option value="460800" selected>460800 (Default)</option>
+                <option value="921600">921600 (Fast)</option>
+              </select>
+            </div>
+            
+            <div class="flex items-center">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="erase-flash" class="w-5 h-5 text-purple-500 rounded focus:ring-2 focus:ring-purple-500">
+                <span class="text-sm font-medium text-gray-700">Erase Flash Before Writing</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Flash Button -->
+        <div class="mb-6">
+          <button
+            onclick="app.flashESP32()"
+            ${!this.selectedPort || !this.selectedFirmware || this.flasherStatus.isFlashing ? 'disabled' : ''}
+            class="w-full h-16 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white rounded-xl font-bold text-lg shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
+          >
+            ${this.flasherStatus.isFlashing ? `
+              <svg class="animate-spin h-6 w-6" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              Flashing... ${this.flashProgress}%
+            ` : `
+              ⚡ FLASH ESP32 FIRMWARE
+            `}
+          </button>
+        </div>
+
+        <!-- Progress Info -->
+        ${this.flasherStatus.isFlashing || this.flashStage ? `
+          <div class="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <div class="flex items-center gap-3 mb-2">
+              <div class="text-2xl">
+                ${this.flashStage === 'connecting' ? '🔌' : 
+                  this.flashStage === 'erasing' ? '🗑️' :
+                  this.flashStage === 'writing' ? '📝' :
+                  this.flashStage === 'verifying' ? '✅' :
+                  this.flashStage === 'complete' ? '🎉' :
+                  this.flashStage === 'failed' ? '❌' : '⏳'}
+              </div>
+              <div>
+                <div class="font-semibold text-gray-800">
+                  ${this.flashStage === 'connecting' ? 'Connecting to ESP32...' :
+                    this.flashStage === 'erasing' ? 'Erasing flash memory...' :
+                    this.flashStage === 'writing' ? 'Writing firmware...' :
+                    this.flashStage === 'verifying' ? 'Verifying...' :
+                    this.flashStage === 'complete' ? 'Flash Complete!' :
+                    this.flashStage === 'failed' ? 'Flash Failed' : 'Starting...'}
+                </div>
+                <div class="text-sm text-gray-600">
+                  ${this.flashProgress > 0 ? `Progress: ${this.flashProgress}%` : 'Please wait...'}
+                </div>
+              </div>
+            </div>
+            
+            ${this.flashProgress > 0 && this.flashProgress < 100 ? `
+              <div class="w-full bg-gray-200 rounded-full h-2.5">
+                <div class="bg-blue-600 h-2.5 rounded-full transition-all duration-300" style="width: ${this.flashProgress}%"></div>
+              </div>
+            ` : ''}
+          </div>
+        ` : `
+          <div class="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+            <h4 class="font-semibold text-gray-700 mb-2">📋 Instructions:</h4>
+            <ol class="text-sm text-gray-600 space-y-1 list-decimal list-inside">
+              <li>Connect your ESP32 device via USB</li>
+              <li>Select the correct serial port (usually /dev/ttyUSB0 or COM port)</li>
+              <li>Select your firmware .bin or .elf file</li>
+              <li>Adjust baud rate if needed (460800 is recommended)</li>
+              <li>Click "FLASH ESP32 FIRMWARE" button</li>
+              <li>Wait 1-2 minutes for flashing to complete</li>
+            </ol>
+          </div>
+        `}
+      </div>
+    `;
   }
 }
 
