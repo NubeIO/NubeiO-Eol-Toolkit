@@ -11,8 +11,7 @@ class TCPConsoleModule {
     this.host = 'localhost';
     this.port = 56789;
     
-    // Track if user is typing to prevent re-render
-    this.isTyping = false;
+    // Cache last rendered HTML to prevent re-render when inputs have focus
     this.lastRenderedHtml = '';
   }
 
@@ -129,12 +128,10 @@ class TCPConsoleModule {
 
   handleHostInput(value) {
     this.host = value;
-    this.isTyping = true;
   }
 
   handlePortInput(value) {
     this.port = parseInt(value) || 56789;
-    this.isTyping = true;
   }
 
   updateStatusOnly() {
@@ -275,8 +272,6 @@ class TCPConsoleModule {
                 id="tcp-host-input"
                 value="${this.escapeHtml(this.host)}"
                 oninput="tcpConsole.handleHostInput(this.value)"
-                onfocus="tcpConsole.isTyping = true"
-                onblur="tcpConsole.isTyping = false"
                 placeholder="localhost or IP address"
                 ${this.status.isConnected ? 'disabled' : ''}
                 class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${this.status.isConnected ? 'bg-gray-100' : ''}"
@@ -289,8 +284,6 @@ class TCPConsoleModule {
                 id="tcp-port-input"
                 value="${this.port}"
                 oninput="tcpConsole.handlePortInput(this.value)"
-                onfocus="tcpConsole.isTyping = true"
-                onblur="tcpConsole.isTyping = false"
                 placeholder="56789"
                 ${this.status.isConnected ? 'disabled' : ''}
                 class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${this.status.isConnected ? 'bg-gray-100' : ''}"
@@ -414,9 +407,13 @@ class TCPConsoleModule {
   }
 
   render() {
-    // Skip re-render if user is currently typing in input fields
-    if (this.isTyping) {
-      return this.lastRenderedHtml;
+    // Skip re-render if user is currently typing in any TCP console input fields
+    const activeElement = document.activeElement;
+    if (activeElement && 
+        (activeElement.id === 'tcp-host-input' || 
+         activeElement.id === 'tcp-port-input' || 
+         activeElement.id === 'tcp-message-input')) {
+      return this.lastRenderedHtml || this.renderConsole();
     }
     
     // This will be called by the main app render
