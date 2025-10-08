@@ -616,10 +616,6 @@ class App {
       return;
     }
     
-    // Save scroll position for UDP logs if on that page
-    const logContainer = document.getElementById('udp-log-container');
-    const savedScrollTop = logContainer ? logContainer.scrollTop : 0;
-    
     appDiv.innerHTML = `
       <div class="min-h-screen bg-gradient-to-br from-blue-50 to-gray-100 p-4">
         <!-- Header Bar -->
@@ -704,12 +700,12 @@ class App {
       </div>
     `;
     
-    // Restore scroll position for UDP logs
+    // Auto-scroll to bottom for UDP logs on initial render
     if (this.currentPage === 'udp-logs') {
       setTimeout(() => {
-        const newLogContainer = document.getElementById('udp-log-container');
-        if (newLogContainer) {
-          newLogContainer.scrollTop = savedScrollTop;
+        const logContainer = document.getElementById('udp-log-container');
+        if (logContainer) {
+          logContainer.scrollTop = logContainer.scrollHeight;
         }
       }, 0);
     }
@@ -862,6 +858,9 @@ class App {
     const newLogCount = this.udpLogs.length;
     const hasNewLogs = newLogCount > this.lastLogCount;
     
+    // Check if user is scrolled to bottom before adding new logs
+    const isScrolledToBottom = logContainer.scrollHeight - logContainer.scrollTop <= logContainer.clientHeight + 50;
+    
     if (this.udpLogs.length === 0) {
       // Only update if not already showing placeholder
       if (!logContainer.querySelector('.text-center')) {
@@ -883,21 +882,28 @@ class App {
         logContainer.textContent = ''; // Clear faster than innerHTML
       }
       
-      // Prepend new logs to the top using DocumentFragment
+      // Append new logs to the bottom using DocumentFragment
       const fragment = document.createDocumentFragment();
       newLogs.reverse().forEach(log => {
-        fragment.prepend(this.createLogElement(log));
+        fragment.appendChild(this.createLogElement(log));
       });
       
-      // Insert at the beginning
-      logContainer.insertBefore(fragment, logContainer.firstChild);
+      // Append at the end (newest logs at bottom)
+      logContainer.appendChild(fragment);
       
-      // Limit to max 1000 logs in DOM to prevent memory issues
+      // Remove old logs from the top to prevent memory issues (keep max 1000)
       while (logContainer.children.length > 1000) {
-        logContainer.removeChild(logContainer.lastChild);
+        logContainer.removeChild(logContainer.firstChild);
       }
       
       this.lastLogCount = newLogCount;
+      
+      // Auto-scroll to bottom if user was already at the bottom
+      if (isScrolledToBottom) {
+        requestAnimationFrame(() => {
+          logContainer.scrollTop = logContainer.scrollHeight;
+        });
+      }
     }
     
     // Update log count in header
