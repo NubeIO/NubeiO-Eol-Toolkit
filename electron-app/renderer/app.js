@@ -1123,9 +1123,46 @@ class App {
   
   async loadSerialPorts() {
     try {
-      this.serialPorts = await window.electronAPI.getSerialPorts();
+      const allPorts = await window.electronAPI.getSerialPorts();
+      
+      // Filter and sort ports - prioritize ESP32-related ports
+      this.serialPorts = allPorts
+        .filter(port => {
+          // Filter out system ports that are unlikely to be ESP32
+          const path = port.path.toLowerCase();
+          return !path.includes('bluetooth') && 
+                 !path.includes('ttyS0') && 
+                 !path.includes('ttyS1') &&
+                 !path.includes('ttyS2') &&
+                 !path.includes('ttyS3');
+        })
+        .sort((a, b) => {
+          // Prioritize known ESP32 manufacturers
+          const aIsESP = (a.manufacturer || '').toLowerCase().includes('espressif') ||
+                        (a.manufacturer || '').toLowerCase().includes('silicon labs') ||
+                        (a.manufacturer || '').toLowerCase().includes('qinheng') ||
+                        (a.manufacturer || '').toLowerCase().includes('cp210') ||
+                        (a.manufacturer || '').toLowerCase().includes('ch340');
+          const bIsESP = (b.manufacturer || '').toLowerCase().includes('espressif') ||
+                        (b.manufacturer || '').toLowerCase().includes('silicon labs') ||
+                        (b.manufacturer || '').toLowerCase().includes('qinheng') ||
+                        (b.manufacturer || '').toLowerCase().includes('cp210') ||
+                        (b.manufacturer || '').toLowerCase().includes('ch340');
+          
+          if (aIsESP && !bIsESP) return -1;
+          if (!aIsESP && bIsESP) return 1;
+          
+          // Otherwise sort by path
+          return a.path.localeCompare(b.path);
+        });
+      
+      // Auto-select first ESP32-likely port
       if (this.serialPorts.length > 0 && !this.selectedPort) {
-        this.selectedPort = this.serialPorts[0].path;
+        const esp32Port = this.serialPorts.find(port => 
+          (port.manufacturer || '').toLowerCase().includes('espressif') ||
+          (port.manufacturer || '').toLowerCase().includes('silicon labs')
+        );
+        this.selectedPort = esp32Port ? esp32Port.path : this.serialPorts[0].path;
       }
     } catch (error) {
       console.error('Failed to load serial ports:', error);
@@ -1244,7 +1281,7 @@ class App {
               <p class="text-xs text-gray-400">Connect your ESP32 device and click Refresh Ports</p>
             </div>
           ` : `
-            <div class="grid grid-cols-1 gap-3">
+            <div class="grid grid-cols-1 gap-3 overflow-y-auto" style="max-height: 400px;">
               ${this.serialPorts.map(port => `
                 <button
                   onclick="app.selectedPort = '${port.path}'; app.render();"
