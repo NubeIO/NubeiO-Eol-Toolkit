@@ -782,20 +782,29 @@ class App {
           </div>
         </div>
         
-        <div id="udp-log-container" class="bg-gray-900 rounded-lg p-4 overflow-y-auto font-mono text-sm" style="height: calc(100vh - 280px);">
+        <div id="udp-log-container" style="
+          height: calc(100vh - 280px);
+          background-color: #ffffff;
+          border: 1px solid #e5e7eb;
+          border-radius: 8px;
+          padding: 16px;
+          overflow-y: auto;
+          font-family: 'Consolas', 'Courier New', monospace;
+          font-size: 13px;
+          line-height: 1.5;
+          color: #1f2937;
+        ">
           ${this.udpLogs.length === 0 ? `
-            <div class="text-center py-12 text-gray-500">
+            <div style="text-align: center; padding: 48px 0; color: #6b7280;">
               <p>No UDP messages received yet</p>
-              <p class="text-xs mt-2">Listening on UDP port ${this.udpStatus.port}</p>
+              <p style="font-size: 11px; margin-top: 8px;">Listening on UDP port ${this.udpStatus.port}</p>
             </div>
           ` : `
-            ${this.udpLogs.map((log, index) => `
-              <div class="mb-2 pb-2 border-b border-gray-700 last:border-b-0">
-                <div class="flex items-start gap-3">
-                  <span class="text-gray-500 text-xs whitespace-nowrap flex-shrink-0">${new Date(log.timestamp).toLocaleTimeString()}</span>
-                  <span class="text-blue-400 text-xs whitespace-nowrap flex-shrink-0">${log.from}</span>
-                  <span class="text-green-400 text-xs break-words flex-1">${this.escapeHtml(this.stripAnsiCodes(log.message))}</span>
-                </div>
+            ${[...this.udpLogs].reverse().map((log, index) => `
+              <div style="margin-bottom: 2px; padding: 2px 0; color: #1f2937;">
+                <span style="color: #6b7280; margin-right: 8px;">${new Date(log.timestamp).toLocaleTimeString()}</span>
+                <span style="color: #2563eb; margin-right: 8px;">${log.from}</span>
+                <span style="color: #059669;">${this.escapeHtml(this.stripAnsiCodes(log.message))}</span>
               </div>
             `).join('')}
           `}
@@ -823,22 +832,21 @@ class App {
   createLogElement(log) {
     // Create DOM elements directly without innerHTML to prevent flickering
     const logDiv = document.createElement('div');
-    logDiv.className = 'log-entry';
-    logDiv.style.cssText = 'margin-bottom: 0.25rem; font-family: monospace; font-size: 0.75rem; line-height: 1.5;';
+    logDiv.style.cssText = 'margin-bottom: 2px; padding: 2px 0; color: #1f2937; font-family: "Consolas", "Courier New", monospace; font-size: 13px; line-height: 1.5;';
     
     // Create timestamp span
     const timeSpan = document.createElement('span');
-    timeSpan.style.cssText = 'color: #6b7280; white-space: nowrap;';
+    timeSpan.style.cssText = 'color: #6b7280; margin-right: 8px;';
     timeSpan.textContent = new Date(log.timestamp).toLocaleTimeString();
     
     // Create source span
     const sourceSpan = document.createElement('span');
-    sourceSpan.style.cssText = 'color: #60a5fa; white-space: nowrap; margin-left: 0.75rem;';
+    sourceSpan.style.cssText = 'color: #2563eb; margin-right: 8px;';
     sourceSpan.textContent = log.from;
     
     // Create message span
     const messageSpan = document.createElement('span');
-    messageSpan.style.cssText = 'color: #4ade80; margin-left: 0.75rem; word-break: break-word;';
+    messageSpan.style.cssText = 'color: #059669;';
     messageSpan.textContent = this.stripAnsiCodes(log.message);
     
     // Assemble
