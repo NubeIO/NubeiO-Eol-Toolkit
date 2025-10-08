@@ -5,7 +5,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "electron . --dev",
+    "dev": "electron . --no-sandbox --dev",
     "build": "electron-builder",
     "build:all": "electron-builder --linux --win",
     "build:linux": "electron-builder --linux",

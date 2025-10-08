@@ -1,5 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+console.log('Preload script loaded');
+
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -28,5 +30,36 @@ contextBridge.exposeInMainWorld('electronAPI', {
   exportUDPLogsAsString: (format) => ipcRenderer.invoke('udp:exportLogsAsString', format),
   showSaveDialog: () => ipcRenderer.invoke('udp:showSaveDialog'),
   enableAutoSave: (filePath, format) => ipcRenderer.invoke('udp:enableAutoSave', filePath, format),
-  disableAutoSave: () => ipcRenderer.invoke('udp:disableAutoSave')
+  disableAutoSave: () => ipcRenderer.invoke('udp:disableAutoSave'),
+  
+  // Menu event handling
+  onMenuEvent: (event, callback) => {
+    ipcRenderer.on(event, (event, ...args) => callback(...args));
+  },
+  
+  // Remove menu event listeners
+  removeMenuEvent: (event) => {
+    ipcRenderer.removeAllListeners(event);
+  },
+  
+  // External link opening
+  openExternal: (url) => {
+    ipcRenderer.invoke('open-external', url);
+  },
+  
+  // System information
+  getSystemInfo: () => ({
+    node: process.versions.node,
+    chrome: process.versions.chrome,
+    electron: process.versions.electron,
+    platform: process.platform,
+    arch: process.arch
+  })
+});
+
+console.log('electronAPI exposed to window');
+
+// Test IPC listener setup
+ipcRenderer.on('test-event', () => {
+  console.log('Preload: Test event received in preload.js');
 });

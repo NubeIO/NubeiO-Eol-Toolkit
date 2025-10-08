@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 
 // Import services
@@ -11,6 +11,180 @@ app.disableHardwareAcceleration();
 // Global service instances
 let mqttService = null;
 let udpLogger = null;
+
+// Create application menu
+function createMenu() {
+  const template = [
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: 'New',
+          accelerator: 'CmdOrCtrl+N',
+          click: () => {
+            // Handle new file
+          }
+        },
+        {
+          label: 'Open',
+          accelerator: 'CmdOrCtrl+O',
+          click: () => {
+            // Handle open file
+          }
+        },
+        { type: 'separator' },
+        {
+          label: 'Save Logs',
+          accelerator: 'CmdOrCtrl+S',
+          click: () => {
+            // Send message to renderer to save logs
+            const mainWindow = BrowserWindow.getFocusedWindow();
+            if (mainWindow) {
+              mainWindow.webContents.send('menu:save-logs');
+            }
+          }
+        },
+        { type: 'separator' },
+        {
+          label: 'Exit',
+          accelerator: process.platform === 'darwin' ? 'Cmd+Q' : 'Ctrl+Q',
+          click: () => {
+            app.quit();
+          }
+        }
+      ]
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        { label: 'Undo', accelerator: 'CmdOrCtrl+Z', role: 'undo' },
+        { label: 'Redo', accelerator: 'Shift+CmdOrCtrl+Z', role: 'redo' },
+        { type: 'separator' },
+        { label: 'Cut', accelerator: 'CmdOrCtrl+X', role: 'cut' },
+        { label: 'Copy', accelerator: 'CmdOrCtrl+C', role: 'copy' },
+        { label: 'Paste', accelerator: 'CmdOrCtrl+V', role: 'paste' },
+        { type: 'separator' },
+        {
+          label: 'Clear UDP Logs',
+          accelerator: 'CmdOrCtrl+K',
+          click: () => {
+            const mainWindow = BrowserWindow.getFocusedWindow();
+            if (mainWindow) {
+              mainWindow.webContents.send('menu:clear-logs');
+            }
+          }
+        }
+      ]
+    },
+    {
+      label: 'View',
+      submenu: [
+        {
+          label: 'Devices',
+          accelerator: 'CmdOrCtrl+1',
+          click: () => {
+            console.log('Menu: Devices clicked');
+            const mainWindow = BrowserWindow.getFocusedWindow();
+            if (mainWindow) {
+              console.log('Sending menu:switch-page devices');
+              mainWindow.webContents.send('menu:switch-page', 'devices');
+            }
+          }
+        },
+        {
+          label: 'UDP Logs',
+          accelerator: 'CmdOrCtrl+2',
+          click: () => {
+            console.log('Menu: UDP Logs clicked');
+            const mainWindow = BrowserWindow.getFocusedWindow();
+            if (mainWindow) {
+              console.log('Sending menu:switch-page udp-logs');
+              mainWindow.webContents.send('menu:switch-page', 'udp-logs');
+            }
+          }
+        },
+        { type: 'separator' },
+        {
+          label: 'Toggle Config',
+          accelerator: 'CmdOrCtrl+,',
+          click: () => {
+            const mainWindow = BrowserWindow.getFocusedWindow();
+            if (mainWindow) {
+              mainWindow.webContents.send('menu:toggle-config');
+            }
+          }
+        },
+        { type: 'separator' },
+        { label: 'Reload', accelerator: 'CmdOrCtrl+R', role: 'reload' },
+        { label: 'Force Reload', accelerator: 'CmdOrCtrl+Shift+R', role: 'forceReload' },
+        { label: 'Toggle Developer Tools', accelerator: process.platform === 'darwin' ? 'Alt+Cmd+I' : 'Ctrl+Shift+I', role: 'toggleDevTools' },
+        { type: 'separator' },
+        { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', role: 'resetZoom' },
+        { label: 'Zoom In', accelerator: 'CmdOrCtrl+Plus', role: 'zoomIn' },
+        { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', role: 'zoomOut' },
+        { type: 'separator' },
+        { label: 'Toggle Fullscreen', accelerator: process.platform === 'darwin' ? 'Ctrl+Cmd+F' : 'F11', role: 'togglefullscreen' }
+      ]
+    },
+    {
+      label: 'Window',
+      submenu: [
+        { label: 'Minimize', accelerator: 'CmdOrCtrl+M', role: 'minimize' },
+        { label: 'Close', accelerator: 'CmdOrCtrl+W', role: 'close' }
+      ]
+    },
+    {
+      label: 'Help',
+      submenu: [
+        {
+          label: 'About FGA Simulator',
+          click: () => {
+            const mainWindow = BrowserWindow.getFocusedWindow();
+            if (mainWindow) {
+              mainWindow.webContents.send('menu:show-about');
+            }
+          }
+        },
+        {
+          label: 'Keyboard Shortcuts',
+          click: () => {
+            const mainWindow = BrowserWindow.getFocusedWindow();
+            if (mainWindow) {
+              mainWindow.webContents.send('menu:show-shortcuts');
+            }
+          }
+        },
+        { type: 'separator' },
+        {
+          label: 'Documentation',
+          click: () => {
+            require('electron').shell.openExternal('https://nube-io.com/docs/fga-simulator');
+          }
+        },
+        {
+          label: 'Report Issue',
+          click: () => {
+            require('electron').shell.openExternal('https://github.com/nube-io/fga-simulator/issues');
+          }
+        },
+        { type: 'separator' },
+        {
+          label: 'Show Help',
+          accelerator: 'F1',
+          click: () => {
+            const mainWindow = BrowserWindow.getFocusedWindow();
+            if (mainWindow) {
+              mainWindow.webContents.send('menu:show-help');
+            }
+          }
+        }
+      ]
+    }
+  ];
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+}
 
 // Create main window
 function createWindow() {
@@ -29,6 +203,13 @@ function createWindow() {
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
     console.log('Window is ready and visible');
+    
+    // Test IPC after a delay
+    setTimeout(() => {
+      console.log('Sending test event to renderer...');
+      mainWindow.webContents.send('test-event');
+      mainWindow.webContents.send('menu:switch-page', 'devices');
+    }, 2000);
   });
 
   // Load the HTML file
@@ -51,6 +232,9 @@ function createWindow() {
 
 // App lifecycle
 app.whenReady().then(() => {
+  // Create application menu
+  createMenu();
+  
   // Initialize services
   mqttService = new MQTTService(app);
   udpLogger = new UDPLogger();
@@ -180,4 +364,10 @@ ipcMain.handle('udp:enableAutoSave', (event, filePath, format) => {
 
 ipcMain.handle('udp:disableAutoSave', () => {
   return udpLogger.disableAutoSave();
+});
+
+// External link handler
+ipcMain.handle('open-external', (event, url) => {
+  require('electron').shell.openExternal(url);
+  return true;
 });

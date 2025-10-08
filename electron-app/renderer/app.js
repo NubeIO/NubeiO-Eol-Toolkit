@@ -6,6 +6,9 @@ class App {
     this.isConnected = false;
     this.showConfig = false;
     this.currentTime = new Date();
+    
+    // Initialize modules
+    this.helpModule = new HelpModule(this);
     this.configLoaded = false; // Track if config has been loaded
     this.currentPage = 'devices'; // 'devices' or 'udp-logs'
     this.udpLogs = [];
@@ -42,6 +45,74 @@ class App {
     }, 1000);
     
     // Don't call render() here, let the time interval handle it
+    
+    // Setup menu event listeners after a short delay to ensure electronAPI is ready
+    setTimeout(() => {
+      this.setupMenuListeners();
+    }, 100);
+  }
+
+  setupMenuListeners() {
+    // Listen for menu events from main process
+    if (window.electronAPI) {
+      console.log('Setting up menu listeners...');
+      console.log('electronAPI available:', !!window.electronAPI);
+      console.log('onMenuEvent available:', typeof window.electronAPI.onMenuEvent);
+      
+      // Test if IPC is working at all
+      try {
+        window.electronAPI.onMenuEvent('test-event', () => {
+          console.log('Test event received!');
+        });
+        console.log('Test event listener registered');
+      } catch (error) {
+        console.error('Error setting up test event listener:', error);
+      }
+      
+      // Menu events
+      window.electronAPI.onMenuEvent('menu:show-about', () => {
+        console.log('Menu: Show About');
+        this.helpModule.showAbout();
+      });
+      
+      window.electronAPI.onMenuEvent('menu:show-shortcuts', () => {
+        console.log('Menu: Show Shortcuts');
+        this.helpModule.showKeyboardShortcuts();
+      });
+      
+      window.electronAPI.onMenuEvent('menu:show-help', () => {
+        console.log('Menu: Show Help');
+        this.helpModule.toggleHelpMenu();
+      });
+      
+      window.electronAPI.onMenuEvent('menu:switch-page', (page) => {
+        console.log('Menu: Switch Page to', page);
+        this.switchPage(page);
+      });
+      
+      window.electronAPI.onMenuEvent('menu:toggle-config', () => {
+        console.log('Menu: Toggle Config');
+        this.toggleConfig();
+      });
+      
+      window.electronAPI.onMenuEvent('menu:save-logs', () => {
+        console.log('Menu: Save Logs');
+        if (this.currentPage === 'udp-logs') {
+          this.saveUDPLogs(false);
+        }
+      });
+      
+      window.electronAPI.onMenuEvent('menu:clear-logs', () => {
+        console.log('Menu: Clear Logs');
+        if (this.currentPage === 'udp-logs') {
+          this.clearUDPLogs();
+        }
+      });
+      
+      console.log('All menu listeners registered');
+    } else {
+      console.log('electronAPI not available');
+    }
   }
 
   async loadMqttConfig() {
@@ -205,6 +276,7 @@ class App {
   }
 
   switchPage(page) {
+    console.log('Switching to page:', page);
     this.currentPage = page;
     if (page === 'udp-logs') {
       // Initialize lastLogCount to current log count to prevent re-rendering all logs
@@ -213,6 +285,7 @@ class App {
       this.loadUDPStatus();
     }
     this.render();
+    console.log('Current page after switch:', this.currentPage);
   }
 
   async handleConnectMQTT() {
@@ -698,6 +771,10 @@ class App {
           ${this.currentPage === 'devices' ? this.renderDevicesPage() : this.renderUDPLogsPage()}
         </div>
       </div>
+      
+      <!-- Help Dialogs -->
+      ${this.helpModule.renderAboutDialog()}
+      ${this.helpModule.renderKeyboardShortcuts()}
     `;
     
     // Auto-scroll to bottom for UDP logs on initial render
