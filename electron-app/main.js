@@ -4,7 +4,7 @@ const path = require('path');
 // Import services
 const MQTTService = require('./services/mqtt-service');
 const UDPLogger = require('./services/udp-logger');
-const TCPConsole = require('./services/tcp-console');
+const TCPConsoleClient = require('./services/tcp-console');
 
 // Disable hardware acceleration to avoid libva errors
 app.disableHardwareAcceleration();
@@ -279,13 +279,13 @@ app.whenReady().then(() => {
   // Initialize services
   mqttService = new MQTTService(app);
   udpLogger = new UDPLogger();
-  tcpConsole = new TCPConsole();
+  tcpConsole = new TCPConsoleClient();
   
   createWindow();
   
-  // Start UDP logger and TCP console automatically
+  // Start UDP logger automatically
   udpLogger.start();
-  tcpConsole.start(56789);
+  // TCP console client connects manually via UI
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -297,7 +297,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   mqttService.disconnect();
   udpLogger.stop();
-  tcpConsole.stop();
+  tcpConsole.disconnect();
   if (process.platform !== 'darwin') {
     app.quit();
   }
@@ -416,7 +416,7 @@ ipcMain.handle('open-external', (event, url) => {
   return true;
 });
 
-// TCP Console IPC Handlers
+// TCP Console Client IPC Handlers
 ipcMain.handle('tcp:getStatus', () => {
   return tcpConsole.getStatus();
 });
@@ -430,17 +430,21 @@ ipcMain.handle('tcp:clearMessages', () => {
   return true;
 });
 
-ipcMain.handle('tcp:broadcast', (event, message) => {
-  tcpConsole.broadcast(message);
+ipcMain.handle('tcp:send', (event, message) => {
+  return tcpConsole.send(message);
+});
+
+ipcMain.handle('tcp:connect', (event, host, port) => {
+  tcpConsole.connect(host, port);
   return true;
 });
 
-ipcMain.handle('tcp:start', (event, port) => {
-  tcpConsole.start(port || 56789);
+ipcMain.handle('tcp:disconnect', () => {
+  tcpConsole.disconnect();
   return true;
 });
 
-ipcMain.handle('tcp:stop', () => {
-  tcpConsole.stop();
+ipcMain.handle('tcp:setAutoReconnect', (event, enabled) => {
+  tcpConsole.setAutoReconnect(enabled);
   return true;
 });

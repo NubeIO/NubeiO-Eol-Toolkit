@@ -56,13 +56,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     arch: process.arch
   }),
 
-  // TCP Console methods
+  // TCP Console Client methods
   getTCPStatus: () => ipcRenderer.invoke('tcp:getStatus'),
   getTCPMessages: () => ipcRenderer.invoke('tcp:getMessages'),
   clearTCPMessages: () => ipcRenderer.invoke('tcp:clearMessages'),
-  broadcastTCP: (message) => ipcRenderer.invoke('tcp:broadcast', message),
-  startTCP: (port) => ipcRenderer.invoke('tcp:start', port),
-  stopTCP: () => ipcRenderer.invoke('tcp:stop')
+  sendTCP: (message) => ipcRenderer.invoke('tcp:send', message),
+  connectTCP: (host, port) => ipcRenderer.invoke('tcp:connect', host, port),
+  disconnectTCP: () => ipcRenderer.invoke('tcp:disconnect'),
+  setTCPAutoReconnect: (enabled) => ipcRenderer.invoke('tcp:setAutoReconnect', enabled)
 });
 
 console.log('electronAPI exposed to window');

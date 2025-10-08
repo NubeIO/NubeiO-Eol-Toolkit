@@ -1,10 +1,15 @@
 class TCPConsoleModule {
   constructor() {
     this.messages = [];
-    this.status = { isRunning: false, port: 56789, clientCount: 0 };
+    this.status = { isConnected: false, host: 'localhost', port: 56789 };
     this.autoScroll = true;
     this.messageInput = '';
     this.showConsole = false;
+    this.autoReconnect = false;
+    
+    // Connection settings
+    this.host = 'localhost';
+    this.port = 56789;
   }
 
   async init() {
@@ -12,6 +17,8 @@ class TCPConsoleModule {
     try {
       this.status = await electronAPI.getTCPStatus();
       this.messages = await electronAPI.getTCPMessages();
+      this.host = this.status.host || 'localhost';
+      this.port = this.status.port || 56789;
     } catch (error) {
       console.error('Failed to load TCP Console status:', error);
     }
@@ -37,7 +44,7 @@ class TCPConsoleModule {
     });
 
     electronAPI.onMenuEvent('tcp:status-change', (statusData) => {
-      this.status = statusData;
+      this.status = { ...this.status, ...statusData };
       if (this.showConsole) {
         this.render();
       }
@@ -65,25 +72,54 @@ class TCPConsoleModule {
     if (!this.messageInput.trim()) return;
     
     try {
-      await electronAPI.broadcastTCP(this.messageInput);
-      this.messageInput = '';
-      this.render();
+      const success = await electronAPI.sendTCP(this.messageInput);
+      if (success) {
+        this.messageInput = '';
+        // Input field will be cleared on next render
+        const inputEl = document.getElementById('tcp-message-input');
+        if (inputEl) {
+          inputEl.value = '';
+        }
+      }
     } catch (error) {
       console.error('Failed to send TCP message:', error);
     }
   }
 
-  async toggleServer() {
+  async connect() {
     try {
-      if (this.status.isRunning) {
-        await electronAPI.stopTCP();
-      } else {
-        await electronAPI.startTCP(this.status.port);
-      }
+      await electronAPI.connectTCP(this.host, this.port);
+      await this.updateStatus();
+    } catch (error) {
+      console.error('Failed to connect TCP:', error);
+    }
+  }
+
+  async disconnect() {
+    try {
+      await electronAPI.disconnectTCP();
+      await this.updateStatus();
+    } catch (error) {
+      console.error('Failed to disconnect TCP:', error);
+    }
+  }
+
+  async toggleAutoReconnect() {
+    this.autoReconnect = !this.autoReconnect;
+    try {
+      await electronAPI.setTCPAutoReconnect(this.autoReconnect);
+      this.render();
+    } catch (error) {
+      console.error('Failed to toggle auto-reconnect:', error);
+    }
+  }
+
+  async updateStatus() {
+    try {
       this.status = await electronAPI.getTCPStatus();
       this.render();
     } catch (error) {
-      console.error('Failed to toggle TCP server:', error);
+      console.error('Failed to update TCP status:', error);
     }
   }
 
@@ -126,12 +162,28 @@ class TCPConsoleModule {
     messageEl.style.borderBottom = '1px solid #e5e7eb';
 
     const time = new Date(msg.timestamp).toLocaleTimeString();
-    const typeColor = msg.type === 'broadcast' ? '#0066cc' : '#16a34a';
-    const typeLabel = msg.type === 'broadcast' ? 'SERVER' : msg.from;
+    
+    let fromColor, fromLabel;
+    if (msg.type === 'system') {
+      fromColor = '#6b7280';
+      fromLabel = 'SYSTEM';
+    } else if (msg.type === 'sent') {
+      fromColor = '#0066cc';
+      fromLabel = 'CLIENT';
+    } else if (msg.type === 'received') {
+      fromColor = '#16a34a';
+      fromLabel = 'SERVER';
+    } else if (msg.type === 'error') {
+      fromColor = '#dc2626';
+      fromLabel = 'ERROR';
+    } else {
+      fromColor = '#6b7280';
+      fromLabel = msg.from || 'UNKNOWN';
+    }
 
     messageEl.innerHTML = `
       <span style="color: #6b7280">${time}</span>
-      <span style="color: ${typeColor}; margin-left: 12px; font-weight: 500">[${typeLabel}]</span>
+      <span style="color: ${fromColor}; margin-left: 12px; font-weight: 500">[${fromLabel}]</span>
       <span style="color: #1f2937; margin-left: 12px">${this.escapeHtml(msg.message)}</span>
     `;
 
@@ -147,49 +199,84 @@ class TCPConsoleModule {
   renderConsole() {
     if (!this.showConsole) return '';
 
-    const statusColor = this.status.isRunning ? '#16a34a' : '#dc2626';
-    const statusText = this.status.isRunning ? 'Running' : 'Stopped';
-    const buttonText = this.status.isRunning ? 'Stop Server' : 'Start Server';
-    const buttonColor = this.status.isRunning ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600';
+    const statusColor = this.status.isConnected ? '#16a34a' : '#dc2626';
+    const statusText = this.status.isConnected ? 'Connected' : 'Disconnected';
+    const buttonText = this.status.isConnected ? 'Disconnect' : 'Connect';
+    const buttonColor = this.status.isConnected ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600';
 
     return `
       <div class="p-6 space-y-4">
         <!-- Header -->
         <div class="flex justify-between items-center">
           <div>
-            <h2 class="text-2xl font-bold text-gray-800">TCP Console</h2>
-            <p class="text-sm text-gray-600 mt-1">Remote console server on port ${this.status.port}</p>
+            <h2 class="text-2xl font-bold text-gray-800">TCP Console Client</h2>
+            <p class="text-sm text-gray-600 mt-1">Connect to remote TCP console server</p>
           </div>
-          <div class="flex items-center gap-4">
-            <div class="text-right">
-              <div class="flex items-center gap-2">
-                <div class="w-3 h-3 rounded-full" style="background-color: ${statusColor}"></div>
-                <span class="font-semibold text-gray-700">${statusText}</span>
-              </div>
-              <div class="text-sm text-gray-600 mt-1">
-                ${this.status.isRunning ? `${this.status.clientCount} client(s) connected` : 'Server offline'}
-              </div>
-            </div>
-            <button onclick="tcpConsole.toggleServer()" class="${buttonColor} text-white px-4 py-2 rounded-lg transition-colors">
-              ${buttonText}
-            </button>
+          <div class="flex items-center gap-2">
+            <div class="w-3 h-3 rounded-full" style="background-color: ${statusColor}"></div>
+            <span class="font-semibold text-gray-700">${statusText}</span>
           </div>
         </div>
 
-        <!-- Connection Info -->
-        ${this.status.isRunning ? `
-          <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <h3 class="font-semibold text-blue-900 mb-2">How to Connect:</h3>
-            <code class="text-sm text-blue-800">telnet &lt;server-ip&gt; ${this.status.port}</code>
-            <span class="text-sm text-blue-700 ml-4">or</span>
-            <code class="text-sm text-blue-800 ml-2">nc &lt;server-ip&gt; ${this.status.port}</code>
+        <!-- Connection Settings -->
+        <div class="bg-white border border-gray-300 rounded-lg p-4">
+          <h3 class="font-semibold text-gray-700 mb-3">Connection Settings</h3>
+          <div class="flex gap-3 items-end">
+            <div class="flex-1">
+              <label class="block text-sm font-medium text-gray-700 mb-1">Host</label>
+              <input 
+                type="text" 
+                id="tcp-host-input"
+                value="${this.escapeHtml(this.host)}"
+                oninput="tcpConsole.host = this.value"
+                placeholder="localhost or IP address"
+                ${this.status.isConnected ? 'disabled' : ''}
+                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${this.status.isConnected ? 'bg-gray-100' : ''}"
+              />
+            </div>
+            <div class="w-32">
+              <label class="block text-sm font-medium text-gray-700 mb-1">Port</label>
+              <input 
+                type="number" 
+                id="tcp-port-input"
+                value="${this.port}"
+                oninput="tcpConsole.port = parseInt(this.value) || 56789"
+                placeholder="56789"
+                ${this.status.isConnected ? 'disabled' : ''}
+                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${this.status.isConnected ? 'bg-gray-100' : ''}"
+              />
+            </div>
+            <button 
+              onclick="tcpConsole.${this.status.isConnected ? 'disconnect' : 'connect'}()"
+              class="${buttonColor} text-white px-6 py-2 rounded-lg transition-colors"
+            >
+              ${buttonText}
+            </button>
           </div>
-        ` : ''}
+          
+          <div class="mt-3">
+            <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <input 
+                type="checkbox" 
+                ${this.autoReconnect ? 'checked' : ''}
+                onchange="tcpConsole.toggleAutoReconnect()"
+                class="rounded"
+              />
+              Auto-reconnect on connection loss
+            </label>
+          </div>
+          
+          ${this.status.message ? `
+            <div class="mt-3 text-sm ${this.status.error ? 'text-red-600' : 'text-gray-600'}">
+              ${this.escapeHtml(this.status.message)}
+            </div>
+          ` : ''}
+        </div>
 
-        <!-- Broadcast Message -->
-        ${this.status.isRunning ? `
+        <!-- Message Input -->
+        ${this.status.isConnected ? `
           <div class="bg-white border border-gray-300 rounded-lg p-4">
-            <label class="block text-sm font-semibold text-gray-700 mb-2">Broadcast Message to All Clients:</label>
+            <label class="block text-sm font-semibold text-gray-700 mb-2">Send Message:</label>
             <div class="flex gap-2">
               <input 
                 type="text" 
@@ -213,7 +300,7 @@ class TCPConsoleModule {
         <!-- Messages Display -->
         <div class="bg-white border border-gray-300 rounded-lg overflow-hidden">
           <div class="bg-gray-100 px-4 py-2 border-b border-gray-300 flex justify-between items-center">
-            <h3 class="font-semibold text-gray-700">Console Messages (${this.messages.length})</h3>
+            <h3 class="font-semibold text-gray-700">Console Output (${this.messages.length} messages)</h3>
             <div class="flex gap-2">
               <label class="flex items-center gap-2 text-sm text-gray-700">
                 <input 
@@ -242,14 +329,14 @@ class TCPConsoleModule {
 
         <!-- Usage Tips -->
         <div class="bg-gray-50 border border-gray-200 rounded-lg p-4">
-          <h3 class="font-semibold text-gray-800 mb-2">Available Commands (in client):</h3>
-          <div class="grid grid-cols-2 gap-2 text-sm text-gray-700">
-            <div><code class="bg-gray-200 px-2 py-1 rounded">help</code> - Show available commands</div>
-            <div><code class="bg-gray-200 px-2 py-1 rounded">status</code> - Show system status</div>
-            <div><code class="bg-gray-200 px-2 py-1 rounded">devices</code> - List discovered devices</div>
-            <div><code class="bg-gray-200 px-2 py-1 rounded">clear</code> - Clear screen</div>
-            <div><code class="bg-gray-200 px-2 py-1 rounded">quit/exit</code> - Disconnect</div>
-          </div>
+          <h3 class="font-semibold text-gray-800 mb-2">Usage:</h3>
+          <ul class="text-sm text-gray-700 space-y-1">
+            <li>• Enter the <strong>host</strong> and <strong>port</strong> of the TCP server you want to connect to</li>
+            <li>• Click <strong>Connect</strong> to establish connection</li>
+            <li>• Type messages in the input field and press <strong>Enter</strong> or click <strong>Send</strong></li>
+            <li>• All messages sent and received will appear in the console output</li>
+            <li>• Enable <strong>Auto-reconnect</strong> to automatically reconnect if connection is lost</li>
+          </ul>
         </div>
       </div>
     `;
@@ -264,7 +351,7 @@ class TCPConsoleModule {
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
             </svg>
             <p>No messages yet</p>
-            <p class="text-sm mt-1">Messages will appear here when clients connect</p>
+            <p class="text-sm mt-1">Connect to a server to start communication</p>
           </div>
         </div>
       `;
@@ -283,4 +370,3 @@ class TCPConsoleModule {
 
 // Create global instance
 const tcpConsole = new TCPConsoleModule();
-

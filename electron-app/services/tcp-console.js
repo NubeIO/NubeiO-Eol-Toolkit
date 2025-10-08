@@ -1,153 +1,144 @@
 const net = require('net');
 const EventEmitter = require('events');
 
-class TCPConsole extends EventEmitter {
+class TCPConsoleClient extends EventEmitter {
   constructor() {
     super();
-    this.server = null;
-    this.clients = [];
+    this.client = null;
     this.messages = [];
-    this.isRunning = false;
+    this.isConnected = false;
+    this.host = 'localhost';
     this.port = 56789;
     this.maxMessages = 1000;
+    this.reconnectTimer = null;
+    this.autoReconnect = false;
   }
 
-  start(port = 56789) {
-    if (this.isRunning) {
-      console.log('TCP Console is already running');
+  connect(host = 'localhost', port = 56789) {
+    if (this.isConnected) {
+      console.log('TCP Console Client: Already connected');
       return;
     }
 
+    this.host = host;
     this.port = port;
-    this.server = net.createServer((socket) => {
-      const clientId = `${socket.remoteAddress}:${socket.remotePort}`;
-      console.log(`TCP Console: Client connected - ${clientId}`);
-      
-      this.clients.push(socket);
-      
-      // Send welcome message
-      socket.write(`Connected to FGA Simulator TCP Console\r\n`);
-      socket.write(`Type 'help' for available commands\r\n\r\n`);
-      
-      // Handle data from client
-      socket.on('data', (data) => {
-        const message = data.toString().trim();
-        const timestamp = Date.now();
-        
-        const logEntry = {
-          timestamp,
-          from: clientId,
-          message: message,
-          type: 'received'
-        };
-        
-        this.messages.unshift(logEntry);
-        if (this.messages.length > this.maxMessages) {
-          this.messages.pop();
-        }
-        
-        console.log(`TCP Console [${clientId}]: ${message}`);
-        this.emit('message', logEntry);
-        
-        // Process commands
-        this.processCommand(socket, message);
-      });
-      
-      socket.on('end', () => {
-        console.log(`TCP Console: Client disconnected - ${clientId}`);
-        this.clients = this.clients.filter(c => c !== socket);
-      });
-      
-      socket.on('error', (err) => {
-        console.error(`TCP Console: Socket error - ${clientId}:`, err.message);
-        this.clients = this.clients.filter(c => c !== socket);
-      });
-    });
 
-    this.server.listen(this.port, '0.0.0.0', () => {
-      console.log(`TCP Console server listening on port ${this.port}`);
-      this.isRunning = true;
-      this.emit('status-change', { isRunning: true, port: this.port });
-    });
-
-    this.server.on('error', (err) => {
-      console.error('TCP Console server error:', err);
-      this.isRunning = false;
-      this.emit('status-change', { isRunning: false, port: this.port, error: err.message });
-    });
-  }
-
-  stop() {
-    if (!this.isRunning) {
-      console.log('TCP Console is not running');
-      return;
-    }
-
-    // Close all client connections
-    this.clients.forEach(socket => {
-      socket.write('Server shutting down...\r\n');
-      socket.end();
-    });
-    this.clients = [];
-
-    // Close server
-    if (this.server) {
-      this.server.close(() => {
-        console.log('TCP Console server stopped');
-        this.isRunning = false;
-        this.emit('status-change', { isRunning: false, port: this.port });
-      });
-    }
-  }
-
-  processCommand(socket, command) {
-    const cmd = command.toLowerCase();
+    console.log(`TCP Console Client: Connecting to ${host}:${port}...`);
     
-    if (cmd === 'help') {
-      socket.write('\r\nAvailable Commands:\r\n');
-      socket.write('  help          - Show this help message\r\n');
-      socket.write('  status        - Show MQTT connection status\r\n');
-      socket.write('  devices       - List discovered devices\r\n');
-      socket.write('  clear         - Clear screen\r\n');
-      socket.write('  quit/exit     - Disconnect from console\r\n');
-      socket.write('\r\n');
-    } else if (cmd === 'status') {
-      socket.write('\r\nSystem Status:\r\n');
-      socket.write(`  TCP Console: Running on port ${this.port}\r\n`);
-      socket.write(`  Connected clients: ${this.clients.length}\r\n`);
-      socket.write(`  Messages logged: ${this.messages.length}\r\n`);
-      socket.write('\r\n');
-    } else if (cmd === 'devices') {
-      socket.write('\r\nDiscovered Devices:\r\n');
-      socket.write('  (Device list will be implemented with MQTT service integration)\r\n');
-      socket.write('\r\n');
-    } else if (cmd === 'clear') {
-      socket.write('\x1b[2J\x1b[H'); // ANSI clear screen
-    } else if (cmd === 'quit' || cmd === 'exit') {
-      socket.write('Goodbye!\r\n');
-      socket.end();
-    } else if (command) {
-      socket.write(`Unknown command: ${command}\r\n`);
-      socket.write(`Type 'help' for available commands\r\n\r\n`);
-    }
-  }
+    this.client = new net.Socket();
+    
+    this.client.connect(port, host, () => {
+      console.log(`TCP Console Client: Connected to ${host}:${port}`);
+      this.isConnected = true;
+      this.emit('status-change', { 
+        isConnected: true, 
+        host: this.host, 
+        port: this.port,
+        message: 'Connected successfully'
+      });
+      
+      this.addMessage('SYSTEM', `Connected to ${host}:${port}`, 'system');
+    });
 
-  broadcast(message) {
-    const msg = `${message}\r\n`;
-    this.clients.forEach(socket => {
-      try {
-        socket.write(msg);
-      } catch (err) {
-        console.error('Error broadcasting to client:', err);
+    this.client.on('data', (data) => {
+      const message = data.toString();
+      console.log(`TCP Console Client: Received: ${message}`);
+      
+      // Split by lines and add each line as a message
+      const lines = message.split(/\r?\n/);
+      lines.forEach(line => {
+        if (line.trim()) {
+          this.addMessage('SERVER', line, 'received');
+        }
+      });
+      
+      this.emit('data', message);
+    });
+
+    this.client.on('close', () => {
+      console.log('TCP Console Client: Connection closed');
+      this.isConnected = false;
+      this.emit('status-change', { 
+        isConnected: false, 
+        host: this.host, 
+        port: this.port,
+        message: 'Connection closed'
+      });
+      
+      this.addMessage('SYSTEM', 'Connection closed', 'system');
+      
+      if (this.autoReconnect) {
+        this.scheduleReconnect();
       }
     });
+
+    this.client.on('error', (err) => {
+      console.error(`TCP Console Client: Error - ${err.message}`);
+      this.isConnected = false;
+      this.emit('status-change', { 
+        isConnected: false, 
+        host: this.host, 
+        port: this.port,
+        error: err.message,
+        message: `Error: ${err.message}`
+      });
+      
+      this.addMessage('SYSTEM', `Error: ${err.message}`, 'error');
+    });
+  }
+
+  disconnect() {
+    if (!this.isConnected && !this.client) {
+      console.log('TCP Console Client: Not connected');
+      return;
+    }
+
+    this.autoReconnect = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    if (this.client) {
+      this.client.destroy();
+      this.client = null;
+    }
     
-    // Log broadcast message
+    this.isConnected = false;
+    this.addMessage('SYSTEM', 'Disconnected', 'system');
+    this.emit('status-change', { 
+      isConnected: false, 
+      host: this.host, 
+      port: this.port,
+      message: 'Disconnected'
+    });
+  }
+
+  send(message) {
+    if (!this.isConnected || !this.client) {
+      console.error('TCP Console Client: Not connected');
+      this.addMessage('SYSTEM', 'Cannot send: Not connected', 'error');
+      return false;
+    }
+
+    try {
+      this.client.write(message + '\r\n');
+      this.addMessage('CLIENT', message, 'sent');
+      console.log(`TCP Console Client: Sent: ${message}`);
+      return true;
+    } catch (err) {
+      console.error(`TCP Console Client: Send error - ${err.message}`);
+      this.addMessage('SYSTEM', `Send error: ${err.message}`, 'error');
+      return false;
+    }
+  }
+
+  addMessage(from, message, type) {
     const logEntry = {
       timestamp: Date.now(),
-      from: 'SERVER',
+      from: from,
       message: message,
-      type: 'broadcast'
+      type: type
     };
     
     this.messages.unshift(logEntry);
@@ -158,12 +149,24 @@ class TCPConsole extends EventEmitter {
     this.emit('message', logEntry);
   }
 
+  scheduleReconnect() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+    }
+    
+    this.reconnectTimer = setTimeout(() => {
+      console.log('TCP Console Client: Attempting to reconnect...');
+      this.connect(this.host, this.port);
+    }, 5000);
+  }
+
   getStatus() {
     return {
-      isRunning: this.isRunning,
+      isConnected: this.isConnected,
+      host: this.host,
       port: this.port,
-      clientCount: this.clients.length,
-      messageCount: this.messages.length
+      messageCount: this.messages.length,
+      autoReconnect: this.autoReconnect
     };
   }
 
@@ -175,7 +178,15 @@ class TCPConsole extends EventEmitter {
     this.messages = [];
     this.emit('messages-cleared');
   }
+
+  setAutoReconnect(enabled) {
+    this.autoReconnect = enabled;
+    if (!enabled && this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
 }
 
-module.exports = TCPConsole;
+module.exports = TCPConsoleClient;
 
