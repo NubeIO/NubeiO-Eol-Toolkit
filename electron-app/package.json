@@ -45,7 +45,16 @@
       "preload.js",
       "renderer/**/*",
       "services/**/*",
+      "config/**/*",
+      "tools/**/*",
       "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "tools/esptool",
+        "to": "tools/esptool",
+        "filter": ["**/*"]
+      }
     ],
     "linux": {
       "target": [

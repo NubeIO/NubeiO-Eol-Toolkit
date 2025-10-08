@@ -41,9 +41,35 @@ class ESP32Flasher {
    * @returns {string} - Path to esptool
    */
   getEsptoolPath() {
-    // For now, use system esptool or bundled one
-    // TODO: Bundle esptool.py with the app
-    return 'esptool.py'; // Will be replaced with bundled path
+    const path = require('path');
+    const { app } = require('electron');
+    const os = require('os');
+    
+    // Determine platform
+    const platform = os.platform();
+    
+    // Get app resource path
+    const resourcePath = app.isPackaged 
+      ? path.join(process.resourcesPath, 'tools', 'esptool')
+      : path.join(__dirname, '..', 'tools', 'esptool');
+    
+    // Select appropriate esptool binary
+    if (platform === 'win32') {
+      return path.join(resourcePath, 'esptool-win64', 'esptool.exe');
+    } else {
+      // Linux/Mac - use the bundled linux binary
+      const esptoolPath = path.join(resourcePath, 'esptool-linux-amd64', 'esptool');
+      
+      // Make it executable (in case permissions are lost)
+      try {
+        const fs = require('fs');
+        fs.chmodSync(esptoolPath, '755');
+      } catch (err) {
+        console.warn('Could not set esptool permissions:', err);
+      }
+      
+      return esptoolPath;
+    }
   }
 
   /**
