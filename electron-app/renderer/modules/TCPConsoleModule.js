@@ -215,29 +215,31 @@ class TCPConsoleModule {
 
     const time = new Date(msg.timestamp).toLocaleTimeString();
     
-    let fromColor, fromLabel;
-    if (msg.type === 'system') {
-      fromColor = '#6b7280';
-      fromLabel = 'SYSTEM';
-    } else if (msg.type === 'sent') {
-      fromColor = '#0066cc';
-      fromLabel = 'CLIENT';
-    } else if (msg.type === 'received') {
-      fromColor = '#16a34a';
-      fromLabel = 'SERVER';
+    // Only show prefix for sent messages and special cases (not for received messages)
+    if (msg.type === 'sent') {
+      messageEl.innerHTML = `
+        <span style="color: #6b7280">${time}</span>
+        <span style="color: #0066cc; margin-left: 12px; font-weight: 500">[CLIENT]</span>
+        <span style="color: #1f2937; margin-left: 12px; white-space: pre-wrap;">${this.escapeHtml(msg.message)}</span>
+      `;
+    } else if (msg.type === 'system') {
+      messageEl.innerHTML = `
+        <span style="color: #6b7280">${time}</span>
+        <span style="color: #6b7280; margin-left: 12px; font-weight: 500">[SYSTEM]</span>
+        <span style="color: #1f2937; margin-left: 12px; white-space: pre-wrap;">${this.escapeHtml(msg.message)}</span>
+      `;
     } else if (msg.type === 'error') {
-      fromColor = '#dc2626';
-      fromLabel = 'ERROR';
+      messageEl.innerHTML = `
+        <span style="color: #6b7280">${time}</span>
+        <span style="color: #dc2626; margin-left: 12px; font-weight: 500">[ERROR]</span>
+        <span style="color: #1f2937; margin-left: 12px; white-space: pre-wrap;">${this.escapeHtml(msg.message)}</span>
+      `;
     } else {
-      fromColor = '#6b7280';
-      fromLabel = msg.from || 'UNKNOWN';
+      // For 'received' messages, just show the raw message (no timestamp, no prefix)
+      messageEl.innerHTML = `
+        <span style="color: #1f2937; white-space: pre-wrap;">${this.escapeHtml(msg.message)}</span>
+      `;
     }
-
-    messageEl.innerHTML = `
-      <span style="color: #6b7280">${time}</span>
-      <span style="color: ${fromColor}; margin-left: 12px; font-weight: 500">[${fromLabel}]</span>
-      <span style="color: #1f2937; margin-left: 12px; white-space: pre-wrap;">${this.escapeHtml(msg.message)}</span>
-    `;
 
     return messageEl;
   }
