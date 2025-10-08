@@ -10,6 +10,10 @@ class TCPConsoleModule {
     // Connection settings
     this.host = 'localhost';
     this.port = 56789;
+    
+    // Track if user is typing to prevent re-render
+    this.isTyping = false;
+    this.lastRenderedHtml = '';
   }
 
   async init() {
@@ -41,7 +45,8 @@ class TCPConsoleModule {
     electronAPI.onMenuEvent('tcp:status-change', (statusData) => {
       this.status = { ...this.status, ...statusData };
       if (this.showConsole) {
-        this.render();
+        // Only update status display, not full render to preserve input focus
+        this.updateStatusOnly();
       }
     });
 
@@ -120,6 +125,52 @@ class TCPConsoleModule {
 
   hide() {
     this.showConsole = false;
+  }
+
+  handleHostInput(value) {
+    this.host = value;
+    this.isTyping = true;
+  }
+
+  handlePortInput(value) {
+    this.port = parseInt(value) || 56789;
+    this.isTyping = true;
+  }
+
+  updateStatusOnly() {
+    // Check if connection state changed - if so, need full render
+    const wasConnected = document.getElementById('tcp-disconnect-btn') !== null;
+    const isConnected = this.status.isConnected;
+    
+    if (wasConnected !== isConnected) {
+      // Connection state changed, need full render to update buttons/inputs
+      this.render();
+      return;
+    }
+    
+    // Update only the status indicator without full re-render
+    const statusDot = document.querySelector('.tcp-status-dot');
+    const statusText = document.querySelector('.tcp-status-text');
+    
+    if (statusDot && statusText) {
+      const statusColor = this.status.isConnected ? '#16a34a' : '#dc2626';
+      const statusTextValue = this.status.isConnected ? 'Connected' : 'Disconnected';
+      
+      statusDot.style.backgroundColor = statusColor;
+      statusText.textContent = statusTextValue;
+    }
+    
+    // Update status message if present
+    const statusMessage = document.getElementById('tcp-status-message');
+    if (statusMessage) {
+      if (this.status.message) {
+        statusMessage.textContent = this.status.message;
+        statusMessage.className = `mt-3 text-sm ${this.status.error ? 'text-red-600' : 'text-gray-600'}`;
+        statusMessage.style.display = 'block';
+      } else {
+        statusMessage.style.display = 'none';
+      }
+    }
   }
 
   updateMessagesOnly() {
@@ -208,8 +259,8 @@ class TCPConsoleModule {
             <p class="text-sm text-gray-600 mt-1">Connect to remote TCP console server</p>
           </div>
           <div class="flex items-center gap-2">
-            <div class="w-3 h-3 rounded-full" style="background-color: ${statusColor}"></div>
-            <span class="font-semibold text-gray-700">${statusText}</span>
+            <div class="tcp-status-dot w-3 h-3 rounded-full" style="background-color: ${statusColor}"></div>
+            <span class="tcp-status-text font-semibold text-gray-700">${statusText}</span>
           </div>
         </div>
 
@@ -223,7 +274,9 @@ class TCPConsoleModule {
                 type="text" 
                 id="tcp-host-input"
                 value="${this.escapeHtml(this.host)}"
-                oninput="tcpConsole.host = this.value"
+                oninput="tcpConsole.handleHostInput(this.value)"
+                onfocus="tcpConsole.isTyping = true"
+                onblur="tcpConsole.isTyping = false"
                 placeholder="localhost or IP address"
                 ${this.status.isConnected ? 'disabled' : ''}
                 class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${this.status.isConnected ? 'bg-gray-100' : ''}"
@@ -235,13 +288,16 @@ class TCPConsoleModule {
                 type="number" 
                 id="tcp-port-input"
                 value="${this.port}"
-                oninput="tcpConsole.port = parseInt(this.value) || 56789"
+                oninput="tcpConsole.handlePortInput(this.value)"
+                onfocus="tcpConsole.isTyping = true"
+                onblur="tcpConsole.isTyping = false"
                 placeholder="56789"
                 ${this.status.isConnected ? 'disabled' : ''}
                 class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${this.status.isConnected ? 'bg-gray-100' : ''}"
               />
             </div>
             <button 
+              id="${this.status.isConnected ? 'tcp-disconnect-btn' : 'tcp-connect-btn'}"
               onclick="tcpConsole.${this.status.isConnected ? 'disconnect' : 'connect'}()"
               class="${buttonColor} text-white px-6 py-2 rounded-lg transition-colors"
             >
@@ -262,10 +318,10 @@ class TCPConsoleModule {
           </div>
           
           ${this.status.message ? `
-            <div class="mt-3 text-sm ${this.status.error ? 'text-red-600' : 'text-gray-600'}">
+            <div id="tcp-status-message" class="mt-3 text-sm ${this.status.error ? 'text-red-600' : 'text-gray-600'}">
               ${this.escapeHtml(this.status.message)}
             </div>
-          ` : ''}
+          ` : '<div id="tcp-status-message" class="mt-3 text-sm text-gray-600" style="display: none;"></div>'}
         </div>
 
         <!-- Message Input -->
@@ -358,8 +414,14 @@ class TCPConsoleModule {
   }
 
   render() {
+    // Skip re-render if user is currently typing in input fields
+    if (this.isTyping) {
+      return this.lastRenderedHtml;
+    }
+    
     // This will be called by the main app render
-    return this.renderConsole();
+    this.lastRenderedHtml = this.renderConsole();
+    return this.lastRenderedHtml;
   }
 }
 
