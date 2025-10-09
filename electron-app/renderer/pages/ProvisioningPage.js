@@ -131,6 +131,38 @@ class ProvisioningPage {
               ` : ''}
             </div>
 
+            <!-- Step 0: Erase Flash (Optional) -->
+            <div class="border-t pt-4">
+              <h3 class="text-lg font-semibold text-gray-800 mb-3">🗑️ Step 0: Erase Flash (Optional)</h3>
+              <div class="mb-3">
+                <label class="block text-sm font-medium text-gray-700 mb-2">Erase Type</label>
+                <select id="prov-erase-type" onchange="window.provisioningPage.toggleCustomErase()" class="w-full md:w-1/2 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" ${this.isProvisioning ? 'disabled' : ''}>
+                  <option value="all">Erase All Flash</option>
+                  <option value="nvs">Erase NVS Only (0x3D0000)</option>
+                  <option value="allnvs">Erase All NVS Partitions</option>
+                  <option value="custom">Custom Region</option>
+                </select>
+              </div>
+              
+              <div id="custom-erase-inputs" class="mb-3 hidden">
+                <div class="grid grid-cols-2 gap-4 md:w-1/2">
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Address</label>
+                    <input type="text" id="prov-erase-address" value="0x3D0000" class="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="0x3D0000" ${this.isProvisioning ? 'disabled' : ''}>
+                  </div>
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Size</label>
+                    <input type="text" id="prov-erase-size" value="0x10000" class="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="0x10000" ${this.isProvisioning ? 'disabled' : ''}>
+                  </div>
+                </div>
+              </div>
+              
+              <button onclick="window.provisioningPage.eraseFlash()" class="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-md text-sm font-medium" ${this.isProvisioning ? 'disabled' : ''}>
+                🗑️ Erase Flash
+              </button>
+              <p class="text-xs text-gray-500 mt-2">⚠️ Warning: This will erase data on the ESP32. Put ESP32 in download mode first.</p>
+            </div>
+
             <!-- Step-by-Step Actions -->
             <div class="border-t pt-4">
               <h3 class="text-lg font-semibold text-gray-800 mb-3">Step-by-Step Provisioning</h3>
@@ -383,6 +415,69 @@ class ProvisioningPage {
   toggleWiFi() {
     this.includeWiFi = document.getElementById('prov-include-wifi').checked;
     this.app.render();
+  }
+
+  toggleCustomErase() {
+    const eraseType = document.getElementById('prov-erase-type').value;
+    const customInputs = document.getElementById('custom-erase-inputs');
+    if (customInputs) {
+      if (eraseType === 'custom') {
+        customInputs.classList.remove('hidden');
+      } else {
+        customInputs.classList.add('hidden');
+      }
+    }
+  }
+
+  async eraseFlash() {
+    const port = document.getElementById('prov-port').value;
+    const eraseType = document.getElementById('prov-erase-type').value;
+    
+    if (!port) {
+      alert('Please select a serial port first');
+      return;
+    }
+
+    // Confirmation dialog
+    const eraseTypeNames = {
+      'all': 'ALL FLASH MEMORY',
+      'nvs': 'NVS partition only (0x3D0000)',
+      'allnvs': 'ALL NVS partitions',
+      'custom': 'custom region'
+    };
+
+    const confirmErase = confirm(
+      `⚠️ WARNING: Erase Flash\n\n` +
+      `This will erase ${eraseTypeNames[eraseType]} on the ESP32.\n\n` +
+      `Make sure ESP32 is in DOWNLOAD MODE:\n` +
+      `1. Hold BOOT button\n` +
+      `2. Press & release RESET button\n` +
+      `3. Release BOOT button\n\n` +
+      `Continue with erase?`
+    );
+
+    if (!confirmErase) return;
+
+    try {
+      this.stage = `Erasing flash (${eraseType})...`;
+      this.app.render();
+
+      if (eraseType === 'custom') {
+        const address = document.getElementById('prov-erase-address').value;
+        const size = document.getElementById('prov-erase-size').value;
+        await window.provisioningService.eraseCustomRegion(port, address, size);
+      } else {
+        await window.provisioningService.eraseFlash(port, eraseType);
+      }
+
+      this.stage = `✅ Flash erase complete (${eraseType})`;
+      alert(`Flash erase completed successfully!\n\nType: ${eraseTypeNames[eraseType]}`);
+      this.app.render();
+    } catch (error) {
+      this.stage = '❌ Erase failed';
+      alert(`Failed to erase flash: ${error.message}`);
+      this.app.render();
+    }
   }
 }
 

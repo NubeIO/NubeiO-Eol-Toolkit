@@ -665,3 +665,21 @@ ipcMain.handle('provisioning:provisionESP32', async (event, config) => {
 ipcMain.handle('provisioning:getChipTypes', () => {
   return provisioningService.getChipTypes();
 });
+
+ipcMain.handle('provisioning:eraseFlash', async (event, port, eraseType) => {
+  try {
+    return await provisioningService.eraseFlash(port, eraseType);
+  } catch (error) {
+    console.error('Failed to erase flash:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('provisioning:eraseCustomRegion', async (event, port, address, size) => {
+  try {
+    return await provisioningService.eraseCustomRegion(port, address, size);
+  } catch (error) {
+    console.error('Failed to erase custom region:', error);
+    throw error;
+  }
+});

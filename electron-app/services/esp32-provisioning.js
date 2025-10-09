@@ -488,6 +488,142 @@ class ESP32Provisioning {
   }
 
   /**
+   * Erase flash memory on ESP32
+   */
+  async eraseFlash(port, eraseType) {
+    return new Promise((resolve, reject) => {
+      if (!fs.existsSync(this.esptoolPath)) {
+        reject(new Error('esptool binary not found'));
+        return;
+      }
+
+      console.log(`Erasing flash on port ${port}, type: ${eraseType}`);
+
+      let args = ['--port', port];
+
+      // Add erase command based on type
+      switch (eraseType) {
+        case 'all':
+          args.push('erase_flash');
+          break;
+        case 'nvs':
+          // Erase NVS partition at 0x3D0000, size 0x10000 (64KB)
+          args.push('erase_region', '0x3D0000', '0x10000');
+          break;
+        case 'allnvs':
+          // Erase all NVS partitions: nvs (0x9000), zc_cfg (0x3D0000), cert_storage (0x3E0000)
+          args.push('erase_region', '0x9000', '0x10000');
+          
+          // Execute first erase
+          const cmd1 = spawn(this.esptoolPath, args);
+          let output1 = '';
+          
+          cmd1.stdout.on('data', (data) => { output1 += data.toString(); });
+          cmd1.stderr.on('data', (data) => { output1 += data.toString(); });
+          
+          cmd1.on('close', (code1) => {
+            if (code1 !== 0) {
+              reject(new Error(`Failed to erase nvs partition: ${output1}`));
+              return;
+            }
+            
+            // Then erase zc_cfg and cert_storage together
+            const args2 = ['--port', port, 'erase_region', '0x3D0000', '0x30000'];
+            const cmd2 = spawn(this.esptoolPath, args2);
+            let output2 = '';
+            
+            cmd2.stdout.on('data', (data) => { output2 += data.toString(); });
+            cmd2.stderr.on('data', (data) => { output2 += data.toString(); });
+            
+            cmd2.on('close', (code2) => {
+              if (code2 === 0) {
+                console.log('All NVS partitions erased successfully');
+                resolve({ success: true, message: 'All NVS partitions erased' });
+              } else {
+                reject(new Error(`Failed to erase zc_cfg/cert_storage: ${output2}`));
+              }
+            });
+            
+            cmd2.on('error', (error) => reject(error));
+          });
+          
+          cmd1.on('error', (error) => reject(error));
+          return;
+        default:
+          reject(new Error(`Invalid erase type: ${eraseType}`));
+          return;
+      }
+
+      const cmd = spawn(this.esptoolPath, args);
+      let output = '';
+
+      cmd.stdout.on('data', (data) => {
+        output += data.toString();
+        console.log('[esptool]', data.toString().trim());
+      });
+
+      cmd.stderr.on('data', (data) => {
+        output += data.toString();
+        console.log('[esptool]', data.toString().trim());
+      });
+
+      cmd.on('close', (code) => {
+        if (code === 0) {
+          console.log('Flash erase completed successfully');
+          resolve({ success: true, message: 'Flash erase complete', output });
+        } else {
+          reject(new Error(`Flash erase failed with code ${code}: ${output}`));
+        }
+      });
+
+      cmd.on('error', (error) => {
+        reject(new Error(`Failed to execute esptool: ${error.message}`));
+      });
+    });
+  }
+
+  /**
+   * Erase custom flash region
+   */
+  async eraseCustomRegion(port, address, size) {
+    return new Promise((resolve, reject) => {
+      if (!fs.existsSync(this.esptoolPath)) {
+        reject(new Error('esptool binary not found'));
+        return;
+      }
+
+      console.log(`Erasing custom region on port ${port}, address: ${address}, size: ${size}`);
+
+      const args = ['--port', port, 'erase_region', address, size];
+      const cmd = spawn(this.esptoolPath, args);
+      let output = '';
+
+      cmd.stdout.on('data', (data) => {
+        output += data.toString();
+        console.log('[esptool]', data.toString().trim());
+      });
+
+      cmd.stderr.on('data', (data) => {
+        output += data.toString();
+        console.log('[esptool]', data.toString().trim());
+      });
+
+      cmd.on('close', (code) => {
+        if (code === 0) {
+          console.log('Custom region erase completed successfully');
+          resolve({ success: true, message: 'Custom region erased', output });
+        } else {
+          reject(new Error(`Custom region erase failed with code ${code}: ${output}`));
+        }
+      });
+
+      cmd.on('error', (error) => {
+        reject(new Error(`Failed to execute esptool: ${error.message}`));
+      });
+    });
+  }
+
+  /**
    * Get available chip types
    */
   getChipTypes() {

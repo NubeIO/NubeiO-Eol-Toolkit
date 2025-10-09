@@ -95,6 +95,8 @@ contextBridge.exposeInMainWorld('provisioningService', {
     ipcRenderer.invoke('provisioning:flashNVSBinary', port, chip, offset, binPath, baudRate),
   provisionESP32: (config) => ipcRenderer.invoke('provisioning:provisionESP32', config),
   getChipTypes: () => ipcRenderer.invoke('provisioning:getChipTypes'),
+  eraseFlash: (port, eraseType) => ipcRenderer.invoke('provisioning:eraseFlash', port, eraseType),
+  eraseCustomRegion: (port, address, size) => ipcRenderer.invoke('provisioning:eraseCustomRegion', port, address, size),
   onProvisioningProgress: (callback) => {
     ipcRenderer.on('provisioning:progress', (event, progress) => callback(progress));
   }
