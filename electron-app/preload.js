@@ -68,10 +68,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ESP32 Flasher methods
   getSerialPorts: () => ipcRenderer.invoke('flasher:getSerialPorts'),
   getFlasherStatus: () => ipcRenderer.invoke('flasher:getStatus'),
-  verifyFirmware: (filePath) => ipcRenderer.invoke('flasher:verifyFirmware', filePath),
+  detectChip: (port) => ipcRenderer.invoke('flasher:detectChip', port),
   flashFirmware: (options) => ipcRenderer.invoke('flasher:flashFirmware', options),
+  flashComplete: (options) => ipcRenderer.invoke('flasher:flashComplete', options),
   cancelFlash: () => ipcRenderer.invoke('flasher:cancelFlash'),
-  showFirmwareDialog: () => ipcRenderer.invoke('flasher:showFirmwareDialog')
+  showFirmwareDialog: () => ipcRenderer.invoke('flasher:showFirmwareDialog'),
+  showFolderDialog: () => ipcRenderer.invoke('flasher:showFolderDialog'),
+  scanFolder: (folderPath) => ipcRenderer.invoke('flasher:scanFolder', folderPath),
+  onFlasherProgress: (callback) => {
+    ipcRenderer.on('flasher:progress', (event, progress) => callback(progress));
+  }
 });
 
 console.log('electronAPI exposed to window');

@@ -114,7 +114,7 @@ class ESP32Flasher {
         args.push('erase_flash');
       } else {
         // Write flash command
-        args.push('write_flash');
+        args.push('write-flash');
         args.push('--flash_mode', flashMode);
         args.push('--flash_freq', flashFreq);
         args.push('--flash_size', flashSize);

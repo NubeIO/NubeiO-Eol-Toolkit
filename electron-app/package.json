@@ -53,13 +53,14 @@
       {
         "from": "tools/esptool",
         "to": "tools/esptool",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "linux": {
       "target": [
-        "AppImage",
-        "deb"
+        "AppImage"
       ],
       "category": "Utility",
       "maintainer": "Nube IO <info@nube-io.com>",
@@ -67,12 +68,6 @@
     },
     "win": {
       "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        },
         {
           "target": "portable",
           "arch": [

@@ -4,7 +4,7 @@ const path = require('path');
 // Import services
 const MQTTService = require('./services/mqtt-service');
 const UDPLogger = require('./services/udp-logger');
-const ESP32Flasher = require('./services/esp32-flasher');
+const ESP32FlasherNative = require('./services/esp32-flasher-native');
 const TCPConsoleClient = require('./services/tcp-console');
 
 // Disable hardware acceleration to avoid libva errors
@@ -282,7 +282,12 @@ app.whenReady().then(() => {
   mqttService = new MQTTService(app);
   udpLogger = new UDPLogger();
   tcpConsole = new TCPConsoleClient();
-  esp32Flasher = new ESP32Flasher();
+  esp32Flasher = new ESP32FlasherNative();
+
+  // Initialize ESP32 flasher
+  esp32Flasher.initialize().catch(err => {
+    console.error('Failed to initialize ESP32 flasher:', err);
+  });
   
   createWindow();
   
@@ -419,21 +424,53 @@ ipcMain.handle('open-external', (event, url) => {
   return true;
 });
 
-// ESP32 Flasher IPC Handlers
+// ESP32 Flasher IPC Handlers (Native)
 ipcMain.handle('flasher:getSerialPorts', async () => {
-  return await esp32Flasher.getSerialPorts();
+  // Use Node serialport to get ports
+  const { SerialPort } = require('serialport');
+  try {
+    const ports = await SerialPort.list();
+    // Filter and format ports
+    return ports
+      .filter(port => {
+        const path = port.path.toLowerCase();
+        return !path.includes('bluetooth') && !path.match(/ttys\d+/);
+      })
+      .map(port => port.path);
+  } catch (error) {
+    console.error('Failed to list serial ports:', error);
+    return [];
+  }
 });
 
 ipcMain.handle('flasher:getStatus', () => {
   return esp32Flasher.getStatus();
 });
 
-ipcMain.handle('flasher:verifyFirmware', (event, filePath) => {
-  return esp32Flasher.verifyFirmware(filePath);
+ipcMain.handle('flasher:detectChip', async (event, port) => {
+  try {
+    return await esp32Flasher.detectChip(port);
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 });
 
 ipcMain.handle('flasher:flashFirmware', async (event, options) => {
-  return await esp32Flasher.flashFirmware(options);
+  try {
+    // Send progress updates to renderer
+    const result = await esp32Flasher.flashFirmware({
+      ...options,
+      onProgress: (progress) => {
+        const mainWindow = BrowserWindow.getAllWindows()[0];
+        if (mainWindow) {
+          mainWindow.webContents.send('flasher:progress', progress);
+        }
+      }
+    });
+    return result;
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 });
 
 ipcMain.handle('flasher:cancelFlash', () => {
@@ -444,12 +481,46 @@ ipcMain.handle('flasher:showFirmwareDialog', async () => {
   const result = await dialog.showOpenDialog({
     title: 'Select Firmware File',
     filters: [
-      { name: 'Firmware Files', extensions: ['bin', 'elf'] },
+      { name: 'Firmware Files', extensions: ['bin'] },
       { name: 'All Files', extensions: ['*'] }
     ],
     properties: ['openFile']
   });
   return result;
+});
+
+ipcMain.handle('flasher:showFolderDialog', async () => {
+  const result = await dialog.showOpenDialog({
+    title: 'Select Folder Containing ESP32 Firmware Files',
+    properties: ['openDirectory']
+  });
+  return result;
+});
+
+ipcMain.handle('flasher:scanFolder', async (event, folderPath) => {
+  try {
+    const discovered = esp32Flasher.scanFolderForBinFiles(folderPath);
+    return { success: true, files: discovered };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('flasher:flashComplete', async (event, options) => {
+  try {
+    const result = await esp32Flasher.flashComplete({
+      ...options,
+      onProgress: (progress) => {
+        const mainWindow = BrowserWindow.getAllWindows()[0];
+        if (mainWindow) {
+          mainWindow.webContents.send('flasher:progress', progress);
+        }
+      }
+    });
+    return result;
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 });
 
 // TCP Console Client IPC Handlers
