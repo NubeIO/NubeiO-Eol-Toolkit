@@ -151,12 +151,6 @@ class App {
       const response = await fetch('./config/features.json');
       this.features = await response.json();
       console.log('Features loaded:', this.features);
-      
-      // Initialize provisioning page if feature is enabled
-      if (this.features.provisioning && this.features.provisioning.enabled) {
-        this.provisioningPage = new ProvisioningPage(this);
-        console.log('Provisioning page initialized');
-      }
     } catch (error) {
       console.error('Failed to load features:', error);
       // Default to all features enabled if config not found
@@ -166,6 +160,17 @@ class App {
         provisioning: { enabled: true },
         tcpConsole: { enabled: true }
       };
+    }
+    
+    // Initialize provisioning page if feature is enabled and class exists
+    if (this.features.provisioning && this.features.provisioning.enabled) {
+      if (typeof ProvisioningPage !== 'undefined') {
+        this.provisioningPage = new ProvisioningPage(this);
+        window.provisioningPage = this.provisioningPage; // Make globally accessible
+        console.log('Provisioning page initialized');
+      } else {
+        console.warn('ProvisioningPage class not found');
+      }
     }
   }
 
@@ -343,6 +348,10 @@ class App {
       // Load serial ports when switching to flasher page
       this.loadSerialPorts();
       this.loadFlasherStatus();
+      tcpConsole.showConsole = false;
+    } else if (page === 'provisioning') {
+      // Load serial ports for provisioning page (same as flasher)
+      this.loadSerialPorts();
       tcpConsole.showConsole = false;
     } else {
       tcpConsole.showConsole = false;
@@ -1195,8 +1204,8 @@ class App {
         return !path.includes('bluetooth') && !path.match(/ttys\d+/);
       });
 
-      // Auto-select first port if none selected and trigger chip detection
-      if (this.serialPorts.length > 0 && !this.selectedPort) {
+      // Auto-select first port if none selected and trigger chip detection (only for flasher page)
+      if (this.serialPorts.length > 0 && !this.selectedPort && this.currentPage === 'esp32-flasher') {
         this.selectedPort = this.serialPorts[0];
         console.log('Auto-selected port:', this.selectedPort);
         // Trigger chip detection for auto-selected port

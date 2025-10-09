@@ -41,8 +41,11 @@ class ProvisioningPage {
                   <div class="flex gap-2">
                     <select id="prov-port" class="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" ${this.isProvisioning ? 'disabled' : ''}>
                       <option value="">Select Port</option>
+                      ${this.app.serialPorts.map(port => `
+                        <option value="${port}" ${this.config.port === port ? 'selected' : ''}>${port}</option>
+                      `).join('')}
                     </select>
-                    <button onclick="provisioningPage.refreshPorts()" class="px-3 py-2 bg-gray-200 hover:bg-gray-300 rounded-md" ${this.isProvisioning ? 'disabled' : ''}>🔄</button>
+                    <button onclick="app.loadSerialPorts(); app.render();" class="px-3 py-2 bg-gray-200 hover:bg-gray-300 rounded-md" ${this.isProvisioning ? 'disabled' : ''} title="Refresh serial ports">🔄</button>
                   </div>
                 </div>
                 
@@ -52,7 +55,7 @@ class ProvisioningPage {
                     <select id="prov-chip" class="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" ${this.isProvisioning ? 'disabled' : ''}>
                       ${this.chipTypes.map(chip => `<option value="${chip}" ${chip === this.config.chip ? 'selected' : ''}>${chip.toUpperCase()}</option>`).join('')}
                     </select>
-                    <button onclick="provisioningPage.detectChip()" class="px-3 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-md text-sm" ${this.isProvisioning ? 'disabled' : ''}>🔍 Detect</button>
+                    <button onclick="window.provisioningPage.detectChip()" class="px-3 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-md text-sm" ${this.isProvisioning ? 'disabled' : ''}>🔍 Detect</button>
                   </div>
                 </div>
                 
@@ -108,8 +111,8 @@ class ProvisioningPage {
             <div class="border-t pt-4">
               <h3 class="text-lg font-semibold text-gray-800 mb-3">WiFi Configuration (Optional)</h3>
               <div class="mb-3">
-                <label class="inline-flex items-center">
-                  <input type="checkbox" id="prov-include-wifi" ${this.includeWiFi ? 'checked' : ''} onchange="provisioningPage.toggleWiFi()" class="mr-2" ${this.isProvisioning ? 'disabled' : ''}>
+                  <label class="inline-flex items-center">
+                  <input type="checkbox" id="prov-include-wifi" ${this.includeWiFi ? 'checked' : ''} onchange="window.provisioningPage.toggleWiFi()" class="mr-2" ${this.isProvisioning ? 'disabled' : ''}>
                   <span class="text-sm text-gray-700">Include WiFi credentials in NVS</span>
                 </label>
               </div>
@@ -132,16 +135,16 @@ class ProvisioningPage {
             <div class="border-t pt-4">
               <h3 class="text-lg font-semibold text-gray-800 mb-3">Step-by-Step Provisioning</h3>
               <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <button onclick="provisioningPage.readMAC()" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-md text-sm font-medium" ${this.isProvisioning ? 'disabled' : ''}>
+                <button onclick="window.provisioningPage.readMAC()" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-md text-sm font-medium" ${this.isProvisioning ? 'disabled' : ''}>
                   📡 Read MAC
                 </button>
-                <button onclick="provisioningPage.generateUUID()" class="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-md text-sm font-medium" ${this.isProvisioning || !this.macAddress ? 'disabled' : ''}>
+                <button onclick="window.provisioningPage.generateUUID()" class="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-md text-sm font-medium" ${this.isProvisioning || !this.macAddress ? 'disabled' : ''}>
                   🔑 Generate UUID
                 </button>
-                <button onclick="provisioningPage.generatePSK()" class="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-md text-sm font-medium" ${this.isProvisioning ? 'disabled' : ''}>
+                <button onclick="window.provisioningPage.generatePSK()" class="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-md text-sm font-medium" ${this.isProvisioning ? 'disabled' : ''}>
                   🔐 Generate PSK
                 </button>
-                <button onclick="provisioningPage.flashNVS()" class="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-md text-sm font-medium" ${this.isProvisioning || !this.generatedUuid || !this.generatedPsk ? 'disabled' : ''}>
+                <button onclick="window.provisioningPage.flashNVS()" class="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-md text-sm font-medium" ${this.isProvisioning || !this.generatedUuid || !this.generatedPsk ? 'disabled' : ''}>
                   ⚡ Flash NVS
                 </button>
               </div>
@@ -149,7 +152,7 @@ class ProvisioningPage {
 
             <!-- Complete Provisioning Button -->
             <div class="border-t pt-4">
-              <button onclick="provisioningPage.provisionComplete()" class="w-full py-3 ${this.isProvisioning ? 'bg-gray-400' : 'bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700'} text-white rounded-md text-lg font-semibold" ${this.isProvisioning ? 'disabled' : ''}>
+              <button onclick="window.provisioningPage.provisionComplete()" class="w-full py-3 ${this.isProvisioning ? 'bg-gray-400' : 'bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700'} text-white rounded-md text-lg font-semibold" ${this.isProvisioning ? 'disabled' : ''}>
                 ${this.isProvisioning ? '⏳ Provisioning...' : '🚀 Complete Provisioning'}
               </button>
               <p class="text-xs text-gray-500 mt-2 text-center">Put ESP32 in download mode (hold BOOT, press RESET, release BOOT) before clicking</p>
@@ -186,18 +189,6 @@ class ProvisioningPage {
     `;
   }
 
-  async refreshPorts() {
-    try {
-      const ports = await window.provisioningService.getSerialPorts();
-      const select = document.getElementById('prov-port');
-      if (select) {
-        select.innerHTML = '<option value="">Select Port</option>' +
-          ports.map(port => `<option value="${port.path}">${port.path}</option>`).join('');
-      }
-    } catch (error) {
-      alert(`Failed to refresh ports: ${error.message}`);
-    }
-  }
 
   async detectChip() {
     const port = document.getElementById('prov-port').value;
@@ -208,10 +199,13 @@ class ProvisioningPage {
 
     try {
       this.stage = 'Detecting chip type...';
-      this.render();
+      this.app.render();
       const chipType = await window.provisioningService.detectChipType(port);
       this.config.chip = chipType;
-      document.getElementById('prov-chip').value = chipType;
+      const chipSelect = document.getElementById('prov-chip');
+      if (chipSelect) {
+        chipSelect.value = chipType;
+      }
       this.stage = `Detected: ${chipType.toUpperCase()}`;
       this.app.render();
     } catch (error) {
@@ -390,10 +384,8 @@ class ProvisioningPage {
     this.includeWiFi = document.getElementById('prov-include-wifi').checked;
     this.app.render();
   }
-
-  // Called when page becomes active
-  onActivate() {
-    this.refreshPorts();
-  }
 }
+
+// Make provisioningPage globally accessible for onclick handlers
+let provisioningPage = null;
 
