@@ -80,6 +80,26 @@ contextBridge.exposeInMainWorld('electronAPI', {
   }
 });
 
+// Expose provisioning service
+contextBridge.exposeInMainWorld('provisioningService', {
+  getStatus: () => ipcRenderer.invoke('provisioning:getStatus'),
+  getSerialPorts: () => ipcRenderer.invoke('provisioning:getSerialPorts'),
+  readMacAddress: (port, chip) => ipcRenderer.invoke('provisioning:readMacAddress', port, chip),
+  generateUUIDFromMAC: (macAddress) => ipcRenderer.invoke('provisioning:generateUUIDFromMAC', macAddress),
+  generatePSK: () => ipcRenderer.invoke('provisioning:generatePSK'),
+  detectChipType: (port) => ipcRenderer.invoke('provisioning:detectChipType', port),
+  createNVSCSV: (globalUUID, pskSecret, caUrl, wifiSSID, wifiPassword) => 
+    ipcRenderer.invoke('provisioning:createNVSCSV', globalUUID, pskSecret, caUrl, wifiSSID, wifiPassword),
+  generateNVSBinary: (csvPath, size) => ipcRenderer.invoke('provisioning:generateNVSBinary', csvPath, size),
+  flashNVSBinary: (port, chip, offset, binPath, baudRate) => 
+    ipcRenderer.invoke('provisioning:flashNVSBinary', port, chip, offset, binPath, baudRate),
+  provisionESP32: (config) => ipcRenderer.invoke('provisioning:provisionESP32', config),
+  getChipTypes: () => ipcRenderer.invoke('provisioning:getChipTypes'),
+  onProvisioningProgress: (callback) => {
+    ipcRenderer.on('provisioning:progress', (event, progress) => callback(progress));
+  }
+});
+
 console.log('electronAPI exposed to window');
 
 // Test IPC listener setup

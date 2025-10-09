@@ -9,9 +9,10 @@ class App {
     
     // Initialize modules
     this.helpModule = new HelpModule(this);
+    this.provisioningPage = null; // Will be initialized conditionally
     this.configLoaded = false; // Track if config has been loaded
     this.features = {}; // Feature toggles
-    this.currentPage = 'devices'; // 'devices', 'udp-logs', 'tcp-console', or 'esp32-flasher'
+    this.currentPage = 'devices'; // 'devices', 'udp-logs', 'tcp-console', 'esp32-flasher', or 'provisioning'
     this.flasherStatus = { isFlashing: false, hasProcess: false, portsAvailable: 0 };
     this.serialPorts = [];
     this.selectedPort = '';
@@ -150,12 +151,19 @@ class App {
       const response = await fetch('./config/features.json');
       this.features = await response.json();
       console.log('Features loaded:', this.features);
+      
+      // Initialize provisioning page if feature is enabled
+      if (this.features.provisioning && this.features.provisioning.enabled) {
+        this.provisioningPage = new ProvisioningPage(this);
+        console.log('Provisioning page initialized');
+      }
     } catch (error) {
       console.error('Failed to load features:', error);
       // Default to all features enabled if config not found
       this.features = {
         esp32Flasher: { enabled: true },
         udpLogger: { enabled: true },
+        provisioning: { enabled: true },
         tcpConsole: { enabled: true }
       };
     }
@@ -833,6 +841,16 @@ class App {
                 ⚡ ESP32 Flasher
               </button>
               ` : ''}
+              ${this.features.provisioning?.enabled !== false ? `
+              <button onclick="app.switchPage('provisioning')" 
+                class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  this.currentPage === 'provisioning' 
+                    ? 'bg-blue-500 text-white' 
+                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                }">
+                🔐 Provisioning
+              </button>
+              ` : ''}
             </div>
 
             ${this.showConfig ? `
@@ -871,6 +889,7 @@ class App {
             this.currentPage === 'udp-logs' ? this.renderUDPLogsPage() :
             this.currentPage === 'tcp-console' ? tcpConsole.render() :
             this.currentPage === 'esp32-flasher' ? this.renderFlasherPage() :
+            this.currentPage === 'provisioning' ? (this.provisioningPage ? this.provisioningPage.render() : '<div class="p-6 text-center">Provisioning feature not enabled</div>') :
             this.renderDevicesPage()
           }
         </div>

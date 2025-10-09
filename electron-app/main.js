@@ -6,6 +6,7 @@ const MQTTService = require('./services/mqtt-service');
 const UDPLogger = require('./services/udp-logger');
 const ESP32FlasherNative = require('./services/esp32-flasher-native');
 const TCPConsoleClient = require('./services/tcp-console');
+const ESP32Provisioning = require('./services/esp32-provisioning');
 
 // Disable hardware acceleration to avoid libva errors
 app.disableHardwareAcceleration();
@@ -15,6 +16,7 @@ let mqttService = null;
 let udpLogger = null;
 let esp32Flasher = null;
 let tcpConsole = null;
+let provisioningService = null;
 
 // Create application menu
 function createMenu() {
@@ -104,6 +106,17 @@ function createMenu() {
             if (mainWindow) {
               console.log('Sending menu:switch-page udp-logs');
               mainWindow.webContents.send('menu:switch-page', 'udp-logs');
+            }
+          }
+        },
+        {
+          label: 'ESP32 Provisioning',
+          accelerator: 'CmdOrCtrl+3',
+          click: () => {
+            console.log('Menu: Provisioning clicked');
+            const mainWindow = BrowserWindow.getFocusedWindow();
+            if (mainWindow) {
+              mainWindow.webContents.send('menu:switch-page', 'provisioning');
             }
           }
         },
@@ -283,10 +296,16 @@ app.whenReady().then(() => {
   udpLogger = new UDPLogger();
   tcpConsole = new TCPConsoleClient();
   esp32Flasher = new ESP32FlasherNative();
+  provisioningService = new ESP32Provisioning();
 
   // Initialize ESP32 flasher
   esp32Flasher.initialize().catch(err => {
     console.error('Failed to initialize ESP32 flasher:', err);
+  });
+
+  // Initialize provisioning service
+  provisioningService.initialize().catch(err => {
+    console.error('Failed to initialize provisioning service:', err);
   });
   
   createWindow();
@@ -554,4 +573,95 @@ ipcMain.handle('tcp:disconnect', () => {
 ipcMain.handle('tcp:setAutoReconnect', (event, enabled) => {
   tcpConsole.setAutoReconnect(enabled);
   return true;
+});
+
+// ESP32 Provisioning IPC Handlers
+ipcMain.handle('provisioning:getStatus', () => {
+  return provisioningService.getStatus();
+});
+
+ipcMain.handle('provisioning:getSerialPorts', async () => {
+  try {
+    return await provisioningService.getSerialPorts();
+  } catch (error) {
+    console.error('Failed to get serial ports:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('provisioning:readMacAddress', async (event, port, chip) => {
+  try {
+    return await provisioningService.readMacAddress(port, chip);
+  } catch (error) {
+    console.error('Failed to read MAC address:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('provisioning:generateUUIDFromMAC', (event, macAddress) => {
+  return provisioningService.generateUUIDFromMAC(macAddress);
+});
+
+ipcMain.handle('provisioning:generatePSK', () => {
+  return provisioningService.generatePSK();
+});
+
+ipcMain.handle('provisioning:detectChipType', async (event, port) => {
+  try {
+    return await provisioningService.detectChipType(port);
+  } catch (error) {
+    console.error('Failed to detect chip type:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('provisioning:createNVSCSV', (event, globalUUID, pskSecret, caUrl, wifiSSID, wifiPassword) => {
+  return provisioningService.createNVSCSV(globalUUID, pskSecret, caUrl, wifiSSID, wifiPassword);
+});
+
+ipcMain.handle('provisioning:generateNVSBinary', async (event, csvPath, size) => {
+  try {
+    return await provisioningService.generateNVSBinary(csvPath, size);
+  } catch (error) {
+    console.error('Failed to generate NVS binary:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('provisioning:flashNVSBinary', async (event, port, chip, offset, binPath, baudRate) => {
+  try {
+    // Send progress updates to renderer
+    provisioningService.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getFocusedWindow();
+      if (mainWindow) {
+        mainWindow.webContents.send('provisioning:progress', progress);
+      }
+    });
+    
+    return await provisioningService.flashNVSBinary(port, chip, offset, binPath, baudRate);
+  } catch (error) {
+    console.error('Failed to flash NVS binary:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('provisioning:provisionESP32', async (event, config) => {
+  try {
+    // Send progress updates to renderer
+    provisioningService.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getFocusedWindow();
+      if (mainWindow) {
+        mainWindow.webContents.send('provisioning:progress', progress);
+      }
+    });
+    
+    return await provisioningService.provisionESP32(config);
+  } catch (error) {
+    console.error('Failed to provision ESP32:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('provisioning:getChipTypes', () => {
+  return provisioningService.getChipTypes();
 });

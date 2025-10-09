@@ -64,6 +64,13 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "embedded/nvs-binaries",
+        "to": "embedded/nvs-binaries",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "linux": {

@@ -11,6 +11,12 @@
   "tcpConsole": {
     "enabled": true,
     "description": "TCP Console - Connect to devices via TCP"
+  },
+  "provisioning": {
+    "enabled": true,
+    "description": "ESP32 Device Provisioning - Generate credentials and provision ESP32 devices",
+    "requiresEsptool": true,
+    "requiresNVSGen": true
   }
 }
 
