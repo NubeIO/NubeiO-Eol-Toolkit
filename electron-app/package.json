@@ -6,11 +6,13 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --no-sandbox --dev",
-    "build": "electron-builder",
-    "build:all": "electron-builder --linux --win",
-    "build:linux": "electron-builder --linux",
-    "build:win": "electron-builder --win",
-    "build:mac": "electron-builder --mac",
+    "postinstall": "electron-builder install-app-deps",
+    "rebuild": "electron-rebuild -f -w serialport",
+    "build": "npm run rebuild && electron-builder",
+    "build:all": "npm run rebuild && electron-builder --linux --win",
+    "build:linux": "npm run rebuild && electron-builder --linux",
+    "build:win": "npm run rebuild && electron-builder --win",
+    "build:mac": "npm run rebuild && electron-builder --mac",
     "build:docker": "./build.sh"
   },
   "keywords": [
@@ -32,7 +34,8 @@
   },
   "devDependencies": {
     "electron": "^28.0.0",
-    "electron-builder": "^24.9.1"
+    "electron-builder": "^24.9.1",
+    "@electron/rebuild": "^3.6.0"
   },
   "build": {
     "appId": "com.nubeio.fga-simulator",
@@ -49,6 +52,10 @@
       "tools/**/*",
       "embedded/**/*",
       "node_modules/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/serialport/**/*",
+      "node_modules/@serialport/**/*"
     ],
     "extraResources": [
       {
