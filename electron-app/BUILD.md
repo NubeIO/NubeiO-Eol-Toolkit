@@ -1,233 +1,128 @@
-# Building FGA Simulator - Cross-Platform Guide
+# Build Instructions for FGA Simulator
 
-This guide explains how to build the FGA Simulator for different platforms.
+## Important: Native Modules
 
-## 📦 Available Build Methods
+This Electron app uses **native Node.js modules** (`serialport`) which require platform-specific compilation.
 
-### Method 1: Docker Build (Recommended for Cross-Platform)
+## 🪟 Windows Build
 
-**Advantages:**
-- ✅ Build for Windows, Linux, and macOS from any platform
-- ✅ No Wine installation required
-- ✅ Consistent build environment
-- ✅ Isolated dependencies
+**For Windows executable, you MUST build on a Windows machine.**
 
-**Requirements:**
-- Docker installed on your system
+### Requirements:
+- Node.js (v16+ recommended, v20+ for full compatibility)
+- npm
+- Windows 10/11
 
-**Steps:**
-
+### Build Command:
 ```bash
-# Make sure you're in the project directory
-cd /data/projects/nube-io/FGA-AC-Simulator-Electron
-
-# Run the Docker build script
-./build.sh
-
-# Or manually:
-docker build -f Dockerfile.build -t fga-simulator-builder .
-docker run --rm -v "$(pwd)/dist:/project/dist" fga-simulator-builder
+cd electron-app
+npm install
+npm run build:win
 ```
 
-**Output:**
-- `dist/FGA Simulator-1.0.0.AppImage` - Linux AppImage
-- `dist/fga-ac-simulator-electron_1.0.0_amd64.deb` - Debian/Ubuntu package
-- `dist/FGA Simulator Setup 1.0.0.exe` - Windows installer (NSIS)
-- `dist/FGA Simulator 1.0.0.exe` - Windows portable
-- `dist/FGA Simulator-1.0.0.dmg` - macOS installer (if building on macOS)
+### Output:
+- `dist/FGA_Simulator 1.0.0.exe` - Portable executable
+- `dist/win-unpacked/` - Unpacked application folder
+
+### ✅ The resulting `.exe` will work on any Windows PC without requiring:
+- Visual Studio Build Tools
+- Python
+- Node.js
+- npm
 
 ---
 
-### Method 2: Native Linux Build (Linux Only)
+## 🐧 Linux Build
 
-**What it builds:**
-- ✅ Linux packages (AppImage, .deb)
-- ❌ Windows packages (requires Wine)
-- ❌ macOS packages (requires macOS)
+**For Linux AppImage, you can use Docker or build on Linux.**
 
-**Steps:**
-
+### Option 1: Docker Build (Recommended)
 ```bash
-# Install dependencies
-npm install
+cd electron-app
+./build.sh
+```
 
-# Build for Linux only
+### Option 2: Native Linux Build
+```bash
+cd electron-app
+npm install
 npm run build:linux
 ```
 
-**Output:**
-- `dist/FGA Simulator-1.0.0.AppImage`
-- `dist/fga-ac-simulator-electron_1.0.0_amd64.deb`
+### Output:
+- `dist/FGA_Simulator-1.0.0.AppImage` - Linux AppImage
 
 ---
 
-### Method 3: Windows Build with Wine (Advanced)
+## ⚠️ Cross-Platform Build Limitation
 
-If you want to build Windows executables directly on Linux without Docker:
+**Do NOT use Docker (`build.sh`) to build Windows executables!**
 
-**Requirements:**
-```bash
-# Install Wine
-sudo dpkg --add-architecture i386
-sudo apt update
-sudo apt install wine64 wine32
-```
+### Why?
+- Docker runs in a Linux environment
+- Native modules (serialport) are compiled for Linux
+- Even though a Windows `.exe` is produced, the native bindings are incorrect
+- The `.exe` will fail on Windows PCs with error: "not a valid Win32 application"
 
-**Steps:**
-```bash
-npm run build:win
-```
-
-**Output:**
-- `dist/FGA Simulator Setup 1.0.0.exe` - Windows installer
-- `dist/FGA Simulator 1.0.0.exe` - Windows portable
+### Solution:
+- **Windows builds**: Use `npm run build:win` on Windows PC
+- **Linux builds**: Use `./build.sh` or `npm run build:linux`
 
 ---
 
-### Method 4: Build on Windows (Native)
+## 🔧 Build Scripts
 
-If you're on a Windows machine:
-
-**Steps:**
-```bash
-# Install dependencies
-npm install
-
-# Build for Windows
-npm run build:win
-
-# Or build for all platforms (if you have the tools)
-npm run build:all
-```
+| Command | Platform | Environment | Output |
+|---------|----------|-------------|---------|
+| `npm run build:win` | Windows | Windows PC | Portable `.exe` |
+| `npm run build:linux` | Linux | Linux/Docker | AppImage |
+| `npm run build:mac` | macOS | macOS | DMG |
+| `./build.sh` | Linux | Docker | AppImage |
 
 ---
 
-## 🚀 Quick Start
+## 📦 What Gets Built
 
-### For Development:
-```bash
-npm install
-npm start
-```
+### Windows (`npm run build:win`)
+1. Rebuilds `serialport` for Windows + Electron v28
+2. Packages app with `electron-builder`
+3. Extracts native modules from asar (via `asarUnpack`)
+4. Creates portable executable
 
-### For Production Build (Current Platform):
-```bash
-npm run build
-```
-
-### For All Platforms (Docker):
-```bash
-./build.sh
-```
-
----
-
-## 📋 Build Outputs
-
-### Linux:
-- **AppImage** - Portable, runs on any Linux distro
-  - Usage: `chmod +x "FGA Simulator-1.0.0.AppImage" && ./FGA\ Simulator-1.0.0.AppImage`
-- **.deb** - Debian/Ubuntu package
-  - Usage: `sudo dpkg -i fga-ac-simulator-electron_1.0.0_amd64.deb`
-
-### Windows:
-- **NSIS Installer** - Full installer with uninstaller
-  - Usage: Double-click `FGA Simulator Setup 1.0.0.exe`
-- **Portable** - No installation required
-  - Usage: Double-click `FGA Simulator 1.0.0.exe`
-
-### macOS:
-- **.dmg** - macOS disk image
-  - Usage: Double-click to mount, drag to Applications
+### Linux (`npm run build:linux` or `./build.sh`)
+1. Rebuilds `serialport` for Linux + Electron v28
+2. Packages app with `electron-builder`
+3. Creates AppImage
 
 ---
 
 ## 🐛 Troubleshooting
 
-### "wine is required" error:
-**Solution:** Use Docker build method (`./build.sh`) or install Wine (see Method 3)
+### "not a valid Win32 application" error
+- **Cause**: Built with Docker on Linux
+- **Fix**: Rebuild on Windows PC using `npm run build:win`
 
-### Docker not found:
-**Solution:** Install Docker:
-```bash
-# Ubuntu/Debian
-sudo apt install docker.io
-sudo systemctl start docker
-sudo usermod -aG docker $USER
-# Log out and log back in
-```
+### "Cannot find module 'serialport'"
+- **Cause**: Native module not properly unpacked
+- **Fix**: Check `asarUnpack` in `package.json`
 
-### Permission denied on build.sh:
-**Solution:**
-```bash
-chmod +x build.sh
-```
-
-### Build fails with "ENOSPC" error:
-**Solution:** Increase inotify watches:
-```bash
-echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf
-sudo sysctl -p
-```
+### Build fails on Windows
+- **Cause**: Missing build tools
+- **Fix**: Install Windows Build Tools (only needed for building, not for running)
+  ```bash
+  npm install --global windows-build-tools
+  ```
 
 ---
 
-## 📝 Notes
+## 📝 Summary
 
-- **Code Signing:** Builds are not code-signed by default. For production, you should sign the executables.
-- **Auto-Update:** Not configured. You can add `electron-updater` for auto-update functionality.
-- **Build Time:** First build may take 5-10 minutes. Subsequent builds are faster.
-- **Disk Space:** Ensure you have at least 2GB free space for build artifacts.
+**For Production Builds:**
 
----
+| Target OS | Build On | Command |
+|-----------|----------|---------|
+| Windows | Windows PC | `npm run build:win` |
+| Linux | Linux or Docker | `./build.sh` |
+| macOS | macOS | `npm run build:mac` |
 
-## 🔧 Customization
-
-### Change App Version:
-Edit `package.json`:
-```json
-{
-  "version": "1.0.1"
-}
-```
-
-### Change App Name:
-Edit `package.json`:
-```json
-{
-  "name": "your-app-name",
-  "productName": "Your App Name"
-}
-```
-
-### Add Icon:
-1. Create `build/icon.ico` (Windows)
-2. Create `build/icon.png` (Linux)
-3. Create `build/icon.icns` (macOS)
-
----
-
-## 📦 Distribution
-
-### Linux:
-- Upload `.AppImage` for universal compatibility
-- Upload `.deb` for Debian/Ubuntu users
-- Consider creating `.rpm` for Fedora/RHEL users
-
-### Windows:
-- Distribute the NSIS installer for most users
-- Provide portable version for users who can't install software
-
-### macOS:
-- Distribute the `.dmg` file
-- Consider notarization for Gatekeeper compatibility
-
----
-
-## 🎯 Recommended Workflow
-
-1. **Development:** `npm start`
-2. **Test Build:** `npm run build` (current platform)
-3. **Production Build:** `./build.sh` (all platforms via Docker)
-4. **Test Executables:** Run the built apps on target platforms
-5. **Distribute:** Upload to GitHub Releases or your distribution platform
+**Never cross-compile Windows builds with native modules from Linux/Docker!**
