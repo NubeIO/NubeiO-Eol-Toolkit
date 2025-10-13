@@ -14,6 +14,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const { SerialPort } = require('serialport');
+const { ReadlineParser } = require('@serialport/parser-readline');
 const { Client } = require('pg');
 
 class ESP32Provisioning {
@@ -479,11 +480,46 @@ class ESP32Provisioning {
         result.message = `Provisioning succeeded but database insertion failed: ${dbError.message}`;
       }
 
+      // Step 7: Configure WiFi via serial (optional)
+      if (config.configureWiFi && config.wifiSsid && config.wifiPassword) {
+        result.stage = 'wifi_config';
+        try {
+          console.log('Starting WiFi configuration via serial...');
+          const wifiResult = await this.configureWiFiViaSerial(
+            config.port,
+            config.wifiSsid,
+            config.wifiPassword,
+            config.baudRate || 115200,
+            30000 // 30 second timeout
+          );
+
+          if (wifiResult.success) {
+            console.log('✓ WiFi configured successfully');
+            result.wifiConfigured = true;
+            result.wifiResponses = wifiResult.responses;
+          } else {
+            console.warn('WiFi configuration incomplete:', wifiResult.message);
+            result.wifiConfigured = false;
+            result.wifiMessage = wifiResult.message;
+            // Don't fail provisioning if WiFi config fails
+          }
+        } catch (wifiError) {
+          console.error('WiFi configuration error:', wifiError);
+          result.wifiConfigured = false;
+          result.wifiMessage = wifiError.message;
+          // Don't fail provisioning if WiFi config fails
+        }
+      }
+
       // Complete
       result.stage = 'complete';
       result.success = true;
       if (!result.message) {
-        result.message = 'ESP32 provisioning completed successfully';
+        let msg = 'ESP32 provisioning completed successfully';
+        if (result.wifiConfigured) {
+          msg += ' with WiFi configuration';
+        }
+        result.message = msg;
       }
       
       return result;
@@ -713,6 +749,168 @@ class ESP32Provisioning {
     } catch (error) {
       return { success: false, message: `Database connection failed: ${error.message}` };
     }
+  }
+
+  /**
+   * Configure WiFi via serial console after provisioning
+   */
+  async configureWiFiViaSerial(port, wifiSsid, wifiPassword, baudRate = 115200, timeout = 30000) {
+    return new Promise(async (resolve, reject) => {
+      let serialPort = null;
+      let parser = null;
+      let responses = [];
+      let commandIndex = 0;
+      let timeoutHandle = null;
+      let commandSent = false;
+
+      // Define WiFi configuration commands
+      const commands = [
+        { cmd: '', delay: 500 }, // Initial empty line to wake up console
+        { cmd: 'wifi_config', delay: 1000, expect: ['OK', 'Ready'] },
+        { cmd: `ssid ${wifiSsid}`, delay: 1000, expect: ['OK', 'SSID'] },
+        { cmd: `pass ${wifiPassword}`, delay: 1000, expect: ['OK', 'Password'] },
+        { cmd: 'wifi_save', delay: 1000, expect: ['OK', 'Saved'] },
+        { cmd: 'wifi_connect', delay: 3000, expect: ['Connected', 'IP', 'WIFI'] },
+      ];
+
+      try {
+        console.log(`Configuring WiFi via serial: ${port} @ ${baudRate}`);
+        console.log(`WiFi SSID: ${wifiSsid}`);
+
+        // Open serial port
+        serialPort = new SerialPort({
+          path: port,
+          baudRate: baudRate,
+          autoOpen: false
+        });
+
+        parser = serialPort.pipe(new ReadlineParser({ delimiter: '\n' }));
+
+        // Setup data handler
+        parser.on('data', (data) => {
+          const line = data.toString().trim();
+          if (line) {
+            console.log(`[Serial RX]: ${line}`);
+            responses.push(line);
+
+            // Check if expected response received
+            if (commandSent && commandIndex < commands.length) {
+              const currentCmd = commands[commandIndex];
+              if (currentCmd.expect) {
+                // Check if any of the expected strings are in the response
+                const matched = currentCmd.expect.some(exp => 
+                  line.toUpperCase().includes(exp.toUpperCase())
+                );
+
+                if (matched) {
+                  console.log(`✓ Command ${commandIndex + 1}/${commands.length} successful`);
+                  commandSent = false;
+                  commandIndex++;
+                  
+                  // Send next command after delay
+                  if (commandIndex < commands.length) {
+                    setTimeout(() => sendNextCommand(), currentCmd.delay);
+                  } else {
+                    // All commands completed
+                    console.log('✓ WiFi configuration completed successfully');
+                    cleanup();
+                    resolve({
+                      success: true,
+                      message: 'WiFi configured successfully via serial',
+                      responses: responses
+                    });
+                  }
+                }
+              } else {
+                // No expect condition, just move to next
+                commandSent = false;
+                commandIndex++;
+                setTimeout(() => sendNextCommand(), currentCmd.delay || 500);
+              }
+            }
+          }
+        });
+
+        // Setup error handler
+        serialPort.on('error', (err) => {
+          console.error('Serial port error:', err);
+          cleanup();
+          reject(new Error(`Serial error: ${err.message}`));
+        });
+
+        // Send command function
+        const sendNextCommand = () => {
+          if (commandIndex >= commands.length) {
+            cleanup();
+            resolve({
+              success: true,
+              message: 'All WiFi commands sent',
+              responses: responses
+            });
+            return;
+          }
+          
+          const cmd = commands[commandIndex].cmd;
+          console.log(`[Serial TX ${commandIndex + 1}/${commands.length}]: ${cmd || '(empty line)'}`);
+          serialPort.write(cmd + '\r\n', (err) => {
+            if (err) {
+              cleanup();
+              reject(new Error(`Failed to send command: ${err.message}`));
+            } else {
+              commandSent = true;
+            }
+          });
+        };
+
+        // Cleanup function
+        const cleanup = () => {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          if (serialPort && serialPort.isOpen) {
+            serialPort.close(() => {
+              console.log('Serial port closed');
+            });
+          }
+        };
+
+        // Setup timeout
+        timeoutHandle = setTimeout(() => {
+          console.warn(`WiFi configuration timeout after ${timeout}ms`);
+          cleanup();
+          resolve({
+            success: false,
+            message: `WiFi configuration timeout. Completed ${commandIndex}/${commands.length} commands.`,
+            responses: responses,
+            partial: true
+          });
+        }, timeout);
+
+        // Open port and start
+        await new Promise((resolveOpen, rejectOpen) => {
+          serialPort.open((err) => {
+            if (err) {
+              rejectOpen(new Error(`Failed to open port: ${err.message}`));
+            } else {
+              console.log('Serial port opened for WiFi configuration');
+              resolveOpen();
+            }
+          });
+        });
+
+        // Wait for ESP32 to be ready after flashing
+        console.log('Waiting 2 seconds for ESP32 to initialize...');
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
+        // Start sending commands
+        sendNextCommand();
+
+      } catch (error) {
+        console.error('WiFi configuration error:', error);
+        if (serialPort && serialPort.isOpen) {
+          serialPort.close();
+        }
+        reject(error);
+      }
+    });
   }
 
   /**
