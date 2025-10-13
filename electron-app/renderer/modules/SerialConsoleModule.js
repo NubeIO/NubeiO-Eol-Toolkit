@@ -45,14 +45,35 @@ class SerialConsoleModule {
 
   async loadSerialPorts() {
     try {
-      this.serialPorts = await window.electronAPI.getSerialPorts();
+      // Get serial ports - returns array of port objects or simple strings
+      const ports = await window.electronAPI.getSerialPorts();
       
-      // Auto-select first port if none selected
-      if (this.serialPorts.length > 0 && !this.selectedPort) {
-        this.selectedPort = this.serialPorts[0].path;
+      // Convert to consistent format
+      if (ports && ports.length > 0) {
+        // Check if it's already in object format or just strings
+        if (typeof ports[0] === 'string') {
+          // Convert string array to object array
+          this.serialPorts = ports.map(path => ({
+            path: path,
+            manufacturer: 'Unknown'
+          }));
+        } else {
+          // Already in object format
+          this.serialPorts = ports;
+        }
+        
+        // Auto-select first port if none selected
+        if (this.serialPorts.length > 0 && !this.selectedPort) {
+          this.selectedPort = this.serialPorts[0].path;
+        }
+      } else {
+        this.serialPorts = [];
       }
+      
+      console.log('Serial ports loaded:', this.serialPorts);
     } catch (error) {
       console.error('Failed to load serial ports:', error);
+      this.serialPorts = [];
     }
   }
 
