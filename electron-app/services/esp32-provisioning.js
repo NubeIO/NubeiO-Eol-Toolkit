@@ -14,6 +14,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const { SerialPort } = require('serialport');
+const { Client } = require('pg');
 
 class ESP32Provisioning {
   constructor() {
@@ -466,10 +467,24 @@ class ESP32Provisioning {
         console.warn('Failed to cleanup temp files:', err);
       }
 
+      // Step 6: Insert into database
+      result.stage = 'db_insert';
+      try {
+        await this.insertDeviceToDatabase(result.globalUUID, result.presharedSecret);
+        console.log(`Device credentials saved to database for UUID: ${result.globalUUID}`);
+      } catch (dbError) {
+        console.error('Failed to save to database:', dbError);
+        // Don't fail the entire provisioning if database insert fails
+        // The device is already provisioned on the ESP32
+        result.message = `Provisioning succeeded but database insertion failed: ${dbError.message}`;
+      }
+
       // Complete
       result.stage = 'complete';
       result.success = true;
-      result.message = 'ESP32 provisioning completed successfully';
+      if (!result.message) {
+        result.message = 'ESP32 provisioning completed successfully';
+      }
       
       return result;
     } catch (error) {
@@ -628,6 +643,76 @@ class ESP32Provisioning {
    */
   getChipTypes() {
     return ['esp32', 'esp32s2', 'esp32s3', 'esp32c2', 'esp32c3', 'esp32c6', 'esp32h2'];
+  }
+
+  /**
+   * Insert device credentials into PostgreSQL database
+   */
+  async insertDeviceToDatabase(globalUUID, presharedSecret, dbConfig = null) {
+    // Use provided config or default
+    const config = dbConfig || {
+      host: '128.199.170.214',
+      port: 5432,
+      user: 'user',
+      password: 'password12345678',
+      database: 'ca_database'
+    };
+
+    const client = new Client(config);
+
+    try {
+      console.log(`Connecting to database at ${config.host}:${config.port}`);
+      await client.connect();
+      console.log('Database connection successful');
+
+      // Insert or update device record (UPSERT)
+      const query = `
+        INSERT INTO zc_devices (
+          global_uuid,
+          preshared_secret,
+          number_of_certificate_assigned,
+          created_at,
+          updated_at
+        ) VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (global_uuid) DO UPDATE SET
+          preshared_secret = EXCLUDED.preshared_secret,
+          updated_at = EXCLUDED.updated_at
+      `;
+
+      const now = new Date();
+      await client.query(query, [globalUUID, presharedSecret, 0, now, now]);
+
+      console.log(`Successfully inserted/updated device credentials for UUID: ${globalUUID}`);
+    } catch (error) {
+      console.error('Database operation failed:', error);
+      throw new Error(`Failed to insert into database: ${error.message}`);
+    } finally {
+      await client.end();
+    }
+  }
+
+  /**
+   * Test database connection
+   */
+  async testDatabaseConnection(dbConfig = null) {
+    const config = dbConfig || {
+      host: '128.199.170.214',
+      port: 5432,
+      user: 'user',
+      password: 'password12345678',
+      database: 'ca_database'
+    };
+
+    const client = new Client(config);
+
+    try {
+      await client.connect();
+      await client.query('SELECT 1');
+      await client.end();
+      return { success: true, message: 'Database connection successful' };
+    } catch (error) {
+      return { success: false, message: `Database connection failed: ${error.message}` };
+    }
   }
 
   /**
