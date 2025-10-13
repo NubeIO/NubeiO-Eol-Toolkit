@@ -769,13 +769,22 @@ class App {
       return;
     }
 
-    // If TCP Console or Serial Console inputs have focus, don't re-render (preserve input focus)
+    // If console or provisioning inputs have focus, don't re-render (preserve input focus)
     const activeElement = document.activeElement;
     if (activeElement &&
         (activeElement.id === 'tcp-host-input' ||
          activeElement.id === 'tcp-port-input' ||
          activeElement.id === 'tcp-message-input' ||
-         activeElement.id === 'serial-message-input')) {
+         activeElement.id === 'serial-message-input' ||
+         activeElement.id === 'prov-offset' ||
+         activeElement.id === 'prov-size' ||
+         activeElement.id === 'prov-caurl' ||
+         activeElement.id === 'prov-uuid' ||
+         activeElement.id === 'prov-psk' ||
+         activeElement.id === 'prov-wifi-ssid' ||
+         activeElement.id === 'prov-wifi-password' ||
+         activeElement.id === 'prov-erase-address' ||
+         activeElement.id === 'prov-erase-size')) {
       return;
     }
 
