@@ -29,6 +29,7 @@
   "homepage": "https://nube-io.com",
   "license": "MIT",
   "dependencies": {
+    "@serialport/parser-readline": "^13.0.0",
     "mqtt": "^5.3.4",
     "pg": "^8.16.3",
     "serialport": "^13.0.0"
