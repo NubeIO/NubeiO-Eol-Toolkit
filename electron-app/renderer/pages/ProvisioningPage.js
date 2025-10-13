@@ -15,6 +15,7 @@ class ProvisioningPage {
       wifiPassword: ''
     };
     this.includeWiFi = false;
+    this.configureWiFi = false; // Auto-configure WiFi via serial after provisioning
     this.macAddress = '';
     this.generatedUuid = '';
     this.generatedPsk = '';
@@ -117,7 +118,7 @@ class ProvisioningPage {
                 </label>
               </div>
               ${this.includeWiFi ? `
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                   <div>
                     <label class="block text-sm font-medium text-gray-700 mb-2">WiFi SSID</label>
                     <input type="text" id="prov-wifi-ssid" value="${this.config.wifiSsid}" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter WiFi network name" ${this.isProvisioning ? 'disabled' : ''}>
@@ -127,6 +128,18 @@ class ProvisioningPage {
                     <label class="block text-sm font-medium text-gray-700 mb-2">WiFi Password</label>
                     <input type="password" id="prov-wifi-password" value="${this.config.wifiPassword}" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter WiFi password" ${this.isProvisioning ? 'disabled' : ''}>
                   </div>
+                </div>
+                
+                <!-- WiFi Auto-Configuration via Serial -->
+                <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3">
+                  <label class="inline-flex items-center">
+                    <input type="checkbox" id="prov-config-wifi" ${this.configureWiFi ? 'checked' : ''} onchange="window.provisioningPage.configureWiFi = this.checked; window.provisioningPage.render();" class="mr-2" ${this.isProvisioning ? 'disabled' : ''}>
+                    <span class="text-sm font-semibold text-gray-800">🔌 Auto-configure WiFi via Serial Console after provisioning</span>
+                  </label>
+                  <p class="text-xs text-gray-600 mt-2 ml-6">
+                    After flashing and database insertion, automatically connect to serial console and send WiFi configuration commands to ESP32.
+                    This will configure WiFi settings via serial interface.
+                  </p>
                 </div>
               ` : ''}
             </div>
@@ -391,7 +404,8 @@ class ProvisioningPage {
 
       const config = {
         port, chip, offset, size, baudRate, caUrl,
-        customUuid, customPsk, wifiSsid, wifiPassword
+        customUuid, customPsk, wifiSsid, wifiPassword,
+        configureWiFi: this.configureWiFi // Add WiFi auto-configuration flag
       };
 
       const result = await window.provisioningService.provisionESP32(config);
