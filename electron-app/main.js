@@ -7,6 +7,7 @@ const UDPLogger = require('./services/udp-logger');
 const ESP32FlasherNative = require('./services/esp32-flasher-native');
 const TCPConsoleClient = require('./services/tcp-console');
 const ESP32Provisioning = require('./services/esp32-provisioning');
+const SerialConsole = require('./services/serial-console');
 
 // Disable hardware acceleration to avoid libva errors
 app.disableHardwareAcceleration();
@@ -17,6 +18,7 @@ let udpLogger = null;
 let esp32Flasher = null;
 let tcpConsole = null;
 let provisioningService = null;
+let serialConsole = null;
 
 // Create application menu
 function createMenu() {
@@ -110,8 +112,19 @@ function createMenu() {
           }
         },
         {
-          label: 'ESP32 Provisioning',
+          label: 'Serial Console',
           accelerator: 'CmdOrCtrl+3',
+          click: () => {
+            console.log('Menu: Serial Console clicked');
+            const mainWindow = BrowserWindow.getFocusedWindow();
+            if (mainWindow) {
+              mainWindow.webContents.send('menu:switch-page', 'serial-console');
+            }
+          }
+        },
+        {
+          label: 'ESP32 Provisioning',
+          accelerator: 'CmdOrCtrl+4',
           click: () => {
             console.log('Menu: Provisioning clicked');
             const mainWindow = BrowserWindow.getFocusedWindow();
@@ -297,6 +310,7 @@ app.whenReady().then(() => {
   tcpConsole = new TCPConsoleClient();
   esp32Flasher = new ESP32FlasherNative();
   provisioningService = new ESP32Provisioning();
+  serialConsole = new SerialConsole();
 
   // Initialize ESP32 flasher
   esp32Flasher.initialize().catch(err => {
@@ -573,6 +587,48 @@ ipcMain.handle('tcp:disconnect', () => {
 ipcMain.handle('tcp:setAutoReconnect', (event, enabled) => {
   tcpConsole.setAutoReconnect(enabled);
   return true;
+});
+
+// Serial Console IPC Handlers
+ipcMain.handle('serial:getSerialPorts', async () => {
+  return await serialConsole.getSerialPorts();
+});
+
+ipcMain.handle('serial:getStatus', () => {
+  return serialConsole.getStatus();
+});
+
+ipcMain.handle('serial:getMessages', () => {
+  return serialConsole.getMessages();
+});
+
+ipcMain.handle('serial:clearMessages', () => {
+  return serialConsole.clearMessages();
+});
+
+ipcMain.handle('serial:connect', async (event, port, baudRate) => {
+  try {
+    // Setup message callback to send messages to renderer
+    serialConsole.setMessageCallback((message) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) {
+        mainWindow.webContents.send('serial:message', message);
+      }
+    });
+    
+    return await serialConsole.connect(port, baudRate);
+  } catch (error) {
+    console.error('Failed to connect serial console:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('serial:disconnect', async () => {
+  return await serialConsole.disconnect();
+});
+
+ipcMain.handle('serial:send', async (event, message) => {
+  return await serialConsole.send(message);
 });
 
 // ESP32 Provisioning IPC Handlers

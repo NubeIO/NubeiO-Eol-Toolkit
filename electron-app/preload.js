@@ -65,6 +65,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   disconnectTCP: () => ipcRenderer.invoke('tcp:disconnect'),
   setTCPAutoReconnect: (enabled) => ipcRenderer.invoke('tcp:setAutoReconnect', enabled),
   
+  // Serial Console methods
+  getSerialConsoleStatus: () => ipcRenderer.invoke('serial:getStatus'),
+  getSerialConsoleMessages: () => ipcRenderer.invoke('serial:getMessages'),
+  clearSerialConsoleMessages: () => ipcRenderer.invoke('serial:clearMessages'),
+  connectSerialConsole: (port, baudRate) => ipcRenderer.invoke('serial:connect', port, baudRate),
+  disconnectSerialConsole: () => ipcRenderer.invoke('serial:disconnect'),
+  sendSerialConsoleMessage: (message) => ipcRenderer.invoke('serial:send', message),
+  onSerialMessage: (callback) => {
+    ipcRenderer.on('serial:message', (event, message) => callback(message));
+  },
+  
   // ESP32 Flasher methods
   getSerialPorts: () => ipcRenderer.invoke('flasher:getSerialPorts'),
   getFlasherStatus: () => ipcRenderer.invoke('flasher:getStatus'),

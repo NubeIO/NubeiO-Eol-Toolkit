@@ -9,10 +9,11 @@ class App {
     
     // Initialize modules
     this.helpModule = new HelpModule(this);
+    this.serialConsole = new SerialConsoleModule(this);
     this.provisioningPage = null; // Will be initialized conditionally
     this.configLoaded = false; // Track if config has been loaded
     this.features = {}; // Feature toggles
-    this.currentPage = 'devices'; // 'devices', 'udp-logs', 'tcp-console', 'esp32-flasher', or 'provisioning'
+    this.currentPage = 'devices'; // 'devices', 'udp-logs', 'tcp-console', 'serial-console', 'esp32-flasher', or 'provisioning'
     this.flasherStatus = { isFlashing: false, hasProcess: false, portsAvailable: 0 };
     this.serialPorts = [];
     this.selectedPort = '';
@@ -46,6 +47,9 @@ class App {
     
     // Initialize TCP Console module
     await tcpConsole.init();
+    
+    // Initialize Serial Console module
+    await this.serialConsole.init();
 
     // Setup ESP32 flasher progress listener
     window.electronAPI.onFlasherProgress((progress) => {
@@ -344,6 +348,10 @@ class App {
       this.loadUDPStatus();
     } else if (page === 'tcp-console') {
       tcpConsole.showConsole = true;
+    } else if (page === 'serial-console') {
+      this.serialConsole.loadStatus();
+      this.serialConsole.loadSerialPorts();
+      this.serialConsole.loadMessages();
     } else if (page === 'esp32-flasher') {
       // Load serial ports when switching to flasher page
       this.loadSerialPorts();
@@ -840,6 +848,14 @@ class App {
                 💻 TCP Console
               </button>
               ` : ''}
+              <button onclick="app.switchPage('serial-console')" 
+                class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  this.currentPage === 'serial-console' 
+                    ? 'bg-blue-500 text-white' 
+                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                }">
+                🔌 Serial Console
+              </button>
               ${this.features.esp32Flasher?.enabled !== false ? `
               <button onclick="app.switchPage('esp32-flasher')" 
                 class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -897,6 +913,7 @@ class App {
             this.currentPage === 'devices' ? this.renderDevicesPage() : 
             this.currentPage === 'udp-logs' ? this.renderUDPLogsPage() :
             this.currentPage === 'tcp-console' ? tcpConsole.render() :
+            this.currentPage === 'serial-console' ? this.serialConsole.render() :
             this.currentPage === 'esp32-flasher' ? this.renderFlasherPage() :
             this.currentPage === 'provisioning' ? (this.provisioningPage ? this.provisioningPage.render() : '<div class="p-6 text-center">Provisioning feature not enabled</div>') :
             this.renderDevicesPage()
@@ -1648,7 +1665,12 @@ class App {
 // Initialize app when DOM is ready
 let app = null;
 window.app = null;
+let serialConsole = null;
+window.serialConsole = null;
 document.addEventListener('DOMContentLoaded', () => {
   app = new App();
   window.app = app;
+  // Make serial console globally accessible
+  serialConsole = app.serialConsole;
+  window.serialConsole = app.serialConsole;
 });
