@@ -1,0 +1,79 @@
+name: Build Electron App
+
+on:
+  workflow_dispatch:  # Manual trigger only
+    inputs:
+      platform:
+        description: 'Platform to build'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - windows
+          - linux
+
+jobs:
+  build-windows:
+    if: ${{ github.event.inputs.platform == 'windows' || github.event.inputs.platform == 'all' }}
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: electron-app
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: electron-app/package-lock.json
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Build for Windows
+        run: npm run build:win
+      
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: windows-build
+          path: electron-app/dist/*.exe
+          retention-days: 30
+
+  build-linux:
+    if: ${{ github.event.inputs.platform == 'linux' || github.event.inputs.platform == 'all' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: electron-app
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: electron-app/package-lock.json
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Build for Linux
+        run: npm run build:linux
+      
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: linux-build
+          path: |
+            electron-app/dist/*.AppImage
+            electron-app/dist/*.deb
+          retention-days: 30
