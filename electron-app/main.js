@@ -8,6 +8,7 @@ const ESP32FlasherNative = require('./services/esp32-flasher-native');
 const TCPConsoleClient = require('./services/tcp-console');
 const ESP32Provisioning = require('./services/esp32-provisioning');
 const SerialConsole = require('./services/serial-console');
+const FleetMonitoringService = require('./services/fleet-monitoring');
 
 // Disable hardware acceleration to avoid libva errors
 app.disableHardwareAcceleration();
@@ -19,6 +20,7 @@ let esp32Flasher = null;
 let tcpConsole = null;
 let provisioningService = null;
 let serialConsole = null;
+let fleetMonitoring = null;
 
 // Create application menu
 function createMenu() {
@@ -130,6 +132,17 @@ function createMenu() {
             const mainWindow = BrowserWindow.getFocusedWindow();
             if (mainWindow) {
               mainWindow.webContents.send('menu:switch-page', 'provisioning');
+            }
+          }
+        },
+        {
+          label: 'Fleet Monitoring',
+          accelerator: 'CmdOrCtrl+5',
+          click: () => {
+            console.log('Menu: Fleet Monitoring clicked');
+            const mainWindow = BrowserWindow.getFocusedWindow();
+            if (mainWindow) {
+              mainWindow.webContents.send('menu:switch-page', 'fleet-monitoring');
             }
           }
         },
@@ -311,6 +324,7 @@ app.whenReady().then(() => {
   esp32Flasher = new ESP32FlasherNative();
   provisioningService = new ESP32Provisioning();
   serialConsole = new SerialConsole();
+  fleetMonitoring = new FleetMonitoringService();
 
   // Initialize ESP32 flasher
   esp32Flasher.initialize().catch(err => {
@@ -738,4 +752,34 @@ ipcMain.handle('provisioning:eraseCustomRegion', async (event, port, address, si
     console.error('Failed to erase custom region:', error);
     throw error;
   }
+});
+
+// Fleet Monitoring IPC Handlers
+ipcMain.handle('fleet:getConfig', () => {
+  return fleetMonitoring.getConfig();
+});
+
+ipcMain.handle('fleet:getStatus', () => {
+  return fleetMonitoring.getStatus();
+});
+
+ipcMain.handle('fleet:connect', async (event, broker, port, baseTopic) => {
+  try {
+    return await fleetMonitoring.connect(broker, port, baseTopic);
+  } catch (error) {
+    console.error('Failed to connect fleet monitoring:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('fleet:disconnect', async () => {
+  return await fleetMonitoring.disconnect();
+});
+
+ipcMain.handle('fleet:clearMessages', () => {
+  return fleetMonitoring.clearMessages();
+});
+
+ipcMain.handle('fleet:getDevices', () => {
+  return fleetMonitoring.getDevices();
 });

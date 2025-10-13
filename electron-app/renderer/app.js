@@ -11,9 +11,10 @@ class App {
     this.helpModule = new HelpModule(this);
     this.serialConsole = new SerialConsoleModule(this);
     this.provisioningPage = null; // Will be initialized conditionally
+    this.fleetMonitoringPage = null; // Will be initialized conditionally
     this.configLoaded = false; // Track if config has been loaded
     this.features = {}; // Feature toggles
-    this.currentPage = 'devices'; // 'devices', 'udp-logs', 'tcp-console', 'serial-console', 'esp32-flasher', or 'provisioning'
+    this.currentPage = 'devices'; // 'devices', 'udp-logs', 'tcp-console', 'serial-console', 'esp32-flasher', 'provisioning', or 'fleet-monitoring'
     this.flasherStatus = { isFlashing: false, hasProcess: false, portsAvailable: 0 };
     this.serialPorts = [];
     this.selectedPort = '';
@@ -154,16 +155,19 @@ class App {
     try {
       const response = await fetch('./config/features.json');
       this.features = await response.json();
-      console.log('Features loaded:', this.features);
+      console.log('✓ Features loaded:', this.features);
+      console.log('  - Fleet Monitoring enabled?', this.features.fleetMonitoring?.enabled);
     } catch (error) {
-      console.error('Failed to load features:', error);
+      console.error('✗ Failed to load features:', error);
       // Default to all features enabled if config not found
       this.features = {
         esp32Flasher: { enabled: true },
         udpLogger: { enabled: true },
         provisioning: { enabled: true },
-        tcpConsole: { enabled: true }
+        tcpConsole: { enabled: true },
+        fleetMonitoring: { enabled: true }
       };
+      console.log('  - Using default features with Fleet Monitoring enabled');
     }
     
     // Initialize provisioning page if feature is enabled and class exists
@@ -175,6 +179,23 @@ class App {
       } else {
         console.warn('ProvisioningPage class not found');
       }
+    }
+    
+    // Initialize fleet monitoring page if feature is enabled and class exists
+    if (this.features.fleetMonitoring && this.features.fleetMonitoring.enabled) {
+      if (typeof FleetMonitoringPage !== 'undefined') {
+        this.fleetMonitoringPage = new FleetMonitoringPage(this);
+        window.fleetMonitoringPage = this.fleetMonitoringPage; // Make globally accessible
+        // Init will be called asynchronously, don't await here to avoid blocking
+        this.fleetMonitoringPage.init().catch(err => {
+          console.error('Failed to initialize Fleet Monitoring:', err);
+        });
+        console.log('Fleet Monitoring page initialized');
+      } else {
+        console.warn('FleetMonitoringPage class not found');
+      }
+    } else {
+      console.log('Fleet Monitoring feature not enabled or not in config');
     }
   }
 
@@ -340,6 +361,14 @@ class App {
 
   switchPage(page) {
     console.log('Switching to page:', page);
+    
+    // Stop fleet monitoring auto-refresh when switching away
+    if (this.currentPage === 'fleet-monitoring' && page !== 'fleet-monitoring') {
+      if (this.fleetMonitoringPage) {
+        this.fleetMonitoringPage.stopAutoRefresh();
+      }
+    }
+    
     this.currentPage = page;
     if (page === 'udp-logs') {
       // Initialize lastLogCount to current log count to prevent re-rendering all logs
@@ -360,6 +389,16 @@ class App {
     } else if (page === 'provisioning') {
       // Load serial ports for provisioning page (same as flasher)
       this.loadSerialPorts();
+      tcpConsole.showConsole = false;
+    } else if (page === 'fleet-monitoring') {
+      // Load fleet monitoring status and start auto-refresh if connected
+      if (this.fleetMonitoringPage) {
+        this.fleetMonitoringPage.loadStatus().then(() => {
+          if (this.fleetMonitoringPage.isConnected && !this.fleetMonitoringPage.refreshInterval) {
+            this.fleetMonitoringPage.startAutoRefresh();
+          }
+        });
+      }
       tcpConsole.showConsole = false;
     } else {
       tcpConsole.showConsole = false;
@@ -784,7 +823,10 @@ class App {
          activeElement.id === 'prov-wifi-ssid' ||
          activeElement.id === 'prov-wifi-password' ||
          activeElement.id === 'prov-erase-address' ||
-         activeElement.id === 'prov-erase-size')) {
+         activeElement.id === 'prov-erase-size' ||
+         activeElement.id === 'fleet-broker' ||
+         activeElement.id === 'fleet-port' ||
+         activeElement.id === 'fleet-topic')) {
       return;
     }
 
@@ -886,6 +928,16 @@ class App {
                 🔐 Provisioning
               </button>
               ` : ''}
+              ${this.features.fleetMonitoring?.enabled === true ? `
+              <button onclick="app.switchPage('fleet-monitoring')" 
+                class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  this.currentPage === 'fleet-monitoring' 
+                    ? 'bg-blue-500 text-white' 
+                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                }">
+                🌐 Fleet
+              </button>
+              ` : ''}
             </div>
 
             ${this.showConfig ? `
@@ -926,6 +978,7 @@ class App {
             this.currentPage === 'serial-console' ? this.serialConsole.render() :
             this.currentPage === 'esp32-flasher' ? this.renderFlasherPage() :
             this.currentPage === 'provisioning' ? (this.provisioningPage ? this.provisioningPage.render() : '<div class="p-6 text-center">Provisioning feature not enabled</div>') :
+            this.currentPage === 'fleet-monitoring' ? (this.fleetMonitoringPage ? this.fleetMonitoringPage.render() : '<div class="p-6 text-center">Fleet Monitoring feature not enabled</div>') :
             this.renderDevicesPage()
           }
         </div>
