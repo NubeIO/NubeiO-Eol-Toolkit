@@ -113,6 +113,16 @@ contextBridge.exposeInMainWorld('provisioningService', {
   }
 });
 
+// Expose Fleet Monitoring service
+contextBridge.exposeInMainWorld('fleetMonitoringAPI', {
+  getConfig: () => ipcRenderer.invoke('fleet:getConfig'),
+  getStatus: () => ipcRenderer.invoke('fleet:getStatus'),
+  connect: (broker, port, baseTopic) => ipcRenderer.invoke('fleet:connect', broker, port, baseTopic),
+  disconnect: () => ipcRenderer.invoke('fleet:disconnect'),
+  clearMessages: () => ipcRenderer.invoke('fleet:clearMessages'),
+  getDevices: () => ipcRenderer.invoke('fleet:getDevices')
+});
+
 console.log('electronAPI exposed to window');
 
 // Test IPC listener setup

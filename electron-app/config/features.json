@@ -20,7 +20,12 @@
     "enabled": true,
     "description": "ESP32 Device Provisioning - Generate credentials and provision ESP32 devices",
     "requiresEsptool": true,
-    "requiresNVSGen": true
+    "requiresNVSGen": true,
+    "configureWiFi": true
+  },
+  "fleetMonitoring": {
+    "enabled": true,
+    "description": "Fleet Monitoring - Monitor FGA-Gen2-Fw devices via MQTT"
   }
 }
 

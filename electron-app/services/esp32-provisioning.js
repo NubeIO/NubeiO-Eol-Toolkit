@@ -483,31 +483,72 @@ class ESP32Provisioning {
       // Step 7: Configure WiFi via serial (optional)
       if (config.configureWiFi && config.wifiSsid && config.wifiPassword) {
         result.stage = 'wifi_config';
+        result.message = 'Configuring WiFi via serial console...';
         try {
           console.log('Starting WiFi configuration via serial...');
+          
+          // Send progress update
+          if (this.progressCallback) {
+            this.progressCallback({
+              stage: 'wifi_config',
+              progress: 85,
+              message: 'Connecting to serial console for WiFi configuration...'
+            });
+          }
+          
           const wifiResult = await this.configureWiFiViaSerial(
             config.port,
             config.wifiSsid,
             config.wifiPassword,
-            config.baudRate || 115200,
+            115200, // Serial console uses 115200 baud (not provisioning baud rate)
             30000 // 30 second timeout
           );
 
           if (wifiResult.success) {
             console.log('✓ WiFi configured successfully');
+            console.log('WiFi Responses:', wifiResult.responses.join(' | '));
             result.wifiConfigured = true;
             result.wifiResponses = wifiResult.responses;
+            result.message = `Provisioning completed! WiFi configured (${wifiResult.responses.length} responses)`;
+            
+            // Send success update
+            if (this.progressCallback) {
+              this.progressCallback({
+                stage: 'wifi_config',
+                progress: 95,
+                message: `✓ WiFi configured: ${wifiResult.responses.slice(-3).join(' → ')}`
+              });
+            }
           } else {
             console.warn('WiFi configuration incomplete:', wifiResult.message);
+            console.warn('Responses received:', wifiResult.responses);
             result.wifiConfigured = false;
             result.wifiMessage = wifiResult.message;
-            // Don't fail provisioning if WiFi config fails
+            result.message = `Provisioning completed but WiFi config ${wifiResult.partial ? 'timed out' : 'failed'}: ${wifiResult.message}`;
+            
+            // Send warning update
+            if (this.progressCallback) {
+              this.progressCallback({
+                stage: 'wifi_config',
+                progress: 90,
+                message: `⚠️ WiFi config incomplete: ${wifiResult.message}`
+              });
+            }
           }
         } catch (wifiError) {
           console.error('WiFi configuration error:', wifiError);
           result.wifiConfigured = false;
           result.wifiMessage = wifiError.message;
-          // Don't fail provisioning if WiFi config fails
+          result.message = `Provisioning completed but WiFi config error: ${wifiError.message}`;
+          
+          // Send error update
+          if (this.progressCallback) {
+            this.progressCallback({
+              stage: 'wifi_config',
+              progress: 90,
+              message: `❌ WiFi config error: ${wifiError.message}`
+            });
+          }
         }
       }
 
@@ -763,19 +804,31 @@ class ESP32Provisioning {
       let timeoutHandle = null;
       let commandSent = false;
 
-      // Define WiFi configuration commands
+      // Define WiFi configuration commands (based on actual ESP32 firmware)
       const commands = [
         { cmd: '', delay: 500 }, // Initial empty line to wake up console
-        { cmd: 'wifi_config', delay: 1000, expect: ['OK', 'Ready'] },
-        { cmd: `ssid ${wifiSsid}`, delay: 1000, expect: ['OK', 'SSID'] },
-        { cmd: `pass ${wifiPassword}`, delay: 1000, expect: ['OK', 'Password'] },
-        { cmd: 'wifi_save', delay: 1000, expect: ['OK', 'Saved'] },
-        { cmd: 'wifi_connect', delay: 3000, expect: ['Connected', 'IP', 'WIFI'] },
+        { cmd: `wifi_config -s "${wifiSsid}" -p "${wifiPassword}"`, delay: 1000, expect: ['Configure', 'OK', 'SSID', 'password'] },
+        { cmd: 'wifi_enable -e', delay: 1000, expect: ['Enable', 'OK', 'enabled'] }, // Enable WiFi AFTER configuring
+        { cmd: 'restart', delay: 5000, expect: ['Restarting', 'restart', 'ESP-ROM'] }, // Restart to apply WiFi settings
+        { cmd: 'wifi_status', delay: 2000, expect: ['IP', 'Connected', 'CONNECTED'] },
       ];
 
       try {
         console.log(`Configuring WiFi via serial: ${port} @ ${baudRate}`);
         console.log(`WiFi SSID: ${wifiSsid}`);
+        console.log('');
+        console.log('=== WiFi Configuration Command Sequence ===');
+        commands.forEach((cmd, idx) => {
+          if (idx === 0) {
+            console.log(`  ${idx + 1}. (empty line) - wake up console`);
+          } else if (cmd.cmd === 'restart') {
+            console.log(`  ${idx + 1}. ${cmd.cmd} - restart ESP32 (wait ${cmd.delay}ms for reboot)`);
+          } else {
+            console.log(`  ${idx + 1}. ${cmd.cmd}`);
+          }
+        });
+        console.log('===========================================');
+        console.log('');
 
         // Open serial port
         serialPort = new SerialPort({
@@ -809,6 +862,11 @@ class ESP32Provisioning {
                   
                   // Send next command after delay
                   if (commandIndex < commands.length) {
+                    const nextCmd = commands[commandIndex];
+                    // Special logging for restart delay
+                    if (currentCmd.cmd === 'restart') {
+                      console.log(`⏳ Waiting ${currentCmd.delay}ms for ESP32 to reboot...`);
+                    }
                     setTimeout(() => sendNextCommand(), currentCmd.delay);
                   } else {
                     // All commands completed
@@ -875,10 +933,12 @@ class ESP32Provisioning {
         // Setup timeout
         timeoutHandle = setTimeout(() => {
           console.warn(`WiFi configuration timeout after ${timeout}ms`);
+          console.warn(`Completed ${commandIndex}/${commands.length} commands`);
+          console.warn(`Responses received (${responses.length}):`, responses);
           cleanup();
           resolve({
             success: false,
-            message: `WiFi configuration timeout. Completed ${commandIndex}/${commands.length} commands.`,
+            message: `WiFi configuration timeout. Completed ${commandIndex}/${commands.length} commands. Responses: ${responses.length}`,
             responses: responses,
             partial: true
           });
@@ -901,6 +961,8 @@ class ESP32Provisioning {
         await new Promise(resolve => setTimeout(resolve, 2000));
 
         // Start sending commands
+        console.log('Starting WiFi command sequence...');
+        console.log(`Total commands to send: ${commands.length}`);
         sendNextCommand();
 
       } catch (error) {
