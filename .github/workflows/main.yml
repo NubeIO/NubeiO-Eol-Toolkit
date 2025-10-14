@@ -1,7 +1,10 @@
 name: Build Electron App
 
 on:
-  workflow_dispatch:  # Manual trigger only
+  push:
+    tags:
+      - 'v*.*.*'  # Trigger on version tags
+  workflow_dispatch:  # Manual trigger
     inputs:
       platform:
         description: 'Platform to build'
@@ -15,7 +18,7 @@ on:
 
 jobs:
   build-windows:
-    if: ${{ github.event.inputs.platform == 'windows' || github.event.inputs.platform == 'all' }}
+    if: ${{ startsWith(github.ref, 'refs/tags/') || github.event.inputs.platform == 'windows' || github.event.inputs.platform == 'all' }}
     runs-on: windows-latest
     defaults:
       run:
@@ -46,7 +49,7 @@ jobs:
           retention-days: 30
 
   build-linux:
-    if: ${{ github.event.inputs.platform == 'linux' || github.event.inputs.platform == 'all' }}
+    if: ${{ startsWith(github.ref, 'refs/tags/') || github.event.inputs.platform == 'linux' || github.event.inputs.platform == 'all' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -77,3 +80,31 @@ jobs:
             electron-app/dist/*.AppImage
             electron-app/dist/*.deb
           retention-days: 30
+
+  create-release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-build
+          path: ./artifacts
+      
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-build
+          path: ./artifacts
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ./artifacts/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
