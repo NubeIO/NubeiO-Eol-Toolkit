@@ -40,7 +40,7 @@ class ProvisioningPage {
                 <div>
                   <label class="block text-sm font-medium text-gray-700 mb-2">Serial Port</label>
                   <div class="flex gap-2">
-                    <select id="prov-port" class="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" ${this.isProvisioning ? 'disabled' : ''}>
+                    <select id="prov-port" onchange="window.provisioningPage.config.port = this.value" class="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" ${this.isProvisioning ? 'disabled' : ''}>
                       <option value="">Select Port</option>
                       ${this.app.serialPorts.map(port => `
                         <option value="${port}" ${this.config.port === port ? 'selected' : ''}>${port}</option>
@@ -53,7 +53,7 @@ class ProvisioningPage {
                 <div>
                   <label class="block text-sm font-medium text-gray-700 mb-2">Chip Type</label>
                   <div class="flex gap-2">
-                    <select id="prov-chip" class="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" ${this.isProvisioning ? 'disabled' : ''}>
+                    <select id="prov-chip" onchange="window.provisioningPage.config.chip = this.value" class="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" ${this.isProvisioning ? 'disabled' : ''}>
                       ${this.chipTypes.map(chip => `<option value="${chip}" ${chip === this.config.chip ? 'selected' : ''}>${chip.toUpperCase()}</option>`).join('')}
                     </select>
                     <button onclick="window.provisioningPage.detectChip()" class="px-3 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-md text-sm" ${this.isProvisioning ? 'disabled' : ''}>🔍 Detect</button>
@@ -62,10 +62,10 @@ class ProvisioningPage {
                 
                 <div>
                   <label class="block text-sm font-medium text-gray-700 mb-2">Baud Rate</label>
-                  <select id="prov-baudrate" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" ${this.isProvisioning ? 'disabled' : ''}>
-                    <option value="115200">115200</option>
-                    <option value="460800">460800</option>
-                    <option value="921600" selected>921600</option>
+                  <select id="prov-baudrate" onchange="window.provisioningPage.config.baudRate = this.value" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" ${this.isProvisioning ? 'disabled' : ''}>
+                    <option value="115200" ${this.config.baudRate === '115200' ? 'selected' : ''}>115200</option>
+                    <option value="460800" ${this.config.baudRate === '460800' ? 'selected' : ''}>460800</option>
+                    <option value="921600" ${this.config.baudRate === '921600' || !this.config.baudRate ? 'selected' : ''}>921600</option>
                   </select>
                 </div>
               </div>
@@ -121,12 +121,12 @@ class ProvisioningPage {
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                   <div>
                     <label class="block text-sm font-medium text-gray-700 mb-2">WiFi SSID</label>
-                    <input type="text" id="prov-wifi-ssid" value="${this.config.wifiSsid}" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter WiFi network name" ${this.isProvisioning ? 'disabled' : ''}>
+                    <input type="text" id="prov-wifi-ssid" value="${this.config.wifiSsid}" oninput="window.provisioningPage.config.wifiSsid = this.value" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter WiFi network name" ${this.isProvisioning ? 'disabled' : ''}>
                   </div>
                   
                   <div>
                     <label class="block text-sm font-medium text-gray-700 mb-2">WiFi Password</label>
-                    <input type="password" id="prov-wifi-password" value="${this.config.wifiPassword}" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter WiFi password" ${this.isProvisioning ? 'disabled' : ''}>
+                    <input type="password" id="prov-wifi-password" value="${this.config.wifiPassword}" oninput="window.provisioningPage.config.wifiPassword = this.value" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter WiFi password" ${this.isProvisioning ? 'disabled' : ''}>
                   </div>
                 </div>
                 

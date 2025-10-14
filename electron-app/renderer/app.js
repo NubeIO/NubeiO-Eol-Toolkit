@@ -835,6 +835,10 @@ class App {
         (activeElement.id === 'serial-port-select' ||
          activeElement.id === 'baud-rate' ||
          activeElement.id === 'erase-flash' ||
+         activeElement.id === 'prov-port' ||
+         activeElement.id === 'prov-chip' ||
+         activeElement.id === 'prov-baudrate' ||
+         activeElement.id === 'prov-erase-type' ||
          activeElement.tagName === 'SELECT')) {
       return;
     }
