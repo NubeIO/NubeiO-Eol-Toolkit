@@ -13,10 +13,7 @@
     "build:linux": "npm run rebuild && electron-builder --linux",
     "build:win": "npm run rebuild && electron-builder --win",
     "build:mac": "npm run rebuild && electron-builder --mac",
-    "build:docker": "./build.sh",
-    "release": "npm run rebuild && electron-builder --publish always",
-    "release:linux": "npm run rebuild && electron-builder --linux --publish always",
-    "release:win": "npm run rebuild && electron-builder --win --publish always"
+    "build:docker": "./build.sh"
   },
   "keywords": [
     "fujitsu",
@@ -48,13 +45,6 @@
     "directories": {
       "output": "dist"
     },
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "NubeIO",
-        "repo": "FGA-AC-Simulator"
-      }
-    ],
     "files": [
       "main.js",
       "preload.js",
