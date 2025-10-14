@@ -15,10 +15,23 @@ on:
           - all
           - windows
           - linux
+      create_release:
+        description: 'Create GitHub Release'
+        required: false
+        default: true
+        type: boolean
+      release_tag:
+        description: 'Release tag (e.g., v1.0.0)'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: write  # Required for creating releases
 
 jobs:
   build-windows:
-    if: ${{ startsWith(github.ref, 'refs/tags/') || github.event.inputs.platform == 'windows' || github.event.inputs.platform == 'all' }}
+    if: ${{ !github.event.inputs.platform || github.event.inputs.platform == 'windows' || github.event.inputs.platform == 'all' }}
     runs-on: windows-latest
     defaults:
       run:
@@ -49,7 +62,7 @@ jobs:
           retention-days: 30
 
   build-linux:
-    if: ${{ startsWith(github.ref, 'refs/tags/') || github.event.inputs.platform == 'linux' || github.event.inputs.platform == 'all' }}
+    if: ${{ !github.event.inputs.platform || github.event.inputs.platform == 'linux' || github.event.inputs.platform == 'all' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -82,11 +95,14 @@ jobs:
           retention-days: 30
 
   create-release:
-    if: startsWith(github.ref, 'refs/tags/')
+    if: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true') }}
     needs: [build-windows, build-linux]
     runs-on: ubuntu-latest
     
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
       - name: Download Windows artifacts
         uses: actions/download-artifact@v4
         with:
@@ -99,9 +115,23 @@ jobs:
           name: linux-build
           path: ./artifacts
       
+      - name: Get release tag
+        id: get_tag
+        run: |
+          if [ "${{ github.event_name }}" == "push" ]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            TAG="${{ github.event.inputs.release_tag }}"
+            if [ -z "$TAG" ]; then
+              TAG="v$(date +'%Y.%m.%d-%H%M')"
+            fi
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
+          fi
+      
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ steps.get_tag.outputs.tag }}
           files: ./artifacts/*
           draft: false
           prerelease: false
