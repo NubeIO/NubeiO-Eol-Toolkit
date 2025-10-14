@@ -273,12 +273,12 @@ class FleetMonitoringPage {
                   </select>
                 </div>
 
-                <div class="border rounded-lg p-4 bg-gray-50 max-h-96 overflow-y-auto font-mono text-sm">
+                <div id="fleet-messages-container" class="border rounded-lg p-4 bg-gray-50 max-h-96 overflow-y-auto font-mono text-sm">
                   ${filteredMessages.length === 0 ? `
                     <div class="text-center py-8 text-gray-500">
                       <p>No messages ${this.selectedDevice ? `from ${this.selectedDevice}` : 'yet'}</p>
                     </div>
-                  ` : [...filteredMessages].reverse().map(msg => `
+                  ` : filteredMessages.map(msg => `
                     <div class="mb-2 pb-2 border-b border-gray-200 last:border-0">
                       <div class="flex items-start gap-2">
                         <span class="text-gray-500 text-xs whitespace-nowrap">${new Date(msg.timestamp).toLocaleTimeString()}</span>
