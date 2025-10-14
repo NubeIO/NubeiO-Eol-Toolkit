@@ -77,7 +77,8 @@ class App {
     
     setInterval(() => {
       this.currentTime = new Date();
-      this.render();
+      // Update clock without full re-render (prevents flicker on UDP logs)
+      this.updateClockOnly();
     }, 1000);
     
     // Don't call render() here, let the time interval handle it
@@ -1194,6 +1195,16 @@ class App {
     logDiv.appendChild(messageSpan);
     
     return logDiv;
+  }
+
+  updateClockOnly() {
+    // Skip render on UDP logs page to prevent flicker (logs update via updateUDPLogsOnly)
+    if (this.currentPage === 'udp-logs') {
+      return; // Don't re-render, logs are updated incrementally
+    }
+    
+    // For other pages (like devices page with clock displays), do full render
+    this.render();
   }
 
   updateUDPLogsOnly() {
