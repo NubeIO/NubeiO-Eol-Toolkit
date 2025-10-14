@@ -88,8 +88,97 @@ class FleetMonitoringPage {
   }
 
   forceUpdate() {
-    // Trigger render - scroll position will be preserved by app.js
-    this.app.render();
+    // Update only the fleet monitoring content without full page re-render (prevents flicker)
+    this.updateMessagesOnly();
+    this.updateDevicesOnly();
+  }
+
+  updateMessagesOnly() {
+    // Update messages container without touching other DOM elements
+    const container = document.getElementById('fleet-messages-container');
+    if (!container) return;
+
+    // Save scroll position
+    const scrollTop = container.scrollTop;
+    const isAtBottom = container.scrollHeight - scrollTop <= container.clientHeight + 50;
+
+    // Get filtered messages
+    const filteredMessages = this.getFilteredMessages();
+
+    // Update content
+    if (filteredMessages.length === 0) {
+      container.innerHTML = `
+        <div class="text-center py-8 text-gray-500">
+          <p>No messages ${this.selectedDevice ? `from ${this.selectedDevice}` : 'yet'}</p>
+        </div>
+      `;
+    } else {
+      container.innerHTML = filteredMessages.map(msg => `
+        <div class="mb-2 pb-2 border-b border-gray-200 last:border-0">
+          <div class="flex items-start gap-2">
+            <span class="text-gray-500 text-xs whitespace-nowrap">${new Date(msg.timestamp).toLocaleTimeString()}</span>
+            <span class="text-gray-600 text-xs whitespace-nowrap">[${msg.clientId}]</span>
+            <span class="${this.getLevelColor(msg.level)} text-xs font-bold whitespace-nowrap">${msg.level}</span>
+            <span class="text-gray-700 text-xs">${msg.tag || ''}</span>
+          </div>
+          <div class="ml-8 mt-1 text-gray-800 text-xs break-words">${msg.message || ''}</div>
+        </div>
+      `).join('');
+    }
+
+    // Restore scroll position (only auto-scroll if at bottom)
+    if (isAtBottom) {
+      container.scrollTop = container.scrollHeight;
+    } else {
+      container.scrollTop = scrollTop;
+    }
+  }
+
+  updateDevicesOnly() {
+    // Update device list and stats without full re-render
+    const deviceCountElement = document.getElementById('fleet-device-count');
+    const messageCountElement = document.getElementById('fleet-message-count');
+    
+    if (deviceCountElement) {
+      const devices = Array.from(this.devices.values());
+      deviceCountElement.textContent = `${devices.length} device${devices.length !== 1 ? 's' : ''}`;
+    }
+    
+    if (messageCountElement) {
+      messageCountElement.textContent = `${this.messages.length} messages`;
+    }
+
+    // Update device list
+    const deviceListContainer = document.getElementById('fleet-device-list');
+    if (deviceListContainer) {
+      const devices = Array.from(this.devices.values());
+      if (devices.length > 0) {
+        deviceListContainer.innerHTML = devices.map(device => {
+          const status = this.getDeviceStatus(device);
+          const statusColor = this.getStatusColor(status);
+          const isSelected = this.selectedDevice === device.clientId;
+          
+          return `
+            <div onclick="window.fleetMonitoringPage.selectDevice('${device.clientId}')" 
+              class="p-3 border rounded-lg cursor-pointer transition-colors ${
+                isSelected ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'
+              }">
+              <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-2">
+                  <div class="w-2 h-2 rounded-full ${statusColor}"></div>
+                  <span class="font-medium text-sm">${device.clientId}</span>
+                </div>
+                <span class="text-xs text-gray-500">${device.messageCount || 0} msgs</span>
+              </div>
+              <div class="text-xs text-gray-600">
+                <div>Env: <span class="font-medium">${device.environment || 'unknown'}</span></div>
+                <div>Last seen: ${device.lastSeen ? new Date(device.lastSeen).toLocaleTimeString() : 'Never'}</div>
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
+    }
   }
 
   stopAutoRefresh() {
@@ -206,7 +295,7 @@ class FleetMonitoringPage {
                   <span class="text-sm font-medium text-gray-700">Connected to ${this.config.broker}:${this.config.port}</span>
                 </div>
                 <div class="text-sm text-gray-600">
-                  ${devices.length} device${devices.length !== 1 ? 's' : ''} | ${this.messages.length} messages
+                  <span id="fleet-device-count">${devices.length} device${devices.length !== 1 ? 's' : ''}</span> | <span id="fleet-message-count">${this.messages.length} messages</span>
                 </div>
               </div>
               <div class="flex gap-2">
@@ -228,7 +317,7 @@ class FleetMonitoringPage {
               <!-- Device List -->
               <div class="lg:col-span-1">
                 <h3 class="text-lg font-semibold text-gray-800 mb-3">Connected Devices</h3>
-                <div class="space-y-2 max-h-96 overflow-y-auto">
+                <div id="fleet-device-list" class="space-y-2 max-h-96 overflow-y-auto">
                   ${devices.length === 0 ? `
                     <div class="text-center py-8 text-gray-500">
                       <p>No devices detected yet</p>

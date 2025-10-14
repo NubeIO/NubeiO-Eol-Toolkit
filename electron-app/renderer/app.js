@@ -1198,9 +1198,9 @@ class App {
   }
 
   updateClockOnly() {
-    // Skip render on UDP logs page to prevent flicker (logs update via updateUDPLogsOnly)
-    if (this.currentPage === 'udp-logs') {
-      return; // Don't re-render, logs are updated incrementally
+    // Skip render on UDP logs and Fleet Monitoring pages to prevent flicker
+    if (this.currentPage === 'udp-logs' || this.currentPage === 'fleet-monitoring') {
+      return; // Don't re-render, these pages update incrementally
     }
     
     // For other pages (like devices page with clock displays), do full render
