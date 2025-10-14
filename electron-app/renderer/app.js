@@ -843,12 +843,19 @@ class App {
       return;
     }
 
-    // Save fleet monitoring scroll position before render
+    // Save scroll positions before render
     let fleetScrollPosition = 0;
+    let udpScrollPosition = 0;
+    
     if (this.currentPage === 'fleet-monitoring') {
       const fleetContainer = document.getElementById('fleet-messages-container');
       if (fleetContainer) {
         fleetScrollPosition = fleetContainer.scrollTop;
+      }
+    } else if (this.currentPage === 'udp-logs') {
+      const udpContainer = document.getElementById('udp-log-container');
+      if (udpContainer) {
+        udpScrollPosition = udpContainer.scrollTop;
       }
     }
     
@@ -1002,12 +1009,22 @@ class App {
       ${this.helpModule.renderKeyboardShortcuts()}
     `;
     
-    // Auto-scroll to bottom for UDP logs on initial render
+    // VSCode-style scroll: Only auto-scroll UDP logs if user is at the bottom
     if (this.currentPage === 'udp-logs') {
       setTimeout(() => {
         const logContainer = document.getElementById('udp-log-container');
         if (logContainer) {
-          logContainer.scrollTop = logContainer.scrollHeight;
+          if (udpScrollPosition > 0) {
+            // Restore previous scroll position if saved
+            logContainer.scrollTop = udpScrollPosition;
+          } else {
+            // Check if user is at the bottom (with 50px tolerance)
+            const isAtBottom = logContainer.scrollHeight - logContainer.scrollTop <= logContainer.clientHeight + 50;
+            // Only auto-scroll if user is already at bottom or no logs yet
+            if (isAtBottom || this.udpLogs.length === 0) {
+              logContainer.scrollTop = logContainer.scrollHeight;
+            }
+          }
         }
       }, 0);
     }
