@@ -338,8 +338,7 @@ app.whenReady().then(() => {
   
   createWindow();
   
-  // Start UDP logger automatically
-  udpLogger.start();
+  // UDP logger starts manually via UI with port configuration
   // TCP console client connects manually via UI
 
   app.on('activate', () => {
@@ -425,8 +424,8 @@ ipcMain.handle('udp:clearLogs', () => {
   return true;
 });
 
-ipcMain.handle('udp:start', () => {
-  udpLogger.start();
+ipcMain.handle('udp:start', (event, port = 56789) => {
+  udpLogger.start(port);
   return true;
 });
 
