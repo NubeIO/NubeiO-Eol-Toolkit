@@ -36,7 +36,32 @@ class App {
     this.udpStatus = { isRunning: false, port: 56789, logCount: 0 };
     this.lastLogCount = 0; // Track last log count to detect new logs
     
+    // Theme management
+    this.isDarkMode = false;
+    this.loadTheme();
+    
     this.init();
+  }
+
+  loadTheme() {
+    const savedTheme = localStorage.getItem('theme');
+    this.isDarkMode = savedTheme === 'dark';
+    this.applyTheme();
+  }
+
+  toggleTheme() {
+    this.isDarkMode = !this.isDarkMode;
+    localStorage.setItem('theme', this.isDarkMode ? 'dark' : 'light');
+    this.applyTheme();
+    this.render();
+  }
+
+  applyTheme() {
+    if (this.isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
   }
 
   async init() {
@@ -512,51 +537,51 @@ class App {
 
 
     return `
-      <div class="bg-white rounded-3xl shadow-2xl overflow-hidden">
+      <div class="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl overflow-hidden transition-colors">
         <!-- Header -->
-        <div class="relative bg-white px-6 py-4 flex items-center justify-between border-b">
-          <h1 class="text-xl font-bold text-gray-700 tracking-wide">FUJITSU</h1>
+        <div class="relative bg-white dark:bg-gray-800 px-6 py-4 flex items-center justify-between border-b dark:border-gray-700">
+          <h1 class="text-xl font-bold text-gray-700 dark:text-gray-200 tracking-wide">FUJITSU</h1>
           <div class="w-3 h-3 rounded-full ${acState.power ? 'bg-green-500' : 'bg-red-500'}"></div>
         </div>
 
         <!-- Main Content -->
-        <div class="${acState.power ? 'bg-gradient-to-br from-green-100 to-green-200' : 'bg-gradient-to-br from-gray-100 to-gray-200'} rounded-2xl p-6 mb-6 shadow-md mx-6 mt-6">
+        <div class="${acState.power ? 'bg-gradient-to-br from-green-100 to-green-200 dark:from-green-900 dark:to-green-800' : 'bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-600'} rounded-2xl p-6 mb-6 shadow-md mx-6 mt-6">
           <!-- Title and Time -->
           <div class="flex justify-between items-center mb-4">
-            <h2 class="text-gray-700 font-semibold text-sm">
+            <h2 class="text-gray-700 dark:text-gray-200 font-semibold text-sm">
               ${device.deviceId.replace('AC_SIM_', '')}
             </h2>
-            <span class="text-gray-500 text-sm">${this.formatTime()}</span>
+            <span class="text-gray-500 dark:text-gray-400 text-sm">${this.formatTime()}</span>
           </div>
 
           <!-- Mode, Temp, Fan Display -->
           <div class="grid grid-cols-3 gap-3 mb-6">
             <!-- Mode -->
             <div class="text-center">
-              <div class="text-xs text-gray-500 mb-2">Mode</div>
-              <div class="bg-white rounded-xl p-3 shadow-sm">
+              <div class="text-xs text-gray-500 dark:text-gray-400 mb-2">Mode</div>
+              <div class="bg-white dark:bg-gray-800 rounded-xl p-3 shadow-sm">
                 <div class="text-2xl mb-1">${this.getModeIcon(acState.mode)}</div>
-                <div class="text-sm font-medium text-gray-700">${acState.mode}</div>
+                <div class="text-sm font-medium text-gray-700 dark:text-gray-300">${acState.mode}</div>
               </div>
             </div>
 
             <!-- Set Temperature -->
             <div class="text-center">
-              <div class="text-xs text-gray-500 mb-2">Set Temp.</div>
-              <div class="bg-white rounded-xl p-3 shadow-sm">
-                <div class="text-4xl font-bold text-gray-800">
+              <div class="text-xs text-gray-500 dark:text-gray-400 mb-2">Set Temp.</div>
+              <div class="bg-white dark:bg-gray-800 rounded-xl p-3 shadow-sm">
+                <div class="text-4xl font-bold text-gray-800 dark:text-gray-100">
                   ${acState.temperature.toFixed(1)}
                 </div>
-                <div class="text-xs text-gray-500">°C</div>
+                <div class="text-xs text-gray-500 dark:text-gray-400">°C</div>
               </div>
             </div>
 
             <!-- Fan -->
             <div class="text-center">
-              <div class="text-xs text-gray-500 mb-2">Fan</div>
-              <div class="bg-white rounded-xl p-3 shadow-sm">
+              <div class="text-xs text-gray-500 dark:text-gray-400 mb-2">Fan</div>
+              <div class="bg-white dark:bg-gray-800 rounded-xl p-3 shadow-sm">
                 <div class="text-2xl mb-1">≈</div>
-                <div class="text-sm font-medium text-gray-700">${acState.fanSpeed}</div>
+                <div class="text-sm font-medium text-gray-700 dark:text-gray-300">${acState.fanSpeed}</div>
               </div>
             </div>
           </div>
@@ -564,8 +589,8 @@ class App {
           <!-- Room Temperature with Controls -->
           <div class="mb-4">
             <div class="text-center mb-2">
-              <span class="text-gray-600 text-xs">Room Temp. </span>
-              <span class="text-gray-800 text-lg font-bold">
+              <span class="text-gray-600 dark:text-gray-400 text-xs">Room Temp. </span>
+              <span class="text-gray-800 dark:text-gray-100 text-lg font-bold">
                 ${typeof acState.currentTemp === 'number' ? acState.currentTemp.toFixed(1) : '0.0'}°C
               </span>
             </div>
@@ -573,14 +598,14 @@ class App {
               <button
                 onclick="app.handleRoomTempChange('${device.deviceId}', -0.5)"
                 ${!this.isConnected ? 'disabled' : ''}
-                class="w-12 h-8 bg-blue-100 hover:bg-blue-200 rounded text-gray-700 font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                class="w-12 h-8 bg-blue-100 hover:bg-blue-200 dark:bg-blue-900 dark:hover:bg-blue-800 rounded text-gray-700 dark:text-gray-200 font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 −
               </button>
               <button
                 onclick="app.handleRoomTempChange('${device.deviceId}', 0.5)"
                 ${!this.isConnected ? 'disabled' : ''}
-                class="w-12 h-8 bg-blue-100 hover:bg-blue-200 rounded text-gray-700 font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                class="w-12 h-8 bg-blue-100 hover:bg-blue-200 dark:bg-blue-900 dark:hover:bg-blue-800 rounded text-gray-700 dark:text-gray-200 font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 +
               </button>
@@ -863,23 +888,26 @@ class App {
     }
     
     appDiv.innerHTML = `
-      <div class="min-h-screen bg-gradient-to-br from-blue-50 to-gray-100 p-4">
+      <div class="min-h-screen bg-gradient-to-br from-blue-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 p-4 transition-colors duration-300">
         <!-- Header Bar -->
         <div class="max-w-7xl mx-auto mb-6">
-          <div class="bg-white rounded-2xl shadow-lg p-4">
+          <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg dark:shadow-2xl p-4 transition-colors duration-300">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-4">
-                <img src="assets/Logo.svg" alt="FGA Simulator Logo" class="h-10" />
+                <img src="assets/Logo.svg" alt="FGA Simulator Logo" class="h-10 ${this.isDarkMode ? 'brightness-110' : ''}" />
                 <div>
-                  <h1 class="text-2xl font-bold text-gray-800">FGA Simulator</h1>
+                  <h1 class="text-2xl font-bold text-gray-800 dark:text-gray-100">FGA Simulator</h1>
                   <div class="flex items-center gap-2">
                     <div class="w-3 h-3 rounded-full ${this.isConnected ? 'bg-green-500' : 'bg-red-500'}"></div>
-                    <span class="text-sm text-gray-600">${this.isConnected ? 'Connected' : 'Disconnected'}</span>
+                    <span class="text-sm text-gray-600 dark:text-gray-300">${this.isConnected ? 'Connected' : 'Disconnected'}</span>
                   </div>
                 </div>
               </div>
               <div class="flex items-center gap-3">
-                <button onclick="app.toggleConfig()" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-sm font-medium transition-colors">
+                <button onclick="app.toggleTheme()" class="px-4 py-2 bg-gradient-to-br from-yellow-400 to-orange-500 hover:from-yellow-500 hover:to-orange-600 text-white rounded-lg text-sm font-medium transition-all transform hover:scale-105 shadow-md" title="${this.isDarkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}">
+                  ${this.isDarkMode ? '☀️ Light' : '🌙 Dark'}
+                </button>
+                <button onclick="app.toggleConfig()" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-sm font-medium transition-colors dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-200">
                   ⚙️ Config
                 </button>
                 <button onclick="app.${this.isConnected ? 'handleDisconnectMQTT' : 'handleConnectMQTT'}()" 
@@ -894,12 +922,12 @@ class App {
             </div>
             
             <!-- Page Navigation -->
-            <div class="mt-4 flex gap-2 border-t pt-4">
+            <div class="mt-4 flex gap-2 border-t dark:border-gray-700 pt-4">
               <button onclick="app.switchPage('devices')" 
                 class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   this.currentPage === 'devices' 
                     ? 'bg-blue-500 text-white' 
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
                 }">
                 🏠 Devices
               </button>
@@ -908,7 +936,7 @@ class App {
                 class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   this.currentPage === 'udp-logs' 
                     ? 'bg-blue-500 text-white' 
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
                 }">
                 📡 UDP Logs
               </button>
@@ -918,7 +946,7 @@ class App {
                 class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   this.currentPage === 'tcp-console' 
                     ? 'bg-blue-500 text-white' 
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
                 }">
                 💻 TCP Console
               </button>
@@ -927,7 +955,7 @@ class App {
                 class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   this.currentPage === 'serial-console' 
                     ? 'bg-blue-500 text-white' 
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
                 }">
                 🔌 Serial Console
               </button>
@@ -936,7 +964,7 @@ class App {
                 class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   this.currentPage === 'esp32-flasher' 
                     ? 'bg-blue-500 text-white' 
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
                 }">
                 ⚡ ESP32 Flasher
               </button>
@@ -946,7 +974,7 @@ class App {
                 class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   this.currentPage === 'provisioning' 
                     ? 'bg-blue-500 text-white' 
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
                 }">
                 🔐 Provisioning
               </button>
@@ -956,7 +984,7 @@ class App {
                 class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   this.currentPage === 'fleet-monitoring' 
                     ? 'bg-blue-500 text-white' 
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
                 }">
                 🌐 Fleet
               </button>
@@ -964,18 +992,18 @@ class App {
             </div>
 
             ${this.showConfig ? `
-              <div class="mt-4 p-4 bg-gray-50 rounded-lg" id="config-panel">
+              <div class="mt-4 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg" id="config-panel">
                 <div class="grid grid-cols-2 gap-4 mb-4">
                   <div>
-                    <label class="block text-sm text-gray-600 mb-1">Broker</label>
+                    <label class="block text-sm text-gray-600 dark:text-gray-300 mb-1">Broker</label>
                     <input type="text" id="broker" 
-                      class="w-full px-3 py-2 border rounded-lg text-sm" 
+                      class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100" 
                       oninput="app.mqttConfig.broker = this.value" />
                   </div>
                   <div>
-                    <label class="block text-sm text-gray-600 mb-1">Port</label>
+                    <label class="block text-sm text-gray-600 dark:text-gray-300 mb-1">Port</label>
                     <input type="number" id="port" 
-                      class="w-full px-3 py-2 border rounded-lg text-sm"
+                      class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
                       oninput="app.mqttConfig.port = parseInt(this.value)" />
                   </div>
                 </div>
@@ -983,7 +1011,7 @@ class App {
                   <button onclick="app.saveConfig()" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-medium transition-colors">
                     💾 Save & Connect
                   </button>
-                  <button onclick="app.toggleConfig()" class="px-4 py-2 bg-gray-300 hover:bg-gray-400 text-gray-700 rounded-lg text-sm font-medium transition-colors">
+                  <button onclick="app.toggleConfig()" class="px-4 py-2 bg-gray-300 hover:bg-gray-400 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-200 rounded-lg text-sm font-medium transition-colors">
                     Cancel
                   </button>
                 </div>
