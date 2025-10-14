@@ -14,7 +14,6 @@ class FleetMonitoringPage {
     this.selectedDevice = null;
     this.filterLevel = 'all'; // all, ERROR, WARN, INFO, DEBUG
     this.refreshInterval = null; // Auto-refresh timer
-    this.savedScrollPosition = 0; // Save scroll position during refresh
   }
 
   async init() {
@@ -80,25 +79,17 @@ class FleetMonitoringPage {
     // Refresh every 2 seconds
     this.refreshInterval = setInterval(async () => {
       if (this.isConnected) {
-        // Save scroll position before refresh
-        const container = document.getElementById('fleet-messages-container');
-        if (container) {
-          this.savedScrollPosition = container.scrollTop;
-        }
-        
         await this.loadStatus();
-        this.app.render();
-        
-        // Restore scroll position after render
-        setTimeout(() => {
-          const containerAfter = document.getElementById('fleet-messages-container');
-          if (containerAfter && this.savedScrollPosition !== undefined) {
-            containerAfter.scrollTop = this.savedScrollPosition;
-          }
-        }, 0);
+        // Force a re-render to update the data
+        this.forceUpdate();
       }
     }, 2000);
     console.log('Fleet Monitoring: Auto-refresh started (2s interval)');
+  }
+
+  forceUpdate() {
+    // Trigger render - scroll position will be preserved by app.js
+    this.app.render();
   }
 
   stopAutoRefresh() {

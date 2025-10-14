@@ -838,6 +838,15 @@ class App {
          activeElement.tagName === 'SELECT')) {
       return;
     }
+
+    // Save fleet monitoring scroll position before render
+    let fleetScrollPosition = 0;
+    if (this.currentPage === 'fleet-monitoring') {
+      const fleetContainer = document.getElementById('fleet-messages-container');
+      if (fleetContainer) {
+        fleetScrollPosition = fleetContainer.scrollTop;
+      }
+    }
     
     appDiv.innerHTML = `
       <div class="min-h-screen bg-gradient-to-br from-blue-50 to-gray-100 p-4">
@@ -995,6 +1004,16 @@ class App {
         const logContainer = document.getElementById('udp-log-container');
         if (logContainer) {
           logContainer.scrollTop = logContainer.scrollHeight;
+        }
+      }, 0);
+    }
+    
+    // Restore fleet monitoring scroll position after render
+    if (this.currentPage === 'fleet-monitoring' && fleetScrollPosition > 0) {
+      setTimeout(() => {
+        const fleetContainer = document.getElementById('fleet-messages-container');
+        if (fleetContainer) {
+          fleetContainer.scrollTop = fleetScrollPosition;
         }
       }, 0);
     }
