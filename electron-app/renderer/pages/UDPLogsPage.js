@@ -2,22 +2,93 @@
 class UDPLogsPage {
   constructor(app) {
     this.app = app;
+    this.udpPort = 56789; // Default port
+    this.loadConfig();
+  }
+
+  loadConfig() {
+    const config = localStorage.getItem('udpLoggerConfig');
+    if (config) {
+      try {
+        const parsed = JSON.parse(config);
+        this.udpPort = parsed.port || 56789;
+      } catch (e) {
+        console.error('Failed to parse UDP config:', e);
+      }
+    }
+  }
+
+  saveConfig() {
+    localStorage.setItem('udpLoggerConfig', JSON.stringify({
+      port: this.udpPort
+    }));
+  }
+
+  async startUDPLogger() {
+    const portInput = document.getElementById('udp-port-input');
+    if (portInput) {
+      this.udpPort = parseInt(portInput.value) || 56789;
+      this.saveConfig();
+    }
+    await window.electronAPI.startUDPLogger(this.udpPort);
+    await this.app.loadUDPStatus();
+    this.app.render();
+  }
+
+  async stopUDPLogger() {
+    await window.electronAPI.stopUDPLogger();
+    await this.app.loadUDPStatus();
+    this.app.render();
   }
 
   render() {
     return `
       <div class="bg-white rounded-2xl shadow-lg p-6">
         <div class="mb-4">
+          <!-- Port Configuration (shown when stopped) -->
+          ${!this.app.udpStatus.isRunning ? `
+          <div class="bg-blue-50 rounded-lg p-4 mb-4 border border-blue-200">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-4 flex-1">
+                <label class="text-sm font-medium text-gray-700">UDP Port:</label>
+                <input 
+                  type="number" 
+                  id="udp-port-input" 
+                  value="${this.udpPort}" 
+                  oninput="window.udpLogsPage.udpPort = parseInt(this.value)"
+                  class="px-3 py-2 border border-gray-300 rounded-lg text-sm w-32"
+                  placeholder="56789"
+                  min="1024"
+                  max="65535"
+                />
+                <span class="text-xs text-gray-500">Port range: 1024-65535</span>
+              </div>
+              <button 
+                onclick="window.udpLogsPage.startUDPLogger()" 
+                class="px-6 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-medium transition-colors">
+                ▶️ Start UDP Logger
+              </button>
+            </div>
+          </div>
+          ` : ''}
+
           <div class="flex items-center justify-between mb-3">
             <div class="flex items-center gap-4">
               <h2 class="text-xl font-bold text-gray-800">UDP Logger</h2>
               <div class="flex items-center gap-2">
                 <div class="w-3 h-3 rounded-full ${this.app.udpStatus.isRunning ? 'bg-green-500' : 'bg-red-500'}"></div>
-                <span class="text-sm text-gray-600">Port ${this.app.udpStatus.port}</span>
+                <span class="text-sm text-gray-600">${this.app.udpStatus.isRunning ? `Port ${this.app.udpStatus.port}` : 'Stopped'}</span>
                 <span class="text-sm text-gray-500">| <span id="udp-log-count">${this.app.udpStatus.logCount}</span> logs</span>
               </div>
             </div>
             <div class="flex gap-2">
+              ${this.app.udpStatus.isRunning ? `
+                <button 
+                  onclick="window.udpLogsPage.stopUDPLogger()" 
+                  class="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg text-sm font-medium transition-colors">
+                  ⏹️ Stop Logger
+                </button>
+              ` : ''}
               <button onclick="app.saveUDPLogs(false)" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2" ${this.app.udpStatus.logCount === 0 ? 'disabled' : ''}>
                 💾 Save Logs
               </button>
@@ -74,7 +145,7 @@ class UDPLogsPage {
           ${this.app.udpLogs.length === 0 ? `
             <div style="text-align: center; padding: 48px 0; color: #6b7280;">
               <p>No UDP messages received yet</p>
-              <p style="font-size: 11px; margin-top: 8px;">Listening on UDP port ${this.app.udpStatus.port}</p>
+              <p style="font-size: 11px; margin-top: 8px;">${this.app.udpStatus.isRunning ? `Listening on UDP port ${this.app.udpStatus.port}` : 'Start UDP logger to receive messages'}</p>
             </div>
           ` : `
             ${[...this.app.udpLogs].reverse().map((log, index) => `
