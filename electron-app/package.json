@@ -1,7 +1,7 @@
 {
-  "name": "fga-ac-simulator-electron",
+  "name": "nube-io-toolkit",
   "version": "1.0.0",
-  "description": "Fujitsu AC Simulator with MQTT - Electron Version",
+  "description": "Nube iO Toolkit - Complete Development Tool: Flash, Monitor, Control & Simulate",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -40,8 +40,8 @@
     "electron-builder": "^24.9.1"
   },
   "build": {
-    "appId": "com.nubeio.fga-simulator",
-    "productName": "FGA_Simulator",
+    "appId": "com.nubeio.toolkit",
+    "productName": "Nube_iO_Toolkit",
     "publish": null,
     "directories": {
       "output": "dist"
@@ -96,7 +96,7 @@
       "icon": "build/icon.ico"
     },
     "portable": {
-      "artifactName": "${productName}-${version}.exe"
+      "artifactName": "Nube-iO-Toolkit-${version}.exe"
     },
     "mac": {
       "target": "dmg"
