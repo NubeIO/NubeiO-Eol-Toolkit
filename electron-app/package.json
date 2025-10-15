@@ -42,6 +42,7 @@
   "build": {
     "appId": "com.nubeio.fga-simulator",
     "productName": "FGA_Simulator",
+    "publish": null,
     "directories": {
       "output": "dist"
     },
