@@ -15,8 +15,8 @@ class AboutPage {
           <div class="w-20 h-20 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl mx-auto mb-4 flex items-center justify-center">
             <span class="text-3xl">🏠</span>
           </div>
-          <h1 class="text-3xl font-bold text-gray-800 mb-2">FGA AC Simulator</h1>
-          <p class="text-lg text-gray-600">Fujitsu AC Simulator with MQTT - Electron Version</p>
+          <h1 class="text-3xl font-bold text-gray-800 mb-2">Nube iO Toolkit</h1>
+          <p class="text-lg text-gray-600">Complete Development Tool: Flash, Monitor, Control & Simulate</p>
           <div class="mt-2 px-4 py-2 bg-blue-100 text-blue-800 rounded-full text-sm font-medium inline-block">
             Version 1.0.0
           </div>
@@ -33,7 +33,7 @@ class AboutPage {
               <div class="space-y-3">
                 <div class="flex justify-between items-center py-2 border-b border-gray-100">
                   <span class="text-gray-600">Product Name:</span>
-                  <span class="font-medium text-gray-800">FGA_Simulator</span>
+                  <span class="font-medium text-gray-800">Nube_iO_Toolkit</span>
                 </div>
                 <div class="flex justify-between items-center py-2 border-b border-gray-100">
                   <span class="text-gray-600">Version:</span>
