@@ -53,12 +53,14 @@ jobs:
       
       - name: Build for Windows
         run: npm run build:win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: Upload Windows artifacts
+      - name: Upload Windows artifacts (directory)
         uses: actions/upload-artifact@v4
         with:
           name: windows-build
-          path: electron-app/dist/*.exe
+          path: electron-app/dist/
           retention-days: 30
 
   build-linux:
@@ -84,14 +86,14 @@ jobs:
       
       - name: Build for Linux
         run: npm run build:linux
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: Upload Linux artifacts
+      - name: Upload Linux artifacts (directory)
         uses: actions/upload-artifact@v4
         with:
           name: linux-build
-          path: |
-            electron-app/dist/*.AppImage
-            electron-app/dist/*.deb
+          path: electron-app/dist/
           retention-days: 30
 
   create-release:
@@ -107,13 +109,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: windows-build
-          path: ./artifacts
+          path: ./windows-build
       
       - name: Download Linux artifacts
         uses: actions/download-artifact@v4
         with:
           name: linux-build
-          path: ./artifacts
+          path: ./linux-build
       
       - name: Get release tag
         id: get_tag
@@ -128,11 +130,22 @@ jobs:
             echo "tag=$TAG" >> $GITHUB_OUTPUT
           fi
       
+      - name: List downloaded artifacts
+        run: |
+          echo "=== Windows Build ==="
+          ls -lh ./windows-build/
+          echo ""
+          echo "=== Linux Build ==="
+          ls -lh ./linux-build/
+      
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.get_tag.outputs.tag }}
-          files: ./artifacts/*
+          files: |
+            ./windows-build/*.exe
+            ./linux-build/*.AppImage
+            ./linux-build/*.deb
           draft: false
           prerelease: false
           generate_release_notes: true
