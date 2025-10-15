@@ -205,7 +205,7 @@ function createMenu() {
       label: 'Help',
       submenu: [
         {
-          label: 'About FGA Simulator',
+          label: 'About Nube iO Toolkit',
           click: () => {
             const mainWindow = BrowserWindow.getFocusedWindow();
             if (mainWindow) {

@@ -57,7 +57,7 @@ class HelpModule {
       <div class="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border z-50">
         <div class="py-1">
           <button onclick="app.helpModule.showAbout()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
-            <span>ℹ️</span> About FGA Simulator
+            <span>ℹ️</span> About Nube iO Toolkit
           </button>
           <button onclick="app.helpModule.showKeyboardShortcuts()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
             <span>⌨️</span> Keyboard Shortcuts
@@ -94,9 +94,9 @@ class HelpModule {
         <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
           <!-- Header -->
           <div class="text-center p-8 border-b">
-            <img src="assets/Logo.svg" alt="FGA Simulator Logo" class="h-16 mx-auto mb-4" />
-            <h1 class="text-3xl font-bold text-gray-800 mb-2">FGA AC Simulator</h1>
-            <p class="text-lg text-gray-600">Fujitsu AC Simulator with MQTT - Electron Version</p>
+            <img src="assets/Logo.svg" alt="Nube iO Toolkit Logo" class="h-16 mx-auto mb-4" />
+            <h1 class="text-3xl font-bold text-gray-800 mb-2">Nube iO Toolkit</h1>
+            <p class="text-lg text-gray-600">Complete Development Tool: Flash, Monitor, Control & Simulate</p>
             <div class="mt-2 px-4 py-2 bg-blue-100 text-blue-800 rounded-full text-sm font-medium inline-block">
               Version 1.0.0
             </div>
@@ -114,7 +114,7 @@ class HelpModule {
                   <div class="space-y-3">
                     <div class="flex justify-between items-center py-2 border-b border-gray-100">
                       <span class="text-gray-600">Product Name:</span>
-                      <span class="font-medium text-gray-800">FGA_Simulator</span>
+                      <span class="font-medium text-gray-800">Nube_iO_Toolkit</span>
                     </div>
                     <div class="flex justify-between items-center py-2 border-b border-gray-100">
                       <span class="text-gray-600">Version:</span>
