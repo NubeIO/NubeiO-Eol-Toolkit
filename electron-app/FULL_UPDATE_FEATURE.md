@@ -151,13 +151,13 @@ The flasher uses ESP-IDF format commands with proper flash configuration.
 esptool.py \
   --port /dev/ttyUSB0 \
   --baud 460800 \
-  --before default_reset \
-  --after hard_reset \
+  --before default-reset \
+  --after hard-reset \
   --chip esp32 \
-  write_flash \
-  --flash_mode dio \
-  --flash_freq 80m \
-  --flash_size 4MB \
+  write-flash \
+  --flash-mode dio \
+  --flash-freq 80m \
+  --flash-size 4MB \
   0x1000 bootloader/bootloader.bin \
   0x8000 partition_table/partition-table.bin \
   0x10000 firmware.bin
@@ -168,23 +168,23 @@ esptool.py \
 esptool.py \
   --port /dev/ttyACM1 \
   --baud 460800 \
-  --before default_reset \
-  --after hard_reset \
+  --before default-reset \
+  --after hard-reset \
   --chip esp32s3 \
-  write_flash \
-  --flash_mode dio \
-  --flash_freq 80m \
-  --flash_size 4MB \
+  write-flash \
+  --flash-mode dio \
+  --flash-freq 80m \
+  --flash-size 4MB \
   0x0 bootloader/bootloader.bin \
   0x8000 partition_table/partition-table.bin \
   0x20000 firmware.bin
 ```
 
 **Key Differences from Basic esptool:**
-- Added `--before default_reset` and `--after hard_reset` for proper reset handling
-- Added `--flash_mode dio` (Dual I/O mode for flash access)
-- Added `--flash_freq 80m` (80MHz flash frequency)
-- Added `--flash_size 4MB` (Flash chip size - auto-detected if needed)
+- Added `--before default-reset` and `--after hard-reset` for proper reset handling
+- Added `--flash-mode dio` (Dual I/O mode for flash access)
+- Added `--flash-freq 80m` (80MHz flash frequency)
+- Added `--flash-size 4MB` (Flash chip size - auto-detected if needed)
 - OTA data file is optional (not included in standard ESP-IDF commands)
 
 **Note**: The firmware address for ESP32-S3 is 0x20000 (not 0x10000) due to its larger bootloader.

@@ -35,12 +35,39 @@ class ESP32Provisioning {
       // Get platform-specific binary paths
       const platform = os.platform();
       
-      // Set esptool path (reuse from esp32-flasher-native)
+      // Extract esptool binary to temp (same logic as esp32-flasher-native)
       const esptoolDir = path.join(os.tmpdir(), 'fga-simulator-esptool');
+      if (!fs.existsSync(esptoolDir)) {
+        fs.mkdirSync(esptoolDir, { recursive: true });
+      }
+
+      let esptoolBinaryName, esptoolSourcePath;
       if (platform === 'win32') {
-        this.esptoolPath = path.join(esptoolDir, 'esptool.exe');
+        esptoolBinaryName = 'esptool.exe';
+        esptoolSourcePath = path.join(__dirname, '../embedded/esptool-binaries/windows', esptoolBinaryName);
+        this.esptoolPath = path.join(esptoolDir, esptoolBinaryName);
       } else {
-        this.esptoolPath = path.join(esptoolDir, 'esptool');
+        esptoolBinaryName = 'esptool';
+        esptoolSourcePath = path.join(__dirname, '../embedded/esptool-binaries/linux', esptoolBinaryName);
+        this.esptoolPath = path.join(esptoolDir, esptoolBinaryName);
+      }
+
+      // Copy esptool binary if not exists or if source is newer
+      if (fs.existsSync(esptoolSourcePath)) {
+        const shouldCopyEsptool = !fs.existsSync(this.esptoolPath) ||
+                                   fs.statSync(esptoolSourcePath).mtime > fs.statSync(this.esptoolPath).mtime;
+
+        if (shouldCopyEsptool) {
+          console.log(`Extracting esptool binary to: ${this.esptoolPath}`);
+          fs.copyFileSync(esptoolSourcePath, this.esptoolPath);
+
+          // Make executable on Unix-like systems
+          if (platform !== 'win32') {
+            fs.chmodSync(this.esptoolPath, 0o755);
+          }
+        }
+      } else {
+        console.warn(`esptool binary not found at: ${esptoolSourcePath}`);
       }
 
       // Set nvs_partition_gen path
@@ -282,7 +309,7 @@ class ESP32Provisioning {
         '--chip', chip,
         '--port', port,
         '--baud', baudRate,
-        'write_flash', offset, binPath
+        'write-flash', offset, binPath
       ];
 
       console.log(`Flashing NVS: ${this.esptoolPath} ${args.join(' ')}`);
@@ -409,6 +436,94 @@ class ESP32Provisioning {
   }
 
   /**
+   * Helper: Wait for serial port to be fully released
+   */
+  async waitForPortRelease(delayMs = 500) {
+    return new Promise(resolve => setTimeout(resolve, delayMs));
+  }
+
+  /**
+   * Monitor serial port boot logs after reset
+   */
+  async monitorBootLogs(port, baudRate = 115200, durationMs = 5000) {
+    return new Promise((resolve, reject) => {
+      let serialPort = null;
+      let parser = null;
+      const bootLogs = [];
+
+      try {
+        console.log('');
+        console.log('========================================');
+        console.log('  Monitoring ESP32 Boot Logs');
+        console.log(`  Port: ${port}`);
+        console.log(`  Baud Rate: ${baudRate}`);
+        console.log(`  Duration: ${durationMs}ms`);
+        console.log('========================================');
+        console.log('');
+
+        // Open serial port
+        serialPort = new SerialPort({
+          path: port,
+          baudRate: baudRate,
+          autoOpen: false
+        });
+
+        parser = serialPort.pipe(new ReadlineParser({ delimiter: '\n' }));
+
+        // Setup data handler
+        parser.on('data', (data) => {
+          const line = data.toString().trim();
+          if (line) {
+            console.log(`[BOOT LOG]: ${line}`);
+            bootLogs.push(line);
+          }
+        });
+
+        // Timeout to stop monitoring
+        const timeout = setTimeout(() => {
+          console.log('');
+          console.log('========================================');
+          console.log(`  Boot log monitoring complete (${bootLogs.length} lines captured)`);
+          console.log('========================================');
+          console.log('');
+          
+          if (serialPort && serialPort.isOpen) {
+            serialPort.close(() => {
+              resolve({ success: true, logs: bootLogs });
+            });
+          } else {
+            resolve({ success: true, logs: bootLogs });
+          }
+        }, durationMs);
+
+        // Open the port
+        serialPort.open((err) => {
+          if (err) {
+            clearTimeout(timeout);
+            reject(new Error(`Failed to open serial port: ${err.message}`));
+            return;
+          }
+          console.log('Serial port opened for boot log monitoring...');
+        });
+
+        // Handle errors
+        serialPort.on('error', (err) => {
+          clearTimeout(timeout);
+          console.error('Serial port error:', err);
+          reject(err);
+        });
+
+      } catch (error) {
+        console.error('Boot log monitoring error:', error);
+        if (serialPort && serialPort.isOpen) {
+          serialPort.close();
+        }
+        reject(error);
+      }
+    });
+  }
+
+  /**
    * Complete provisioning workflow
    */
   async provisionESP32(config) {
@@ -427,6 +542,9 @@ class ESP32Provisioning {
       result.stage = 'mac_read';
       result.macAddress = await this.readMacAddress(config.port, config.chip);
       console.log(`MAC Address: ${result.macAddress}`);
+      
+      // Wait for port to be fully released
+      await this.waitForPortRelease(500);
 
       // Step 2: Generate UUID
       result.stage = 'uuid_gen';
@@ -467,6 +585,36 @@ class ESP32Provisioning {
       } catch (err) {
         console.warn('Failed to cleanup temp files:', err);
       }
+
+      // Step 5.5: Monitor boot logs after reset (wait for port to be released first)
+      result.stage = 'boot_monitor';
+      console.log('Waiting for ESP32 to reset and start booting...');
+      await this.waitForPortRelease(1000); // Wait 1 second for reset to complete
+      
+      try {
+        if (this.progressCallback) {
+          this.progressCallback({
+            stage: 'boot_monitor',
+            progress: 75,
+            message: 'Monitoring ESP32 boot logs after reset...'
+          });
+        }
+        
+        const bootResult = await this.monitorBootLogs(
+          config.port,
+          115200, // Standard ESP32 boot log baud rate
+          5000    // Monitor for 5 seconds
+        );
+        
+        result.bootLogs = bootResult.logs;
+        console.log(`Captured ${bootResult.logs.length} boot log lines`);
+      } catch (bootError) {
+        console.warn('Failed to monitor boot logs:', bootError.message);
+        // Don't fail provisioning if we can't monitor boot logs
+      }
+
+      // Wait a bit more to ensure port is fully released before database operations
+      await this.waitForPortRelease(500);
 
       // Step 6: Insert into database
       result.stage = 'db_insert';
@@ -549,6 +697,37 @@ class ESP32Provisioning {
               message: `❌ WiFi config error: ${wifiError.message}`
             });
           }
+        }
+      }
+
+      // Step 8: Monitor logs after provisioning (optional, extended monitoring)
+      if (config.monitorLogs !== false) { // Enabled by default
+        result.stage = 'log_monitor';
+        console.log('');
+        console.log('Waiting for serial port to be released...');
+        await this.waitForPortRelease(1000);
+        
+        try {
+          if (this.progressCallback) {
+            this.progressCallback({
+              stage: 'log_monitor',
+              progress: 95,
+              message: 'Monitoring ESP32 logs...'
+            });
+          }
+          
+          console.log('Reopening serial port for extended log monitoring...');
+          const logResult = await this.monitorBootLogs(
+            config.port,
+            115200,
+            10000 // Monitor for 10 seconds to see app startup and MQTT connection
+          );
+          
+          result.extendedLogs = logResult.logs;
+          console.log(`Captured ${logResult.logs.length} extended log lines`);
+        } catch (logError) {
+          console.warn('Failed to monitor extended logs:', logError.message);
+          // Don't fail provisioning if we can't monitor logs
         }
       }
 

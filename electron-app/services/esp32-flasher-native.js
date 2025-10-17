@@ -174,14 +174,20 @@ class ESP32FlasherNative {
       const args = [
         '--port', port,
         '--baud', baudRate.toString(),
-        '--before', 'default_reset',
-        '--after', 'hard_reset',
+        '--before', 'default-reset',
+        '--after', 'hard-reset',
         '--chip', chipType || 'auto'
       ];
 
-      // Add write_flash command with firmware - use ESP-IDF format
-      args.push('write_flash');
+      // Add write-flash command with firmware - use ESP-IDF format
+      args.push('write-flash');
       args.push('-z');  // Compress
+      
+      // Add erase flag if requested
+      if (eraseFlash) {
+        args.push('--erase-all');
+      }
+      
       args.push(actualFlashAddress);
       args.push(firmwarePath);
 
@@ -395,14 +401,19 @@ class ESP32FlasherNative {
         const args = [
           '--port', port,
           '--baud', baudRate.toString(),
-          '--before', 'default_reset',
-          '--after', 'hard_reset',
+          '--before', 'default-reset',
+          '--after', 'hard-reset',
           '--chip', chipType || 'auto',
-          'write_flash',
-          '--flash_mode', flashMode,
-          '--flash_freq', flashFreq,
-          '--flash_size', flashSize
+          'write-flash',
+          '--flash-mode', flashMode,
+          '--flash-freq', flashFreq,
+          '--flash-size', flashSize
         ];
+        
+        // Add erase flag if requested
+        if (eraseFlash) {
+          args.push('--erase-all');
+        }
 
         // Determine chip-specific addresses
         console.log('flashComplete: chipType =', chipType);
@@ -519,6 +530,68 @@ class ESP32FlasherNative {
         }
         resolve({ success: false, error: error.message });
       }
+    });
+  }
+
+  /**
+   * Erase entire flash memory
+   */
+  async eraseFlash(port) {
+    if (this.isFlashing) {
+      throw new Error('Flash operation already in progress');
+    }
+
+    this.isFlashing = true;
+
+    return new Promise((resolve, reject) => {
+      const args = [
+        '--port', port,
+        '--baud', '460800',
+        '--before', 'default-reset',
+        '--after', 'hard-reset',
+        'erase_flash'
+      ];
+
+      console.log('Erasing flash with command:', this.esptoolPath, args.join(' '));
+
+      this.flashProcess = spawn(this.esptoolPath, args);
+      let output = '';
+      let errorOutput = '';
+
+      this.flashProcess.stdout.on('data', (data) => {
+        const text = data.toString();
+        output += text;
+        console.log('[esptool erase]', text.trim());
+      });
+
+      this.flashProcess.stderr.on('data', (data) => {
+        const text = data.toString();
+        errorOutput += text;
+        console.log('[esptool erase]', text.trim());
+      });
+
+      this.flashProcess.on('close', (code) => {
+        this.isFlashing = false;
+        this.flashProcess = null;
+
+        if (code === 0) {
+          console.log('Flash erase completed successfully');
+          resolve({
+            success: true,
+            message: 'Flash erased successfully',
+            output: output + errorOutput
+          });
+        } else {
+          console.error('Flash erase failed:', errorOutput || output);
+          reject(new Error(`Flash erase failed with code ${code}: ${errorOutput || output}`));
+        }
+      });
+
+      this.flashProcess.on('error', (error) => {
+        this.isFlashing = false;
+        this.flashProcess = null;
+        reject(error);
+      });
     });
   }
 

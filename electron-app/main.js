@@ -1,5 +1,11 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
+const util = require('util');
+
+// Configure console.log to show more details
+util.inspect.defaultOptions.maxArrayLength = null; // Show all array items
+util.inspect.defaultOptions.depth = null; // Show all nested levels
+util.inspect.defaultOptions.colors = true; // Enable colors
 
 // Import services
 const MQTTService = require('./services/mqtt-service');
@@ -521,6 +527,17 @@ ipcMain.handle('flasher:flashFirmware', async (event, options) => {
 
 ipcMain.handle('flasher:cancelFlash', () => {
   return esp32Flasher.cancelFlash();
+});
+
+ipcMain.handle('flasher:eraseFlash', async (event, port) => {
+  try {
+    console.log('Erasing flash on port:', port);
+    const result = await esp32Flasher.eraseFlash(port);
+    return result;
+  } catch (error) {
+    console.error('Erase flash error:', error);
+    return { success: false, error: error.message };
+  }
 });
 
 ipcMain.handle('flasher:showFirmwareDialog', async () => {

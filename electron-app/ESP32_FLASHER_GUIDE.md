@@ -220,14 +220,14 @@ If you prefer command line:
 ```bash
 # Basic flash
 esptool.py --chip esp32 --port /dev/ttyUSB0 --baud 460800 \
-  write_flash 0x10000 firmware.bin
+  write-flash 0x10000 firmware.bin
 
 # Full erase first
 esptool.py --chip esp32 --port /dev/ttyUSB0 erase_flash
 
 # Flash with options
 esptool.py --chip esp32 --port /dev/ttyUSB0 --baud 460800 \
-  write_flash --flash_mode dio --flash_freq 40m --flash_size 4MB \
+  write-flash --flash-mode dio --flash-freq 40m --flash-size 4MB \
   0x10000 firmware.bin
 ```
 

@@ -17,12 +17,12 @@
     "description": "Serial Console - Monitor and debug ESP32 via serial port"
   },
   "provisioning": {
-    "enabled": false,
+    "enabled": true,
     "description": "ESP32 Device Provisioning - Generate credentials and provision ESP32 devices (requires nvs_partition_gen tool)",
     "requiresEsptool": true,
     "requiresNVSGen": true,
     "configureWiFi": true,
-    "note": "Disabled by default - requires additional tools. Enable if you need device provisioning."
+    "note": "Includes esptool and nvs_partition_gen binaries for device provisioning."
   },
   "fleetMonitoring": {
     "enabled": true,

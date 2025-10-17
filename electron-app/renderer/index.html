@@ -9,6 +9,14 @@
       tailwind.config = {
         darkMode: 'class',
       }
+      
+      // Configure console.log to show more details (no truncation)
+      if (typeof process !== 'undefined' && process.versions && process.versions.electron) {
+        const util = require('util');
+        util.inspect.defaultOptions.maxArrayLength = null; // Show all array items
+        util.inspect.defaultOptions.depth = null; // Show all nested levels
+        util.inspect.defaultOptions.colors = true; // Enable colors
+      }
     </script>
     <style>
       /* Smooth transitions for theme switching */
