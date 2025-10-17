@@ -268,16 +268,19 @@ class ESP32FlasherNative {
       console.log(`[Flash Progress] ${progressData.progress}% - ${progressData.message}`);
       this.progressCallback(progressData);
     } else if (text.includes('Writing at')) {
-      // Extract progress from "Writing at 0x00010000... (XX %)"
-      const progressMatch = text.match(/\((\d+)\s*%\)/);
+      // Extract progress from "Writing at 0x00010000 [========>  ]  31.8% 458752/1444045 bytes..."
+      const progressMatch = text.match(/\]\s+(\d+\.?\d*)%/);
       if (progressMatch) {
-        const percent = parseInt(progressMatch[1]);
+        const percent = parseFloat(progressMatch[1]);
         const progressData = {
           stage: 'writing',
           progress: 20 + Math.floor(percent * 0.75), // 20-95%
-          message: `Writing firmware... ${percent}%`
+          message: `Writing firmware... ${percent.toFixed(1)}%`
         };
-        console.log(`[Flash Progress] ${progressData.progress}% - ${progressData.message}`);
+        // Only log every 5% to reduce console spam
+        if (Math.floor(percent) % 5 === 0 || percent > 99) {
+          console.log(`[Flash Progress] ${progressData.progress}% - ${progressData.message}`);
+        }
         this.progressCallback(progressData);
       }
     } else if (text.includes('Hash of data verified')) {

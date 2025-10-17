@@ -10,6 +10,7 @@ class App {
     // Initialize modules
     this.helpModule = new HelpModule(this);
     this.serialConsole = new SerialConsoleModule(this);
+    this.devicesPage = new DevicesPage(this); // Devices page
     this.udpLogsPage = new UDPLogsPage(this); // UDP logs page
     this.provisioningPage = null; // Will be initialized conditionally
     this.fleetMonitoringPage = null; // Will be initialized conditionally
@@ -908,17 +909,6 @@ class App {
                 <button onclick="app.toggleTheme()" class="px-4 py-2 bg-gradient-to-br from-yellow-400 to-orange-500 hover:from-yellow-500 hover:to-orange-600 text-white rounded-lg text-sm font-medium transition-all transform hover:scale-105 shadow-md" title="${this.isDarkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}">
                   ${this.isDarkMode ? '☀️ Light' : '🌙 Dark'}
                 </button>
-                <button onclick="app.toggleConfig()" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-sm font-medium transition-colors dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-200">
-                  ⚙️ Config
-                </button>
-                <button onclick="app.${this.isConnected ? 'handleDisconnectMQTT' : 'handleConnectMQTT'}()" 
-                  class="px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors ${
-                    this.isConnected 
-                      ? 'bg-red-500 hover:bg-red-600' 
-                      : 'bg-blue-500 hover:bg-blue-600'
-                  }">
-                  ${this.isConnected ? 'Disconnect' : 'Connect'}
-                </button>
               </div>
             </div>
             
@@ -1083,19 +1073,7 @@ class App {
   }
 
   renderDevicesPage() {
-    if (this.discoveredDevices.length === 0) {
-      return `
-        <div class="text-center py-12 text-gray-500">
-          <p class="text-lg font-medium">${this.isConnected ? 'Waiting for devices to connect...' : 'Please connect to MQTT broker first'}</p>
-        </div>
-      `;
-    }
-    
-    return `
-      <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-        ${this.discoveredDevices.map(device => this.renderDevicePanel(device)).join('')}
-      </div>
-    `;
+    return this.devicesPage.render();
   }
 
   renderUDPLogsPage() {

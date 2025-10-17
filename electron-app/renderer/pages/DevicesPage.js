@@ -5,18 +5,50 @@ class DevicesPage {
   }
 
   render() {
-    if (this.app.discoveredDevices.length === 0) {
-      return `
-        <div class="text-center py-12 text-gray-500">
+    return `
+      <!-- Devices Page Controls -->
+      <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-4 mb-6">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-4">
+            <h2 class="text-xl font-bold text-gray-800 dark:text-gray-100">AC Devices</h2>
+            <div class="flex items-center gap-2">
+              <div class="w-3 h-3 rounded-full ${this.app.isConnected ? 'bg-green-500' : 'bg-red-500'}"></div>
+              <span class="text-sm text-gray-600 dark:text-gray-300">
+                ${this.app.isConnected ? `Connected (${this.app.discoveredDevices.length} device${this.app.discoveredDevices.length !== 1 ? 's' : ''})` : 'Disconnected'}
+              </span>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button 
+              onclick="app.toggleConfig()" 
+              class="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-sm font-medium transition-colors dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-200"
+            >
+              ⚙️ Config
+            </button>
+            <button 
+              onclick="app.${this.app.isConnected ? 'handleDisconnectMQTT' : 'handleConnectMQTT'}()" 
+              class="px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors ${
+                this.app.isConnected 
+                  ? 'bg-red-500 hover:bg-red-600' 
+                  : 'bg-blue-500 hover:bg-blue-600'
+              }"
+            >
+              ${this.app.isConnected ? 'Disconnect' : 'Connect'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Device Grid -->
+      ${this.app.discoveredDevices.length === 0 ? `
+        <div class="text-center py-12 text-gray-500 dark:text-gray-400">
           <p class="text-lg font-medium">${this.app.isConnected ? 'Waiting for devices to connect...' : 'Please connect to MQTT broker first'}</p>
         </div>
-      `;
-    }
-    
-    return `
-      <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-        ${this.app.discoveredDevices.map(device => this.renderDevicePanel(device)).join('')}
-      </div>
+      ` : `
+        <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+          ${this.app.discoveredDevices.map(device => this.renderDevicePanel(device)).join('')}
+        </div>
+      `}
     `;
   }
 
