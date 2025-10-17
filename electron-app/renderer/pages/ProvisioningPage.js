@@ -14,8 +14,9 @@ class ProvisioningPage {
       wifiSsid: '',
       wifiPassword: ''
     };
-    this.includeWiFi = false;
-    this.configureWiFi = false; // Auto-configure WiFi via serial after provisioning
+    this.includeWiFi = true; // WiFi is now mandatory
+    this.configureWiFi = true; // Auto-configure WiFi via serial after provisioning (mandatory)
+    this.showWifiPassword = false; // Toggle for showing/hiding WiFi password
     this.macAddress = '';
     this.generatedUuid = '';
     this.generatedPsk = '';
@@ -108,40 +109,43 @@ class ProvisioningPage {
               </div>
             </div>
 
-            <!-- WiFi Configuration -->
-            <div class="border-t pt-4">
-              <h3 class="text-lg font-semibold text-gray-800 mb-3">WiFi Configuration (Optional)</h3>
-              <div class="mb-3">
-                  <label class="inline-flex items-center">
-                  <input type="checkbox" id="prov-include-wifi" ${this.includeWiFi ? 'checked' : ''} onchange="window.provisioningPage.toggleWiFi()" class="mr-2" ${this.isProvisioning ? 'disabled' : ''}>
-                  <span class="text-sm text-gray-700">Include WiFi credentials in NVS</span>
-                </label>
-              </div>
-              ${this.includeWiFi ? `
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                  <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">WiFi SSID</label>
-                    <input type="text" id="prov-wifi-ssid" value="${this.config.wifiSsid}" oninput="window.provisioningPage.config.wifiSsid = this.value" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter WiFi network name" ${this.isProvisioning ? 'disabled' : ''}>
-                  </div>
-                  
-                  <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">WiFi Password</label>
-                    <input type="password" id="prov-wifi-password" value="${this.config.wifiPassword}" oninput="window.provisioningPage.config.wifiPassword = this.value" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter WiFi password" ${this.isProvisioning ? 'disabled' : ''}>
-                  </div>
+            <!-- WiFi Configuration (Mandatory) -->
+            <div class="border-t pt-4 bg-blue-50 -mx-6 px-6 py-4">
+              <h3 class="text-lg font-semibold text-gray-800 mb-1">📶 WiFi Configuration (Required)</h3>
+              <p class="text-xs text-gray-600 mb-3">WiFi credentials will be stored in NVS and automatically configured via serial console after provisioning</p>
+              
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-2">WiFi SSID <span class="text-red-600">*</span></label>
+                  <input type="text" id="prov-wifi-ssid" value="${this.config.wifiSsid}" oninput="window.provisioningPage.config.wifiSsid = this.value" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" placeholder="Enter WiFi network name" required ${this.isProvisioning ? 'disabled' : ''}>
                 </div>
                 
-                <!-- WiFi Auto-Configuration via Serial -->
-                <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3">
-                  <label class="inline-flex items-center">
-                    <input type="checkbox" id="prov-config-wifi" ${this.configureWiFi ? 'checked' : ''} onchange="window.provisioningPage.configureWiFi = this.checked; window.provisioningPage.render();" class="mr-2" ${this.isProvisioning ? 'disabled' : ''}>
-                    <span class="text-sm font-semibold text-gray-800">🔌 Auto-configure WiFi via Serial Console after provisioning</span>
-                  </label>
-                  <p class="text-xs text-gray-600 mt-2 ml-6">
-                    After flashing and database insertion, automatically connect to serial console and send WiFi configuration commands to ESP32.
-                    This will configure WiFi settings via serial interface.
-                  </p>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-2">WiFi Password <span class="text-red-600">*</span></label>
+                  <div class="relative">
+                    <input type="${this.showWifiPassword ? 'text' : 'password'}" id="prov-wifi-password" value="${this.config.wifiPassword}" oninput="window.provisioningPage.config.wifiPassword = this.value" class="w-full px-3 py-2 pr-10 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" placeholder="Enter WiFi password" required ${this.isProvisioning ? 'disabled' : ''}>
+                    <button type="button" onclick="window.provisioningPage.toggleWifiPasswordVisibility()" class="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-gray-700 focus:outline-none" title="${this.showWifiPassword ? 'Hide password' : 'Show password'}" ${this.isProvisioning ? 'disabled' : ''}>
+                      ${this.showWifiPassword ? '👁️' : '👁️‍🗨️'}
+                    </button>
+                  </div>
                 </div>
-              ` : ''}
+              </div>
+              
+              <div class="bg-blue-100 border border-blue-300 rounded-lg p-3">
+                <div class="flex items-start">
+                  <span class="text-blue-700 mr-2">ℹ️</span>
+                  <div class="text-xs text-gray-700">
+                    <strong>Auto-Configuration Process:</strong>
+                    <ol class="list-decimal ml-4 mt-1 space-y-1">
+                      <li>WiFi credentials are written to NVS partition</li>
+                      <li>After flashing, serial console connects automatically</li>
+                      <li>WiFi commands are sent to ESP32 via serial</li>
+                      <li>Device connects to WiFi and verifies connection</li>
+                      <li>Boot logs are monitored for 10 seconds</li>
+                    </ol>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <!-- Step 0: Erase Flash (Optional) -->
@@ -312,11 +316,16 @@ class ProvisioningPage {
     const size = document.getElementById('prov-size').value;
     const baudRate = document.getElementById('prov-baudrate').value;
     const caUrl = document.getElementById('prov-caurl').value;
-    const wifiSsid = this.includeWiFi ? document.getElementById('prov-wifi-ssid').value : '';
-    const wifiPassword = this.includeWiFi ? document.getElementById('prov-wifi-password').value : '';
+    const wifiSsid = document.getElementById('prov-wifi-ssid').value;
+    const wifiPassword = document.getElementById('prov-wifi-password').value;
 
     if (!port || !caUrl) {
-      alert('Please select port and enter CA URL');
+      alert('❌ Missing Required Fields\n\nPlease select a serial port and enter CA URL');
+      return;
+    }
+
+    if (!wifiSsid || !wifiPassword) {
+      alert('❌ WiFi Configuration Required\n\nPlease enter WiFi SSID and Password.\n\nWiFi credentials are mandatory for device provisioning.');
       return;
     }
 
@@ -377,20 +386,28 @@ class ProvisioningPage {
     const caUrl = document.getElementById('prov-caurl').value;
     const customUuid = document.getElementById('prov-uuid').value;
     const customPsk = document.getElementById('prov-psk').value;
-    const wifiSsid = this.includeWiFi ? document.getElementById('prov-wifi-ssid').value : '';
-    const wifiPassword = this.includeWiFi ? document.getElementById('prov-wifi-password').value : '';
+    const wifiSsid = document.getElementById('prov-wifi-ssid').value;
+    const wifiPassword = document.getElementById('prov-wifi-password').value;
 
     if (!port || !caUrl) {
-      alert('Please select port and enter CA URL');
+      alert('❌ Missing Required Fields\n\nPlease select a serial port and enter CA URL');
+      return;
+    }
+
+    if (!wifiSsid || !wifiPassword) {
+      alert('❌ WiFi Configuration Required\n\nPlease enter WiFi SSID and Password.\n\nWiFi credentials are mandatory for device provisioning.');
       return;
     }
 
     const confirmProvision = confirm(
-      '⚠️ IMPORTANT: Complete Provisioning\n\n' +
+      '⚠️ IMPORTANT: Complete Provisioning with WiFi\n\n' +
       'This will perform the complete provisioning process:\n' +
       '1. Read MAC address\n' +
       '2. Generate UUID and PSK\n' +
-      '3. Create and flash NVS partition\n\n' +
+      '3. Create and flash NVS partition with WiFi credentials\n' +
+      '4. Auto-configure WiFi via serial console\n' +
+      '5. Monitor boot logs and verify connection\n\n' +
+      `WiFi: ${wifiSsid}\n\n` +
       'Make sure ESP32 is in DOWNLOAD MODE first!\n\n' +
       'Click OK to continue.'
     );
@@ -428,6 +445,11 @@ class ProvisioningPage {
 
   toggleWiFi() {
     this.includeWiFi = document.getElementById('prov-include-wifi').checked;
+    this.app.render();
+  }
+
+  toggleWifiPasswordVisibility() {
+    this.showWifiPassword = !this.showWifiPassword;
     this.app.render();
   }
 
