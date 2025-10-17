@@ -85,6 +85,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   flashFirmware: (options) => ipcRenderer.invoke('flasher:flashFirmware', options),
   flashComplete: (options) => ipcRenderer.invoke('flasher:flashComplete', options),
   cancelFlash: () => ipcRenderer.invoke('flasher:cancelFlash'),
+  eraseFlash: (port) => ipcRenderer.invoke('flasher:eraseFlash', port),
   showFirmwareDialog: () => ipcRenderer.invoke('flasher:showFirmwareDialog'),
   showFolderDialog: () => ipcRenderer.invoke('flasher:showFolderDialog'),
   scanFolder: (folderPath) => ipcRenderer.invoke('flasher:scanFolder', folderPath),

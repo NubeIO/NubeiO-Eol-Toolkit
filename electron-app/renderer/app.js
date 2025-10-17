@@ -26,6 +26,7 @@ class App {
     this.fullUpdate = false;
     this.folderPath = '';
     this.chipType = null;
+    this.eraseFlashChecked = true; // Default to checked
     this.discoveredFiles = {
       bootloader: '',
       partition: '',
@@ -1344,26 +1345,112 @@ class App {
     }
   }
 
+  async manualEraseFlash() {
+    if (!this.selectedPort) {
+      alert('⚠️ Please select a serial port first');
+      return;
+    }
+
+    const confirmed = confirm(
+      `⚠️ WARNING: Erase Entire Flash Memory\n\n` +
+      `This will COMPLETELY ERASE all flash memory on the ESP32:\n` +
+      `- Firmware\n` +
+      `- Bootloader\n` +
+      `- Partition table\n` +
+      `- NVS (credentials, settings)\n` +
+      `- All data\n\n` +
+      `Port: ${this.selectedPort}\n\n` +
+      `Make sure ESP32 is in DOWNLOAD MODE:\n` +
+      `1. Hold BOOT button\n` +
+      `2. Press & release RESET button\n` +
+      `3. Release BOOT button\n\n` +
+      `Continue with FULL ERASE?`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      this.flasherStatus.isFlashing = true;
+      this.flashStage = 'erasing';
+      this.flashProgress = 0;
+      this.flashMessage = 'Erasing flash memory...';
+      this.render();
+
+      console.log('Manually erasing flash on port:', this.selectedPort);
+      const result = await window.electronAPI.eraseFlash(this.selectedPort);
+
+      if (result.success) {
+        this.flashStage = 'complete';
+        this.flashProgress = 100;
+        this.flashMessage = 'Flash erased successfully!';
+        alert('✅ Flash Erased Successfully\n\nThe ESP32 flash memory has been completely erased.');
+      } else {
+        this.flashStage = 'failed';
+        this.flashMessage = result.error || 'Erase failed';
+        alert(`❌ Erase Failed\n\n${result.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Erase error:', error);
+      this.flashStage = 'failed';
+      this.flashMessage = error.message;
+      alert(`❌ Erase Error\n\n${error.message}`);
+    } finally {
+      this.flasherStatus.isFlashing = false;
+      this.render();
+    }
+  }
+
   async detectChipType() {
     if (!this.selectedPort) {
       console.log('Cannot detect chip: no port selected');
+      alert('⚠️ Please select a serial port first');
       return;
     }
 
     try {
       console.log('Detecting chip type on port:', this.selectedPort);
+      this.chipType = 'detecting'; // Show detecting state
+      this.render();
+      
       const detectResult = await window.electronAPI.detectChip(this.selectedPort);
+      
       if (detectResult.success && detectResult.chipType) {
         this.chipType = detectResult.chipType;
-        console.log('✅ Detected chip type:', this.chipType);
+        console.log('✅ Auto-detected chip type:', this.chipType);
         this.render();
       } else {
         console.warn('Failed to detect chip:', detectResult.error || 'Unknown error');
         this.chipType = null;
+        
+        // Check for common error conditions
+        const errorMsg = detectResult.error || '';
+        if (errorMsg.includes('busy') || errorMsg.includes('in use') || errorMsg.includes('permission denied') || errorMsg.includes('EBUSY') || errorMsg.includes('EACCES')) {
+          alert(`❌ Port Busy or In Use\n\n` +
+                `The port ${this.selectedPort} is currently being used by another application.\n\n` +
+                `Please:\n` +
+                `1. Close other applications using this port (Serial Monitor, PlatformIO, Arduino IDE, etc.)\n` +
+                `2. Unplug and replug the ESP32\n` +
+                `3. Try again`);
+        } else if (errorMsg.includes('not found') || errorMsg.includes('cannot open')) {
+          alert(`❌ Port Not Found\n\n` +
+                `Cannot open ${this.selectedPort}.\n\n` +
+                `The device may have been disconnected. Please:\n` +
+                `1. Check the USB connection\n` +
+                `2. Refresh the port list\n` +
+                `3. Select the port again`);
+        } else {
+          alert(`❌ Chip Detection Failed\n\n${errorMsg || 'Unknown error'}\n\nPlease ensure:\n` +
+                `- ESP32 is in DOWNLOAD MODE (hold BOOT, press RESET, release BOOT)\n` +
+                `- USB cable supports data transfer\n` +
+                `- Device drivers are installed`);
+        }
+        this.render();
       }
     } catch (error) {
       console.error('Error detecting chip:', error);
       this.chipType = null;
+      alert(`❌ Detection Error\n\n${error.message}`);
+      this.render();
     }
   }
 
@@ -1530,8 +1617,25 @@ class App {
             </div>
           </div>
 
+          <!-- Manual Erase Flash Button -->
+          <div class="border-t pt-4 flex items-center justify-between bg-red-50 -mx-6 px-6 py-4">
+            <div>
+              <p class="text-sm font-semibold text-gray-800 mb-1">🗑️ Manual Flash Erase (Standalone Operation)</p>
+              <p class="text-xs text-gray-600 mb-1">Erase entire flash without flashing new firmware</p>
+              <p class="text-xs text-orange-600">⚠️ Use this for troubleshooting corrupted flash or when you need to erase without flashing</p>
+            </div>
+            <button
+              onclick="app.manualEraseFlash()"
+              class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-semibold whitespace-nowrap"
+              ${this.flasherStatus.isFlashing || !this.selectedPort ? 'disabled' : ''}
+              title="${!this.selectedPort ? 'Select a port first' : 'Erase entire flash memory without flashing'}"
+            >
+              🗑️ Erase Flash Only
+            </button>
+          </div>
+
           <!-- Full Update Checkbox -->
-          <div class="flex items-center">
+          <div class="flex items-center border-t pt-4">
             <label class="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -1598,16 +1702,23 @@ class App {
                 <div class="font-semibold text-gray-700 text-sm mb-3 flex items-center justify-between">
                   <div>
                     <strong>Selected Folder:</strong> ${this.folderPath.split('/').pop()}
-                    ${this.chipType ? `<span class="ml-2 px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-bold">${this.chipType}</span>` : `<span class="ml-2 text-gray-400 text-xs">(Chip not detected)</span>`}
+                    ${this.chipType === 'detecting' ? 
+                      `<span class="ml-2 px-2 py-1 bg-yellow-100 text-yellow-700 rounded text-xs font-bold">🔍 Detecting...</span>` : 
+                      this.chipType ? 
+                      `<span class="ml-2 px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-bold">✓ ${this.chipType.toUpperCase()}</span>` : 
+                      `<span class="ml-2 text-gray-400 text-xs">(Chip not detected)</span>`}
                   </div>
-                  ${this.selectedPort && !this.chipType ? `
+                  ${this.selectedPort ? `
                     <button
                       onclick="app.detectChipType()"
-                      class="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition-colors"
+                      class="px-3 py-1 ${this.chipType ? 'bg-gray-600 hover:bg-gray-700' : 'bg-blue-600 hover:bg-blue-700'} text-white rounded text-xs font-semibold transition-colors"
+                      title="${this.chipType ? 'Re-detect chip type' : 'Detect chip type'}"
                     >
-                      Detect Chip
+                      ${this.chipType ? '🔄 Re-detect' : '🔍 Detect Chip'}
                     </button>
-                  ` : ''}
+                  ` : `
+                    <span class="text-xs text-orange-600">⚠ Select a port first</span>
+                  `}
                 </div>
                 <div class="flex justify-between text-xs">
                   <span class="text-gray-600">Bootloader (optional):</span>
@@ -1642,15 +1753,20 @@ class App {
           `}
 
           <!-- Erase Flash Checkbox -->
-          <div class="flex items-center">
+          <div class="flex items-center bg-blue-50 p-3 rounded-md -mx-6 px-6">
             <label class="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
                 id="erase-flash"
+                ${this.eraseFlashChecked ? 'checked' : ''}
+                onchange="app.eraseFlashChecked = this.checked"
                 class="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                 ${this.flasherStatus.isFlashing ? 'disabled' : ''}
               />
-              <span class="text-sm text-gray-700">Erase flash before writing</span>
+              <div>
+                <span class="text-sm font-semibold text-gray-800">Erase entire flash before writing</span>
+                <p class="text-xs text-gray-600 mt-1">Automatically erases ALL flash memory before writing firmware (recommended - ensures clean state)</p>
+              </div>
             </label>
           </div>
         </div>
