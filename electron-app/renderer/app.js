@@ -27,6 +27,7 @@ class App {
     this.fullUpdate = false;
     this.folderPath = '';
     this.chipType = null;
+    this.flashSize = '4MB'; // Default flash size
     this.eraseFlashChecked = true; // Default to checked
     this.discoveredFiles = {
       bootloader: '',
@@ -1476,7 +1477,8 @@ class App {
           otaDataPath: this.discoveredFiles.otaData,
           firmwarePath: this.discoveredFiles.firmware,
           eraseFlash: eraseFlash,
-          chipType: this.chipType
+          chipType: this.chipType,
+          flashSize: this.flashSize
         };
         console.log('Flash options:', flashOptions);
 
@@ -1591,6 +1593,20 @@ class App {
                 <option value="115200">115200 (Most Stable)</option>
                 <option value="460800" selected>460800</option>
                 <option value="921600">921600 (Fastest)</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-2">Flash Size</label>
+              <select
+                id="flash-size"
+                onchange="app.flashSize = this.value"
+                class="px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white disabled:opacity-50 disabled:cursor-not-allowed"
+                ${this.flasherStatus.isFlashing ? 'disabled' : ''}
+              >
+                <option value="2MB">2MB</option>
+                <option value="4MB" ${this.flashSize === '4MB' ? 'selected' : ''}>4MB</option>
+                <option value="8MB" ${this.flashSize === '8MB' ? 'selected' : ''}>8MB</option>
+                <option value="16MB">16MB</option>
               </select>
             </div>
           </div>
