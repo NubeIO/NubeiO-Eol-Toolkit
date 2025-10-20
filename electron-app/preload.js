@@ -12,14 +12,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   connectMQTT: () => ipcRenderer.invoke('mqtt:connect'),
   disconnectMQTT: () => ipcRenderer.invoke('mqtt:disconnect'),
   getDiscoveredDevices: () => ipcRenderer.invoke('mqtt:getDiscoveredDevices'),
-  
+
   // Device control methods
   setDevicePower: (deviceId, power) => ipcRenderer.invoke('device:setPower', deviceId, power),
   setDeviceMode: (deviceId, mode) => ipcRenderer.invoke('device:setMode', deviceId, mode),
   setDeviceTemperature: (deviceId, temperature) => ipcRenderer.invoke('device:setTemperature', deviceId, temperature),
   setDeviceFanSpeed: (deviceId, fanSpeed) => ipcRenderer.invoke('device:setFanSpeed', deviceId, fanSpeed),
   setDeviceRoomTemperature: (deviceId, temperature) => ipcRenderer.invoke('device:setRoomTemperature', deviceId, temperature),
-  
+
   // UDP Logger methods
   getUDPStatus: () => ipcRenderer.invoke('udp:getStatus'),
   getUDPLogs: () => ipcRenderer.invoke('udp:getLogs'),
@@ -33,22 +33,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showSaveDialog: () => ipcRenderer.invoke('udp:showSaveDialog'),
   enableAutoSave: (filePath, format) => ipcRenderer.invoke('udp:enableAutoSave', filePath, format),
   disableAutoSave: () => ipcRenderer.invoke('udp:disableAutoSave'),
-  
+
   // Menu event handling
   onMenuEvent: (event, callback) => {
     ipcRenderer.on(event, (event, ...args) => callback(...args));
   },
-  
+
   // Remove menu event listeners
   removeMenuEvent: (event) => {
     ipcRenderer.removeAllListeners(event);
   },
-  
+
   // External link opening
   openExternal: (url) => {
     ipcRenderer.invoke('open-external', url);
   },
-  
+
   // System information
   getSystemInfo: () => ({
     node: process.versions.node,
@@ -66,7 +66,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   connectTCP: (host, port) => ipcRenderer.invoke('tcp:connect', host, port),
   disconnectTCP: () => ipcRenderer.invoke('tcp:disconnect'),
   setTCPAutoReconnect: (enabled) => ipcRenderer.invoke('tcp:setAutoReconnect', enabled),
-  
+
   // Serial Console methods
   getSerialConsoleStatus: () => ipcRenderer.invoke('serial:getStatus'),
   getSerialConsoleMessages: () => ipcRenderer.invoke('serial:getMessages'),
@@ -77,7 +77,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onSerialMessage: (callback) => {
     ipcRenderer.on('serial:message', (event, message) => callback(message));
   },
-  
+
   // ESP32 Flasher methods
   getSerialPorts: () => ipcRenderer.invoke('flasher:getSerialPorts'),
   getFlasherStatus: () => ipcRenderer.invoke('flasher:getStatus'),
@@ -91,7 +91,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   scanFolder: (folderPath) => ipcRenderer.invoke('flasher:scanFolder', folderPath),
   onFlasherProgress: (callback) => {
     ipcRenderer.on('flasher:progress', (event, progress) => callback(progress));
-  }
+  },
+
+  // STM32 OpenOCD methods
+  detectSTM32: () => ipcRenderer.invoke('stm32:detectSTLink'),
+  flashSTM32Droplet: (firmwarePath, version) => ipcRenderer.invoke('stm32:flashDroplet', firmwarePath, version),
+  readSTM32UID: () => ipcRenderer.invoke('stm32:readUID'),
+  disconnectSTM32: () => ipcRenderer.invoke('stm32:disconnect'),
+  getSTM32Status: () => ipcRenderer.invoke('stm32:getStatus'),
+  setSTM32Version: (version) => ipcRenderer.invoke('stm32:setVersion', version),
+  selectFile: (options) => ipcRenderer.invoke('dialog:openFile', options)
 });
 
 // Expose provisioning service
@@ -102,10 +111,10 @@ contextBridge.exposeInMainWorld('provisioningService', {
   generateUUIDFromMAC: (macAddress) => ipcRenderer.invoke('provisioning:generateUUIDFromMAC', macAddress),
   generatePSK: () => ipcRenderer.invoke('provisioning:generatePSK'),
   detectChipType: (port) => ipcRenderer.invoke('provisioning:detectChipType', port),
-  createNVSCSV: (globalUUID, pskSecret, caUrl, wifiSSID, wifiPassword) => 
+  createNVSCSV: (globalUUID, pskSecret, caUrl, wifiSSID, wifiPassword) =>
     ipcRenderer.invoke('provisioning:createNVSCSV', globalUUID, pskSecret, caUrl, wifiSSID, wifiPassword),
   generateNVSBinary: (csvPath, size) => ipcRenderer.invoke('provisioning:generateNVSBinary', csvPath, size),
-  flashNVSBinary: (port, chip, offset, binPath, baudRate) => 
+  flashNVSBinary: (port, chip, offset, binPath, baudRate) =>
     ipcRenderer.invoke('provisioning:flashNVSBinary', port, chip, offset, binPath, baudRate),
   provisionESP32: (config) => ipcRenderer.invoke('provisioning:provisionESP32', config),
   getChipTypes: () => ipcRenderer.invoke('provisioning:getChipTypes'),
