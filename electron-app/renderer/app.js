@@ -1395,7 +1395,13 @@ class App {
       
       if (detectResult.success && detectResult.chipType) {
         this.chipType = detectResult.chipType;
-        console.log('✅ Auto-detected chip type:', this.chipType);
+        // Auto-detect flash size if available
+        if (detectResult.flashSize) {
+          this.flashSize = detectResult.flashSize;
+          console.log('✅ Auto-detected chip type:', this.chipType, 'Flash size:', this.flashSize);
+        } else {
+          console.log('✅ Auto-detected chip type:', this.chipType);
+        }
         this.render();
       } else {
         console.warn('Failed to detect chip:', detectResult.error || 'Unknown error');
@@ -1603,10 +1609,11 @@ class App {
                 class="px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white disabled:opacity-50 disabled:cursor-not-allowed"
                 ${this.flasherStatus.isFlashing ? 'disabled' : ''}
               >
-                <option value="2MB">2MB</option>
+                <option value="2MB" ${this.flashSize === '2MB' ? 'selected' : ''}>2MB</option>
                 <option value="4MB" ${this.flashSize === '4MB' ? 'selected' : ''}>4MB</option>
                 <option value="8MB" ${this.flashSize === '8MB' ? 'selected' : ''}>8MB</option>
-                <option value="16MB">16MB</option>
+                <option value="16MB" ${this.flashSize === '16MB' ? 'selected' : ''}>16MB</option>
+                <option value="32MB" ${this.flashSize === '32MB' ? 'selected' : ''}>32MB</option>
               </select>
             </div>
           </div>

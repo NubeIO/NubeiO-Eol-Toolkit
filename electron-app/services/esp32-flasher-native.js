@@ -105,11 +105,11 @@ class ESP32FlasherNative {
   }
 
   /**
-   * Detect the chip type
+   * Detect the chip type and flash size
    */
   async detectChip(port) {
     return new Promise((resolve, reject) => {
-      const args = ['--port', port, 'chip_id'];
+      const args = ['--port', port, 'flash_id'];
       const process = spawn(this.esptoolPath, args);
       let output = '';
 
@@ -128,7 +128,37 @@ class ESP32FlasherNative {
                            output.match(/Chip is (ESP32[-\w]*)/i);
 
           const chipType = chipMatch ? chipMatch[1] : 'ESP32';
-          resolve({ success: true, chipType, output });
+          
+          // Extract flash size from output
+          // Look for patterns like "Detected flash size: 8MB", "Flash size: 8MB", or manufacturer/device IDs
+          let flashSize = '4MB'; // Default
+          
+          // Method 1: Direct flash size mention
+          const flashSizeMatch = output.match(/(?:Detected\s+)?flash\s+size[:\s]+(\d+)MB/i);
+          if (flashSizeMatch) {
+            flashSize = `${flashSizeMatch[1]}MB`;
+          } else {
+            // Method 2: Parse from manufacturer/device ID (e.g., "Manufacturer: c8, Device: 4016" = 4MB)
+            // Common flash IDs: 4016=4MB, 4017=8MB, 4018=16MB, 4015=2MB
+            const deviceMatch = output.match(/Device:\s*([0-9a-fA-F]+)/i);
+            if (deviceMatch) {
+              const deviceId = deviceMatch[1].toLowerCase();
+              const flashSizeMap = {
+                '4015': '2MB',
+                '4016': '4MB',
+                '4017': '8MB',
+                '4018': '16MB',
+                '4019': '32MB'
+              };
+              if (flashSizeMap[deviceId]) {
+                flashSize = flashSizeMap[deviceId];
+              }
+            }
+          }
+          
+          console.log('Detected chip:', chipType, 'Flash size:', flashSize);
+          console.log('Full output:', output);
+          resolve({ success: true, chipType, flashSize, output });
         } else {
           reject(new Error(`Chip detection failed: ${output}`));
         }
