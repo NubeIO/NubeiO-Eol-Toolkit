@@ -4,8 +4,10 @@
   "description": "Nube iO Toolkit - Complete Development Tool: Flash, Monitor, Control & Simulate",
   "main": "main.js",
   "scripts": {
-    "start": "NODE_OPTIONS='--max-old-space-size=4096' electron . --no-sandbox",
-    "dev": "NODE_OPTIONS='--max-old-space-size=4096' electron . --no-sandbox --dev",
+    "start": "electron . --no-sandbox",
+    "start:memory": "NODE_OPTIONS='--max-old-space-size=4096' electron . --no-sandbox",
+    "dev": "electron . --no-sandbox --dev",
+    "dev:memory": "NODE_OPTIONS='--max-old-space-size=4096' electron . --no-sandbox --dev",
     "postinstall": "electron-builder install-app-deps",
     "rebuild": "electron-rebuild -f -w serialport",
     "build": "npm run rebuild && electron-builder",

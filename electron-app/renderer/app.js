@@ -6,7 +6,7 @@ class App {
     this.isConnected = false;
     this.showConfig = false;
     this.currentTime = new Date();
-    
+
     // Initialize modules
     this.helpModule = new HelpModule(this);
     this.serialConsole = new SerialConsoleModule(this);
@@ -37,11 +37,11 @@ class App {
     this.udpLogs = [];
     this.udpStatus = { isRunning: false, port: 56789, logCount: 0 };
     this.lastLogCount = 0; // Track last log count to detect new logs
-    
+
     // Theme management
     this.isDarkMode = false;
     this.loadTheme();
-    
+
     this.init();
   }
 
@@ -73,12 +73,17 @@ class App {
     await this.loadMqttStatus();
     await this.loadDiscoveredDevices();
     await this.loadUDPStatus();
-    
+
     // Initialize TCP Console module
     await tcpConsole.init();
-    
+
     // Initialize Serial Console module
     await this.serialConsole.init();
+
+    // Initialize STM32 Flasher module
+    if (window.stm32Flasher) {
+      await window.stm32Flasher.init();
+    }
 
     // Setup ESP32 flasher progress listener
     window.electronAPI.onFlasherProgress((progress) => {
@@ -95,22 +100,22 @@ class App {
         this.loadDiscoveredDevices();
       }
     }, 2000);
-    
+
     setInterval(() => {
       if (this.currentPage === 'udp-logs') {
         this.loadUDPLogs();
         this.loadUDPStatus();
       }
     }, 1000);
-    
+
     setInterval(() => {
       this.currentTime = new Date();
       // Update clock without full re-render (prevents flicker on UDP logs)
       this.updateClockOnly();
     }, 1000);
-    
+
     // Don't call render() here, let the time interval handle it
-    
+
     // Setup menu event listeners after a short delay to ensure electronAPI is ready
     setTimeout(() => {
       this.setupMenuListeners();
@@ -123,7 +128,7 @@ class App {
       console.log('Setting up menu listeners...');
       console.log('electronAPI available:', !!window.electronAPI);
       console.log('onMenuEvent available:', typeof window.electronAPI.onMenuEvent);
-      
+
       // Test if IPC is working at all
       try {
         window.electronAPI.onMenuEvent('test-event', () => {
@@ -133,47 +138,47 @@ class App {
       } catch (error) {
         console.error('Error setting up test event listener:', error);
       }
-      
+
       // Menu events
       window.electronAPI.onMenuEvent('menu:show-about', () => {
         console.log('Menu: Show About');
         this.helpModule.showAbout();
       });
-      
+
       window.electronAPI.onMenuEvent('menu:show-shortcuts', () => {
         console.log('Menu: Show Shortcuts');
         this.helpModule.showKeyboardShortcuts();
       });
-      
+
       window.electronAPI.onMenuEvent('menu:show-help', () => {
         console.log('Menu: Show Help');
         this.helpModule.toggleHelpMenu();
       });
-      
+
       window.electronAPI.onMenuEvent('menu:switch-page', (page) => {
         console.log('Menu: Switch Page to', page);
         this.switchPage(page);
       });
-      
+
       window.electronAPI.onMenuEvent('menu:toggle-config', () => {
         console.log('Menu: Toggle Config');
         this.toggleConfig();
       });
-      
+
       window.electronAPI.onMenuEvent('menu:save-logs', () => {
         console.log('Menu: Save Logs');
         if (this.currentPage === 'udp-logs') {
           this.saveUDPLogs(false);
         }
       });
-      
+
       window.electronAPI.onMenuEvent('menu:clear-logs', () => {
         console.log('Menu: Clear Logs');
         if (this.currentPage === 'udp-logs') {
           this.clearUDPLogs();
         }
       });
-      
+
       console.log('All menu listeners registered');
     } else {
       console.log('electronAPI not available');
@@ -198,7 +203,7 @@ class App {
       };
       console.log('  - Using default features with Fleet Monitoring enabled');
     }
-    
+
     // Initialize provisioning page if feature is enabled and class exists
     if (this.features.provisioning && this.features.provisioning.enabled) {
       if (typeof ProvisioningPage !== 'undefined') {
@@ -209,7 +214,7 @@ class App {
         console.warn('ProvisioningPage class not found');
       }
     }
-    
+
     // Initialize fleet monitoring page if feature is enabled and class exists
     if (this.features.fleetMonitoring && this.features.fleetMonitoring.enabled) {
       if (typeof FleetMonitoringPage !== 'undefined') {
@@ -255,7 +260,7 @@ class App {
     try {
       const devices = await window.electronAPI.getDiscoveredDevices();
       if (devices && devices.length > 0) {
-        this.discoveredDevices = devices.sort((a, b) => 
+        this.discoveredDevices = devices.sort((a, b) =>
           a.deviceId.localeCompare(b.deviceId)
         );
       } else {
@@ -280,7 +285,7 @@ class App {
     try {
       const logs = await window.electronAPI.getUDPLogs();
       this.udpLogs = logs;
-      
+
       // If on UDP logs page, update only the logs container without full re-render
       if (this.currentPage === 'udp-logs') {
         this.updateUDPLogsOnly();
@@ -313,23 +318,23 @@ class App {
 
       // Show save dialog
       const dialogResult = await window.electronAPI.showSaveDialog();
-      
+
       if (dialogResult.canceled) {
         console.log('Save canceled by user');
         return;
       }
-      
+
       // Get file extension to determine format
       const filePath = dialogResult.filePath;
       const ext = filePath.split('.').pop().toLowerCase();
       let format = 'txt';
-      
+
       if (ext === 'json') format = 'json';
       else if (ext === 'csv') format = 'csv';
-      
+
       // Save logs with append option
       const saveResult = await window.electronAPI.saveUDPLogs(filePath, format, append);
-      
+
       if (saveResult.success) {
         const action = append ? 'appended' : 'saved';
         alert(`✅ Successfully ${action} ${saveResult.logCount} logs to:\n${saveResult.filePath}`);
@@ -357,23 +362,23 @@ class App {
       } else {
         // Enable auto-save - show dialog to choose file
         const dialogResult = await window.electronAPI.showSaveDialog();
-        
+
         if (dialogResult.canceled) {
           console.log('Auto-save canceled by user');
           return;
         }
-        
+
         // Get file extension to determine format
         const filePath = dialogResult.filePath;
         const ext = filePath.split('.').pop().toLowerCase();
         let format = 'txt';
-        
+
         if (ext === 'json') format = 'json';
         else if (ext === 'csv') format = 'csv';
-        
+
         // Enable auto-save
         const result = await window.electronAPI.enableAutoSave(filePath, format);
-        
+
         if (result.success) {
           alert(`✅ Real-time auto-save enabled!\n\nAll new logs will be automatically saved to:\n${result.filePath}\n\nFormat: ${format.toUpperCase()}`);
           await this.loadUDPStatus();
@@ -390,14 +395,14 @@ class App {
 
   switchPage(page) {
     console.log('Switching to page:', page);
-    
+
     // Stop fleet monitoring auto-refresh when switching away
     if (this.currentPage === 'fleet-monitoring' && page !== 'fleet-monitoring') {
       if (this.fleetMonitoringPage) {
         this.fleetMonitoringPage.stopAutoRefresh();
       }
     }
-    
+
     this.currentPage = page;
     if (page === 'udp-logs') {
       // Initialize lastLogCount to current log count to prevent re-rendering all logs
@@ -414,6 +419,9 @@ class App {
       // Load serial ports when switching to flasher page
       this.loadSerialPorts();
       this.loadFlasherStatus();
+      tcpConsole.showConsole = false;
+    } else if (page === 'stm32-flasher') {
+      // Initialize STM32 flasher page
       tcpConsole.showConsole = false;
     } else if (page === 'provisioning') {
       // Load serial ports for provisioning page (same as flasher)
@@ -620,11 +628,10 @@ class App {
               <button 
                 onclick="app.handleDevicePower('${device.deviceId}')"
                 ${!this.isConnected ? 'disabled' : ''}
-                class="w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
-                  acState.power 
-                    ? 'bg-green-500 hover:bg-green-600 text-white' 
-                    : 'bg-gray-400 hover:bg-gray-500 text-white'
-                } ${!this.isConnected ? 'opacity-50' : ''}"
+                class="w-10 h-10 rounded-full flex items-center justify-center transition-colors ${acState.power
+        ? 'bg-green-500 hover:bg-green-600 text-white'
+        : 'bg-gray-400 hover:bg-gray-500 text-white'
+      } ${!this.isConnected ? 'opacity-50' : ''}"
               >
                 <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                   <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"/>
@@ -652,11 +659,10 @@ class App {
           <button
             onclick="app.handleDevicePower('${device.deviceId}')"
             ${!this.isConnected ? 'disabled' : ''}
-            class="w-full h-16 rounded-2xl font-bold text-lg shadow-md transition-all mb-4 ${
-              acState.power
-                ? 'bg-green-500 hover:bg-green-600 text-white'
-                : 'bg-gray-300 hover:bg-gray-400 text-gray-600'
-            } ${!this.isConnected ? 'opacity-50 cursor-not-allowed' : ''}"
+            class="w-full h-16 rounded-2xl font-bold text-lg shadow-md transition-all mb-4 ${acState.power
+        ? 'bg-green-500 hover:bg-green-600 text-white'
+        : 'bg-gray-300 hover:bg-gray-400 text-gray-600'
+      } ${!this.isConnected ? 'opacity-50 cursor-not-allowed' : ''}"
           >
             <div class="flex items-center justify-center gap-2">
               <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
@@ -734,7 +740,7 @@ class App {
   async handleDevicePower(deviceId) {
     const device = this.discoveredDevices.find(d => d.deviceId === deviceId);
     if (!device || !this.isConnected) return;
-    
+
     const newPowerState = !device.state.power;
     try {
       await window.electronAPI.setDevicePower(deviceId, newPowerState);
@@ -747,11 +753,11 @@ class App {
   async handleDeviceMode(deviceId) {
     const device = this.discoveredDevices.find(d => d.deviceId === deviceId);
     if (!device || !this.isConnected || !device.state.power) return;
-    
+
     const modes = ['Auto', 'Cool', 'Dry', 'Fan', 'Heat'];
     const currentIndex = modes.indexOf(device.state.mode);
     const nextMode = modes[(currentIndex + 1) % modes.length];
-    
+
     try {
       await window.electronAPI.setDeviceMode(deviceId, nextMode);
       setTimeout(() => this.loadDiscoveredDevices(), 300);
@@ -763,11 +769,11 @@ class App {
   async handleDeviceFan(deviceId) {
     const device = this.discoveredDevices.find(d => d.deviceId === deviceId);
     if (!device || !this.isConnected || !device.state.power) return;
-    
+
     const fans = ['Auto', 'Low', 'Medium', 'High'];
     const currentIndex = fans.indexOf(device.state.fanSpeed);
     const nextFan = fans[(currentIndex + 1) % fans.length];
-    
+
     try {
       await window.electronAPI.setDeviceFanSpeed(deviceId, nextFan);
       setTimeout(() => this.loadDiscoveredDevices(), 300);
@@ -779,10 +785,10 @@ class App {
   async handleDeviceTemp(deviceId, delta) {
     const device = this.discoveredDevices.find(d => d.deviceId === deviceId);
     if (!device || !this.isConnected || !device.state.power) return;
-    
+
     const newTemp = device.state.temperature + delta;
     if (newTemp < 16 || newTemp > 30) return;
-    
+
     try {
       await window.electronAPI.setDeviceTemperature(deviceId, newTemp);
       setTimeout(() => this.loadDiscoveredDevices(), 300);
@@ -798,14 +804,14 @@ class App {
       console.log('Device not found or not connected:', device, this.isConnected);
       return;
     }
-    
+
     const newTemp = device.state.currentTemp + delta;
     console.log('Current temp:', device.state.currentTemp, 'New temp:', newTemp);
     if (newTemp < -50 || newTemp > 100) {
       console.log('Temperature out of range:', newTemp);
       return;
     }
-    
+
     try {
       console.log('Sending room temperature change:', deviceId, newTemp);
       await window.electronAPI.setDeviceRoomTemperature(deviceId, newTemp);
@@ -818,7 +824,7 @@ class App {
   async handleDeviceSwing(deviceId) {
     const device = this.discoveredDevices.find(d => d.deviceId === deviceId);
     if (!device || !this.isConnected || !device.state.power) return;
-    
+
     try {
       await window.electronAPI.setDeviceSwing(deviceId, !device.state.swing);
       setTimeout(() => this.loadDiscoveredDevices(), 300);
@@ -840,43 +846,43 @@ class App {
     // If console or provisioning inputs have focus, don't re-render (preserve input focus)
     const activeElement = document.activeElement;
     if (activeElement &&
-        (activeElement.id === 'tcp-host-input' ||
-         activeElement.id === 'tcp-port-input' ||
-         activeElement.id === 'tcp-message-input' ||
-         activeElement.id === 'serial-message-input' ||
-         activeElement.id === 'udp-port-input' ||
-         activeElement.id === 'prov-offset' ||
-         activeElement.id === 'prov-size' ||
-         activeElement.id === 'prov-caurl' ||
-         activeElement.id === 'prov-uuid' ||
-         activeElement.id === 'prov-psk' ||
-         activeElement.id === 'prov-wifi-ssid' ||
-         activeElement.id === 'prov-wifi-password' ||
-         activeElement.id === 'prov-erase-address' ||
-         activeElement.id === 'prov-erase-size' ||
-         activeElement.id === 'fleet-broker' ||
-         activeElement.id === 'fleet-port' ||
-         activeElement.id === 'fleet-topic')) {
+      (activeElement.id === 'tcp-host-input' ||
+        activeElement.id === 'tcp-port-input' ||
+        activeElement.id === 'tcp-message-input' ||
+        activeElement.id === 'serial-message-input' ||
+        activeElement.id === 'udp-port-input' ||
+        activeElement.id === 'prov-offset' ||
+        activeElement.id === 'prov-size' ||
+        activeElement.id === 'prov-caurl' ||
+        activeElement.id === 'prov-uuid' ||
+        activeElement.id === 'prov-psk' ||
+        activeElement.id === 'prov-wifi-ssid' ||
+        activeElement.id === 'prov-wifi-password' ||
+        activeElement.id === 'prov-erase-address' ||
+        activeElement.id === 'prov-erase-size' ||
+        activeElement.id === 'fleet-broker' ||
+        activeElement.id === 'fleet-port' ||
+        activeElement.id === 'fleet-topic')) {
       return;
     }
 
     // If flasher page dropdown or any select/input has focus, don't re-render
     if (activeElement &&
-        (activeElement.id === 'serial-port-select' ||
-         activeElement.id === 'baud-rate' ||
-         activeElement.id === 'erase-flash' ||
-         activeElement.id === 'prov-port' ||
-         activeElement.id === 'prov-chip' ||
-         activeElement.id === 'prov-baudrate' ||
-         activeElement.id === 'prov-erase-type' ||
-         activeElement.tagName === 'SELECT')) {
+      (activeElement.id === 'serial-port-select' ||
+        activeElement.id === 'baud-rate' ||
+        activeElement.id === 'erase-flash' ||
+        activeElement.id === 'prov-port' ||
+        activeElement.id === 'prov-chip' ||
+        activeElement.id === 'prov-baudrate' ||
+        activeElement.id === 'prov-erase-type' ||
+        activeElement.tagName === 'SELECT')) {
       return;
     }
 
     // Save scroll positions before render
     let fleetScrollPosition = 0;
     let udpScrollPosition = 0;
-    
+
     if (this.currentPage === 'fleet-monitoring') {
       const fleetContainer = document.getElementById('fleet-messages-container');
       if (fleetContainer) {
@@ -888,7 +894,7 @@ class App {
         udpScrollPosition = udpContainer.scrollTop;
       }
     }
-    
+
     appDiv.innerHTML = `
       <div class="min-h-screen bg-gradient-to-br from-blue-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 p-4 transition-colors duration-300">
         <!-- Header Bar -->
@@ -915,68 +921,68 @@ class App {
             <!-- Page Navigation -->
             <div class="mt-4 flex gap-2 border-t dark:border-gray-700 pt-4">
               <button onclick="app.switchPage('devices')" 
-                class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  this.currentPage === 'devices' 
-                    ? 'bg-blue-500 text-white' 
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
-                }">
+                class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${this.currentPage === 'devices'
+        ? 'bg-blue-500 text-white'
+        : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
+      }">
                 🏠 Devices
               </button>
               ${this.features.udpLogger?.enabled !== false ? `
               <button onclick="app.switchPage('udp-logs')" 
-                class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  this.currentPage === 'udp-logs' 
-                    ? 'bg-blue-500 text-white' 
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
-                }">
+                class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${this.currentPage === 'udp-logs'
+          ? 'bg-blue-500 text-white'
+          : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
+        }">
                 📡 UDP Logs
               </button>
               ` : ''}
               ${this.features.tcpConsole?.enabled !== false ? `
               <button onclick="app.switchPage('tcp-console')" 
-                class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  this.currentPage === 'tcp-console' 
-                    ? 'bg-blue-500 text-white' 
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
-                }">
+                class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${this.currentPage === 'tcp-console'
+          ? 'bg-blue-500 text-white'
+          : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
+        }">
                 💻 TCP Console
               </button>
               ` : ''}
               <button onclick="app.switchPage('serial-console')" 
-                class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  this.currentPage === 'serial-console' 
-                    ? 'bg-blue-500 text-white' 
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
-                }">
+                class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${this.currentPage === 'serial-console'
+        ? 'bg-blue-500 text-white'
+        : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
+      }">
                 🔌 Serial Console
               </button>
               ${this.features.esp32Flasher?.enabled !== false ? `
               <button onclick="app.switchPage('esp32-flasher')" 
-                class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  this.currentPage === 'esp32-flasher' 
-                    ? 'bg-blue-500 text-white' 
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
-                }">
+                class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${this.currentPage === 'esp32-flasher'
+          ? 'bg-blue-500 text-white'
+          : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
+        }">
                 ⚡ ESP32 Flasher
               </button>
               ` : ''}
+              <button onclick="app.switchPage('stm32-flasher')" 
+                class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${this.currentPage === 'stm32-flasher'
+        ? 'bg-blue-500 text-white'
+        : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
+      }">
+                🔧 STM32 Flasher
+              </button>
               ${this.features.provisioning?.enabled !== false ? `
               <button onclick="app.switchPage('provisioning')" 
-                class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  this.currentPage === 'provisioning' 
-                    ? 'bg-blue-500 text-white' 
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
-                }">
+                class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${this.currentPage === 'provisioning'
+          ? 'bg-blue-500 text-white'
+          : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
+        }">
                 🔐 Provisioning
               </button>
               ` : ''}
               ${this.features.fleetMonitoring?.enabled === true ? `
               <button onclick="app.switchPage('fleet-monitoring')" 
-                class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  this.currentPage === 'fleet-monitoring' 
-                    ? 'bg-blue-500 text-white' 
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
-                }">
+                class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${this.currentPage === 'fleet-monitoring'
+          ? 'bg-blue-500 text-white'
+          : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
+        }">
                 🌐 Fleet
               </button>
               ` : ''}
@@ -1013,16 +1019,16 @@ class App {
 
         <!-- Content Area -->
         <div class="max-w-7xl mx-auto">
-          ${
-            this.currentPage === 'devices' ? this.renderDevicesPage() : 
-            this.currentPage === 'udp-logs' ? this.renderUDPLogsPage() :
-            this.currentPage === 'tcp-console' ? tcpConsole.render() :
+          ${this.currentPage === 'devices' ? this.renderDevicesPage() :
+        this.currentPage === 'udp-logs' ? this.renderUDPLogsPage() :
+          this.currentPage === 'tcp-console' ? tcpConsole.render() :
             this.currentPage === 'serial-console' ? this.serialConsole.render() :
-            this.currentPage === 'esp32-flasher' ? this.renderFlasherPage() :
-            this.currentPage === 'provisioning' ? (this.provisioningPage ? this.provisioningPage.render() : '<div class="p-6 text-center">Provisioning feature not enabled</div>') :
-            this.currentPage === 'fleet-monitoring' ? (this.fleetMonitoringPage ? this.fleetMonitoringPage.render() : '<div class="p-6 text-center">Fleet Monitoring feature not enabled</div>') :
-            this.renderDevicesPage()
-          }
+              this.currentPage === 'esp32-flasher' ? this.renderFlasherPage() :
+                this.currentPage === 'stm32-flasher' ? '<div id="stm32-flasher-container" class="p-6"></div>' :
+                  this.currentPage === 'provisioning' ? (this.provisioningPage ? this.provisioningPage.render() : '<div class="p-6 text-center">Provisioning feature not enabled</div>') :
+                    this.currentPage === 'fleet-monitoring' ? (this.fleetMonitoringPage ? this.fleetMonitoringPage.render() : '<div class="p-6 text-center">Fleet Monitoring feature not enabled</div>') :
+                      this.renderDevicesPage()
+      }
         </div>
       </div>
       
@@ -1030,7 +1036,7 @@ class App {
       ${this.helpModule.renderAboutDialog()}
       ${this.helpModule.renderKeyboardShortcuts()}
     `;
-    
+
     // VSCode-style scroll: Only auto-scroll UDP logs if user is at the bottom
     if (this.currentPage === 'udp-logs') {
       setTimeout(() => {
@@ -1050,7 +1056,7 @@ class App {
         }
       }, 0);
     }
-    
+
     // Restore fleet monitoring scroll position after render
     if (this.currentPage === 'fleet-monitoring' && fleetScrollPosition > 0) {
       setTimeout(() => {
@@ -1060,7 +1066,14 @@ class App {
         }
       }, 0);
     }
-    
+
+    // Render STM32 flasher module if on that page
+    if (this.currentPage === 'stm32-flasher' && window.stm32Flasher) {
+      setTimeout(() => {
+        window.stm32Flasher.render();
+      }, 0);
+    }
+
     // Don't auto-scroll TCP Console on render - let user control it
     // if (this.currentPage === 'tcp-console') {
     //   setTimeout(() => {
@@ -1100,36 +1113,38 @@ class App {
     // Create DOM elements directly without innerHTML to prevent flickering
     const logDiv = document.createElement('div');
     logDiv.style.cssText = 'margin-bottom: 2px; padding: 2px 0; color: #1f2937; font-family: "Consolas", "Courier New", monospace; font-size: 13px; line-height: 1.5;';
-    
+
     // Create timestamp span
     const timeSpan = document.createElement('span');
     timeSpan.style.cssText = 'color: #6b7280; margin-right: 8px;';
     timeSpan.textContent = new Date(log.timestamp).toLocaleTimeString();
-    
+
     // Create source span
     const sourceSpan = document.createElement('span');
     sourceSpan.style.cssText = 'color: #2563eb; margin-right: 8px;';
     sourceSpan.textContent = log.from;
-    
+
     // Create message span
     const messageSpan = document.createElement('span');
     messageSpan.style.cssText = 'color: #059669;';
     messageSpan.textContent = this.stripAnsiCodes(log.message);
-    
+
     // Assemble
     logDiv.appendChild(timeSpan);
     logDiv.appendChild(sourceSpan);
     logDiv.appendChild(messageSpan);
-    
+
     return logDiv;
   }
 
   updateClockOnly() {
-    // Skip render on UDP logs and Fleet Monitoring pages to prevent flicker
-    if (this.currentPage === 'udp-logs' || this.currentPage === 'fleet-monitoring') {
+    // Skip render on UDP logs, Fleet Monitoring, and STM32 Flasher pages to prevent flicker
+    if (this.currentPage === 'udp-logs' ||
+      this.currentPage === 'fleet-monitoring' ||
+      this.currentPage === 'stm32-flasher') {
       return; // Don't re-render, these pages update incrementally
     }
-    
+
     // For other pages (like devices page with clock displays), do full render
     this.render();
   }
@@ -1138,14 +1153,14 @@ class App {
     // Terminal-style update: only append new logs without touching existing DOM
     const logContainer = document.getElementById('udp-log-container');
     if (!logContainer) return;
-    
+
     // Check if there are new logs
     const newLogCount = this.udpLogs.length;
     const hasNewLogs = newLogCount > this.lastLogCount;
-    
+
     // Check if user is scrolled to bottom before adding new logs
     const isScrolledToBottom = logContainer.scrollHeight - logContainer.scrollTop <= logContainer.clientHeight + 50;
-    
+
     if (this.udpLogs.length === 0) {
       // Only update if not already showing placeholder
       if (!logContainer.querySelector('.text-center')) {
@@ -1161,28 +1176,28 @@ class App {
       // Only add new logs incrementally (logs are newest first in array)
       const newLogsCount = newLogCount - this.lastLogCount;
       const newLogs = this.udpLogs.slice(0, newLogsCount);
-      
+
       // If container has placeholder, clear it
       if (logContainer.querySelector('.text-center')) {
         logContainer.textContent = ''; // Clear faster than innerHTML
       }
-      
+
       // Append new logs to the bottom using DocumentFragment
       const fragment = document.createDocumentFragment();
       newLogs.reverse().forEach(log => {
         fragment.appendChild(this.createLogElement(log));
       });
-      
+
       // Append at the end (newest logs at bottom)
       logContainer.appendChild(fragment);
-      
+
       // Remove old logs from the top to prevent memory issues (keep max 1000)
       while (logContainer.children.length > 1000) {
         logContainer.removeChild(logContainer.firstChild);
       }
-      
+
       this.lastLogCount = newLogCount;
-      
+
       // Auto-scroll to bottom if user was already at the bottom
       if (isScrolledToBottom) {
         requestAnimationFrame(() => {
@@ -1190,7 +1205,7 @@ class App {
         });
       }
     }
-    
+
     // Update log count in header
     const logCountElement = document.getElementById('udp-log-count');
     if (logCountElement) {
@@ -1206,7 +1221,7 @@ class App {
   toggleConfig() {
     this.showConfig = !this.showConfig;
     this.render();
-    
+
     // Set input values after render
     if (this.showConfig) {
       setTimeout(() => {
@@ -1226,7 +1241,7 @@ class App {
     } catch (error) {
       console.error('Failed to save config:', error);
     }
-    
+
     this.showConfig = false;
     this.handleConnectMQTT();
   }
@@ -1234,7 +1249,7 @@ class App {
   // ============================================
   // ESP32 Flasher Methods
   // ============================================
-  
+
   async handlePortChange(portPath) {
     this.selectedPort = portPath;
     console.log('=== Port selected:', portPath);
@@ -1389,9 +1404,9 @@ class App {
       console.log('Detecting chip type on port:', this.selectedPort);
       this.chipType = 'detecting'; // Show detecting state
       this.render();
-      
+
       const detectResult = await window.electronAPI.detectChip(this.selectedPort);
-      
+
       if (detectResult.success && detectResult.chipType) {
         this.chipType = detectResult.chipType;
         console.log('✅ Auto-detected chip type:', this.chipType);
@@ -1399,28 +1414,28 @@ class App {
       } else {
         console.warn('Failed to detect chip:', detectResult.error || 'Unknown error');
         this.chipType = null;
-        
+
         // Check for common error conditions
         const errorMsg = detectResult.error || '';
         if (errorMsg.includes('busy') || errorMsg.includes('in use') || errorMsg.includes('permission denied') || errorMsg.includes('EBUSY') || errorMsg.includes('EACCES')) {
           alert(`❌ Port Busy or In Use\n\n` +
-                `The port ${this.selectedPort} is currently being used by another application.\n\n` +
-                `Please:\n` +
-                `1. Close other applications using this port (Serial Monitor, PlatformIO, Arduino IDE, etc.)\n` +
-                `2. Unplug and replug the ESP32\n` +
-                `3. Try again`);
+            `The port ${this.selectedPort} is currently being used by another application.\n\n` +
+            `Please:\n` +
+            `1. Close other applications using this port (Serial Monitor, PlatformIO, Arduino IDE, etc.)\n` +
+            `2. Unplug and replug the ESP32\n` +
+            `3. Try again`);
         } else if (errorMsg.includes('not found') || errorMsg.includes('cannot open')) {
           alert(`❌ Port Not Found\n\n` +
-                `Cannot open ${this.selectedPort}.\n\n` +
-                `The device may have been disconnected. Please:\n` +
-                `1. Check the USB connection\n` +
-                `2. Refresh the port list\n` +
-                `3. Select the port again`);
+            `Cannot open ${this.selectedPort}.\n\n` +
+            `The device may have been disconnected. Please:\n` +
+            `1. Check the USB connection\n` +
+            `2. Refresh the port list\n` +
+            `3. Select the port again`);
         } else {
           alert(`❌ Chip Detection Failed\n\n${errorMsg || 'Unknown error'}\n\nPlease ensure:\n` +
-                `- ESP32 is in DOWNLOAD MODE (hold BOOT, press RESET, release BOOT)\n` +
-                `- USB cable supports data transfer\n` +
-                `- Device drivers are installed`);
+            `- ESP32 is in DOWNLOAD MODE (hold BOOT, press RESET, release BOOT)\n` +
+            `- USB cable supports data transfer\n` +
+            `- Device drivers are installed`);
         }
         this.render();
       }
@@ -1680,11 +1695,11 @@ class App {
                 <div class="font-semibold text-gray-700 text-sm mb-3 flex items-center justify-between">
                   <div>
                     <strong>Selected Folder:</strong> ${this.folderPath.split('/').pop()}
-                    ${this.chipType === 'detecting' ? 
-                      `<span class="ml-2 px-2 py-1 bg-yellow-100 text-yellow-700 rounded text-xs font-bold">🔍 Detecting...</span>` : 
-                      this.chipType ? 
-                      `<span class="ml-2 px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-bold">✓ ${this.chipType.toUpperCase()}</span>` : 
-                      `<span class="ml-2 text-gray-400 text-xs">(Chip not detected)</span>`}
+                    ${this.chipType === 'detecting' ?
+          `<span class="ml-2 px-2 py-1 bg-yellow-100 text-yellow-700 rounded text-xs font-bold">🔍 Detecting...</span>` :
+          this.chipType ?
+            `<span class="ml-2 px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-bold">✓ ${this.chipType.toUpperCase()}</span>` :
+            `<span class="ml-2 text-gray-400 text-xs">(Chip not detected)</span>`}
                   </div>
                   ${this.selectedPort ? `
                     <button
