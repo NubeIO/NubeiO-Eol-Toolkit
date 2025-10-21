@@ -100,6 +100,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   disconnectSTM32: () => ipcRenderer.invoke('stm32:disconnect'),
   getSTM32Status: () => ipcRenderer.invoke('stm32:getStatus'),
   setSTM32Version: (version) => ipcRenderer.invoke('stm32:setVersion', version),
+
+  // Device type management
+  setSTM32DeviceType: (deviceType) => ipcRenderer.invoke('stm32:setDeviceType', deviceType),
+  getSTM32DeviceTypes: () => ipcRenderer.invoke('stm32:getDeviceTypes'),
+  getCurrentSTM32DeviceType: () => ipcRenderer.invoke('stm32:getCurrentDeviceType'),
+
   selectFile: (options) => ipcRenderer.invoke('dialog:openFile', options)
 });
 

@@ -897,3 +897,24 @@ ipcMain.handle('dialog:openFile', async (event, options) => {
 
   return await dialog.showOpenDialog(mainWindow, options);
 });
+
+// STM32 Device Type Management
+ipcMain.handle('stm32:setDeviceType', async (event, deviceType) => {
+  try {
+    return OpenOCDSTM32Service.setDeviceType(deviceType);
+  } catch (error) {
+    console.error('Failed to set device type:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('stm32:getDeviceTypes', () => {
+  return OpenOCDSTM32Service.getDeviceTypes();
+});
+
+ipcMain.handle('stm32:getCurrentDeviceType', () => {
+  return {
+    success: true,
+    deviceType: OpenOCDSTM32Service.currentDeviceType
+  };
+});

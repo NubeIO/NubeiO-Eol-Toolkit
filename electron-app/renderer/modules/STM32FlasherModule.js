@@ -4,194 +4,352 @@
  */
 
 class STM32FlasherModule {
-    constructor() {
-        this.firmwarePath = '';
-        this.isFlashing = false;
-        this.isDetecting = false;
-        this.flashProgress = '';
-        this.flashResult = null;
-        this.version = 192; // Droplet version for LoRa ID calculation (default)
+  constructor() {
+    this.firmwarePath = '';
+    this.isFlashing = false;
+    this.isDetecting = false;
+    this.flashProgress = '';
+    this.flashResult = null;
+    this.version = 192; // Droplet version for LoRa ID calculation (default)
+    this.stlinkDetected = false;
+    this.mcuInfo = null;
+
+    // Device type management
+    this.deviceTypes = {};
+    this.currentDeviceType = 'DROPLET';
+
+    // Mismatch detection
+    this.mcuMismatch = false;
+    this.detectedType = null;
+    this.selectedType = null;
+  }
+
+  async init() {
+    // Load device types
+    try {
+      this.deviceTypes = await electronAPI.getSTM32DeviceTypes();
+      const currentType = await electronAPI.getCurrentSTM32DeviceType();
+      this.currentDeviceType = currentType.deviceType;
+    } catch (error) {
+      // console.error('Failed to load device types:', error);
+      // Fallback defaults
+      this.deviceTypes = {
+        DROPLET: { name: 'Droplet', mcu: 'STM32WLE5', supportsLoRaID: true },
+        ZONE_CONTROLLER: { name: 'Zone Controller', mcu: 'STM32F030C8T6', supportsLoRaID: false }
+      };
+    }
+
+    // Listen for flash progress events
+    electronAPI.onMenuEvent('stm32:flash-progress', (data) => {
+      this.flashProgress = data.message;
+      this.updateProgressDisplay();
+    });
+
+    electronAPI.onMenuEvent('stm32:flash-complete', (data) => {
+      this.isFlashing = false;
+      this.flashResult = data;
+      this.render();
+    });
+
+    electronAPI.onMenuEvent('stm32:flash-error', (data) => {
+      this.isFlashing = false;
+      this.flashProgress = `Error: ${data.error}`;
+      this.render();
+    });
+  }
+
+  async detectSTLink() {
+    if (this.isDetecting) {
+      return;
+    }
+
+    try {
+      this.isDetecting = true;
+      this.flashProgress = 'Detecting ST-Link and MCU...';
+
+      // Reset ALL detection state before new detection
+      this.stlinkDetected = false;
+      this.mcuInfo = null;
+      this.mcuMismatch = false;
+      this.detectedType = null;
+      this.selectedType = null;
+
+      this.render();
+
+      // console.log('=== FRONTEND: Starting fresh detection ===');
+      // console.log('Current device type:', this.currentDeviceType);
+
+      const result = await electronAPI.detectSTM32();
+
+      // console.log('=== FRONTEND: Detection result ===');
+      // console.log('Raw result:', JSON.stringify(result, null, 2));
+      // console.log('Success:', result.success);
+      // console.log('Detected flag:', result.detected);
+      // console.log('Mismatch:', result.mismatch);
+      // console.log('Detected type:', result.detectedType);
+      // console.log('Selected type:', result.selectedType);
+
+      this.isDetecting = false;
+
+      if (result.success && result.detected) {
+        // Only update state if device was actually detected
+        this.stlinkDetected = true;
+        this.mcuInfo = result.info;
+        this.mcuMismatch = result.mismatch === true; // Strict check
+        this.detectedType = result.detectedType;
+        this.selectedType = result.selectedType;
+
+      // console.log('=== FRONTEND: Processing detection ===');
+      // console.log('mcuMismatch:', this.mcuMismatch);
+      // console.log('detectedType:', this.detectedType);
+      // console.log('selectedType:', this.selectedType);
+
+        if (this.mcuMismatch === true && this.detectedType && this.selectedType) {
+          // Device mismatch detected - auto disconnect and force reselection
+          const detectedDevice = this.deviceTypes[this.detectedType];
+          const selectedDevice = this.deviceTypes[this.selectedType];
+
+          this.flashProgress = `⚠️ DEVICE MISMATCH - Auto disconnecting...\n\n` +
+            `Detected: ${detectedDevice.name} (${detectedDevice.mcu})\n` +
+            `Selected: ${selectedDevice.name} (${selectedDevice.mcu})`;
+
+          this.render();
+
+          // Auto disconnect
+          await electronAPI.disconnectSTM32();
+
+          // Reset state
+          this.stlinkDetected = false;
+          this.mcuInfo = null;
+
+          // Show alert and force reselection
+          setTimeout(() => {
+            alert(
+              `⚠️ WRONG DEVICE TYPE!\n\n` +
+              `Detected device: ${detectedDevice.name} (${detectedDevice.mcu})\n` +
+              `Selected type: ${selectedDevice.name} (${selectedDevice.mcu})\n\n` +
+              `The device has been disconnected.\n` +
+              `Please select "${detectedDevice.name}" from the dropdown and detect again.`
+            );
+
+            this.flashProgress = `Please select "${detectedDevice.name}" and detect again.`;
+            this.render();
+          }, 500);
+        } else {
+          // Device detected and matches selected type
+          this.flashProgress = 'ST-Link detected successfully! Device type matches.';
+        }
+      } else if (result.success && !result.detected) {
+        // ST-Link found but chip not responding
+        this.flashProgress = 'ST-Link found but unable to connect to chip. Please check:\n' +
+          '• Chip is properly powered\n' +
+          '• SWD connections are correct\n' +
+          '• Try unplugging and replugging ST-Link';
+      } else {
+        // No ST-Link found
+        this.flashProgress = 'ST-Link not detected. Please check connection.';
+      }
+
+      this.render();
+    } catch (error) {
+      this.isDetecting = false;
+      this.flashProgress = `Detection failed: ${error.message}`;
+      this.render();
+      // console.error('Detection error:', error);
+    }
+  }
+
+  async handleDeviceTypeChange(deviceType) {
+    try {
+      const result = await electronAPI.setSTM32DeviceType(deviceType);
+      if (result.success) {
+        this.currentDeviceType = deviceType;
+
+        // Reset all detection state when changing device type
         this.stlinkDetected = false;
         this.mcuInfo = null;
+        this.flashResult = null;
+        this.mcuMismatch = false;
+        this.detectedType = null;
+        this.selectedType = null;
+
+        this.flashProgress = `Switched to ${result.deviceType.name} (${result.deviceType.mcu}). Please detect again.`;
+        this.render();
+      }
+    } catch (error) {
+      this.flashProgress = `Failed to change device type: ${error.message}`;
+      this.render();
+      // console.error('Device type change error:', error);
+    }
+  }
+
+  async disconnectSTLink() {
+    try {
+      this.flashProgress = 'Disconnecting ST-Link...';
+      this.render();
+
+      const result = await electronAPI.disconnectSTM32();
+
+      if (result.success) {
+        // Reset all detection state
+        this.stlinkDetected = false;
+        this.mcuInfo = null;
+        this.flashResult = null;
+        this.mcuMismatch = false;
+        this.detectedType = null;
+        this.selectedType = null;
+
+        this.flashProgress = 'ST-Link disconnected. Please select device type and detect again.';
+      } else {
+        this.flashProgress = 'Failed to disconnect ST-Link';
+      }
+
+      this.render();
+    } catch (error) {
+      this.flashProgress = `Disconnect failed: ${error.message}`;
+      this.render();
+      // console.error('Disconnect error:', error);
+    }
+  }
+
+  async selectFirmware() {
+    try {
+      const result = await electronAPI.selectFile({
+        title: 'Select STM32 Firmware',
+        filters: [
+          { name: 'Binary Files', extensions: ['bin'] },
+          { name: 'Hex Files', extensions: ['hex'] },
+          { name: 'All Files', extensions: ['*'] }
+        ]
+      });
+
+      if (result && !result.canceled && result.filePaths.length > 0) {
+        this.firmwarePath = result.filePaths[0];
+        this.render();
+      }
+    } catch (error) {
+      // console.error('Failed to select firmware:', error);
+      alert('Failed to select firmware file');
+    }
+  }
+
+  async flashFirmware() {
+    if (!this.firmwarePath) {
+      alert('Please select a firmware file first');
+      return;
     }
 
-    async init() {
-        // Listen for flash progress events
-        electronAPI.onMenuEvent('stm32:flash-progress', (data) => {
-            this.flashProgress = data.message;
-            this.updateProgressDisplay();
-        });
-
-        electronAPI.onMenuEvent('stm32:flash-complete', (data) => {
-            this.isFlashing = false;
-            this.flashResult = data;
-            this.render();
-        });
-
-        electronAPI.onMenuEvent('stm32:flash-error', (data) => {
-            this.isFlashing = false;
-            this.flashProgress = `Error: ${data.error}`;
-            this.render();
-        });
+    if (this.isFlashing) {
+      return;
     }
 
-    async detectSTLink() {
-        if (this.isDetecting) {
-            return;
-        }
+    try {
+      this.isFlashing = true;
+      this.flashProgress = 'Starting flash operation...';
+      this.flashResult = null;
+      this.render();
 
-        try {
-            this.isDetecting = true;
-            this.flashProgress = 'Detecting ST-Link and MCU...';
-            this.stlinkDetected = false;
-            this.mcuInfo = null;
-            this.render();
+      // console.log('[STM32Flasher] Starting flash operation...');
+      const result = await electronAPI.flashSTM32Droplet(this.firmwarePath, this.version);
+      // console.log('[STM32Flasher] Flash result:', result);
 
-            const result = await electronAPI.detectSTM32();
+      this.isFlashing = false;
+      this.flashResult = result;
 
-            this.isDetecting = false;
+      // Check device type to show appropriate message
+      const deviceConfig = this.deviceTypes[this.currentDeviceType] || {};
+      if (deviceConfig.supportsLoRaID && result.loraID) {
+        this.flashProgress = 'Flash completed successfully! LoRa ID generated.';
+      } else {
+        this.flashProgress = 'Flash completed successfully!';
+      }
 
-            if (result.success) {
-                this.stlinkDetected = true;
-                this.mcuInfo = result.info;
-                this.flashProgress = 'ST-Link detected successfully!';
-            } else {
-                this.flashProgress = 'ST-Link not detected. Please check connection.';
-            }
-
-            this.render();
-        } catch (error) {
-            this.isDetecting = false;
-            this.flashProgress = `Detection failed: ${error.message}`;
-            this.render();
-            console.error('Detection error:', error);
-        }
+      this.render();
+      // console.log('[STM32Flasher] Render complete, UI should be responsive now');
+    } catch (error) {
+      this.isFlashing = false;
+      this.flashProgress = `Flash failed: ${error.message}`;
+      this.render();
+      // console.error('Flash error:', error);
     }
+  }
 
-    async disconnectSTLink() {
-        try {
-            this.flashProgress = 'Disconnecting ST-Link...';
-            this.render();
+  async readDeviceInfo() {
+    try {
+      this.flashProgress = 'Reading device info...';
+      this.render();
 
-            const result = await electronAPI.disconnectSTM32();
+      const result = await electronAPI.readSTM32UID();
 
-            if (result.success) {
-                this.stlinkDetected = false;
-                this.mcuInfo = null;
-                this.flashResult = null;
-
-                this.flashProgress = 'ST-Link disconnected successfully!';
-            } else {
-                this.flashProgress = 'Failed to disconnect ST-Link';
-            }
-
-            this.render();
-        } catch (error) {
-            this.flashProgress = `Disconnect failed: ${error.message}`;
-            this.render();
-            console.error('Disconnect error:', error);
-        }
+      this.flashResult = result;
+      this.flashProgress = 'Device info read successfully!';
+      this.render();
+    } catch (error) {
+      this.flashProgress = `Failed to read device info: ${error.message}`;
+      this.render();
+      // console.error('Read UID error:', error);
     }
+  }
 
-    async selectFirmware() {
-        try {
-            const result = await electronAPI.selectFile({
-                title: 'Select STM32 Firmware',
-                filters: [
-                    { name: 'Binary Files', extensions: ['bin'] },
-                    { name: 'Hex Files', extensions: ['hex'] },
-                    { name: 'All Files', extensions: ['*'] }
-                ]
-            });
-
-            if (result && !result.canceled && result.filePaths.length > 0) {
-                this.firmwarePath = result.filePaths[0];
-                this.render();
-            }
-        } catch (error) {
-            console.error('Failed to select firmware:', error);
-            alert('Failed to select firmware file');
-        }
+  updateProgressDisplay() {
+    const progressEl = document.getElementById('stm32-flash-progress');
+    if (progressEl) {
+      progressEl.textContent = this.flashProgress;
     }
+  }
 
-    async flashFirmware() {
-        if (!this.firmwarePath) {
-            alert('Please select a firmware file first');
-            return;
-        }
+  handleVersionChange(value) {
+    this.version = parseInt(value) || 1;
+    // Update version via API
+    electronAPI.setSTM32Version(this.version);
+    // Only update hex display without full re-render
+    this.updateVersionHexDisplay();
+  }
 
-        if (this.isFlashing) {
-            return;
-        }
-
-        try {
-            this.isFlashing = true;
-            this.flashProgress = 'Starting flash operation...';
-            this.flashResult = null;
-            this.render();
-
-            const result = await electronAPI.flashSTM32Droplet(this.firmwarePath, this.version);
-
-            this.isFlashing = false;
-            this.flashResult = result;
-            this.flashProgress = 'Flash completed successfully!';
-            this.render();
-        } catch (error) {
-            this.isFlashing = false;
-            this.flashProgress = `Flash failed: ${error.message}`;
-            this.render();
-            console.error('Flash error:', error);
-        }
+  updateVersionHexDisplay() {
+    const hexDisplay = document.getElementById('version-hex-display');
+    if (hexDisplay) {
+      hexDisplay.textContent = `0x${this.version.toString(16).padStart(2, '0').toUpperCase()}`;
     }
+  }
 
-    async readDeviceInfo() {
-        try {
-            this.flashProgress = 'Reading device info...';
-            this.render();
+  render() {
+    const container = document.getElementById('stm32-flasher-container');
+    if (!container) return;
 
-            const result = await electronAPI.readSTM32UID();
+    const deviceConfig = this.deviceTypes[this.currentDeviceType] || { name: 'Unknown', mcu: 'Unknown', supportsLoRaID: false };
 
-            this.flashResult = result;
-            this.flashProgress = 'Device info read successfully!';
-            this.render();
-        } catch (error) {
-            this.flashProgress = `Failed to read device info: ${error.message}`;
-            this.render();
-            console.error('Read UID error:', error);
-        }
-    }
-
-    updateProgressDisplay() {
-        const progressEl = document.getElementById('stm32-flash-progress');
-        if (progressEl) {
-            progressEl.textContent = this.flashProgress;
-        }
-    }
-
-    handleVersionChange(value) {
-        this.version = parseInt(value) || 1;
-        // Update version via API
-        electronAPI.setSTM32Version(this.version);
-        // Only update hex display without full re-render
-        this.updateVersionHexDisplay();
-    }
-
-    updateVersionHexDisplay() {
-        const hexDisplay = document.getElementById('version-hex-display');
-        if (hexDisplay) {
-            hexDisplay.textContent = `0x${this.version.toString(16).padStart(2, '0').toUpperCase()}`;
-        }
-    }
-
-    render() {
-        const container = document.getElementById('stm32-flasher-container');
-        if (!container) return;
-
-        container.innerHTML = `
+    container.innerHTML = `
       <div class="bg-white rounded-lg shadow-lg p-6">
         <h2 class="text-2xl font-bold mb-6 text-gray-800">
-          <i class="fas fa-microchip mr-2"></i>STM32WLE5 Droplet Flasher
+          <i class="fas fa-microchip mr-2"></i>STM32 Flasher
         </h2>
+
+        <!-- Device Type Selector -->
+        <div class="mb-6 p-4 bg-gradient-to-r from-indigo-50 to-purple-50 border-l-4 border-indigo-500 rounded-r-lg">
+          <h3 class="text-lg font-semibold mb-3 text-gray-800">
+            <i class="fas fa-cog mr-2"></i>Device Type Selection
+          </h3>
+          <div class="flex items-center gap-4">
+            <label class="text-sm font-medium text-gray-700">Select Device:</label>
+            <select 
+              onchange="window.stm32Flasher.handleDeviceTypeChange(this.value)"
+              class="flex-1 px-4 py-2 border-2 border-indigo-300 rounded-lg focus:ring-2 focus:ring-indigo-500 font-medium"
+              ${this.isFlashing ? 'disabled' : ''}
+            >
+              ${Object.keys(this.deviceTypes).map(key => `
+                <option value="${key}" ${key === this.currentDeviceType ? 'selected' : ''}>
+                  ${this.deviceTypes[key].name} (${this.deviceTypes[key].mcu})
+                </option>
+              `).join('')}
+            </select>
+          </div>
+          <div class="mt-2 text-sm text-gray-600">
+            <i class="fas fa-info-circle mr-1"></i>
+            Current: <b>${deviceConfig.name}</b> - <b>${deviceConfig.mcu}</b>
+            ${deviceConfig.supportsLoRaID ? ' - Supports LoRa ID' : ''}
+          </div>
+        </div>
 
         <!-- Step 1: Detect ST-Link -->
         <div class="mb-6 p-4 bg-blue-50 border-l-4 border-blue-500 rounded-r-lg">
@@ -234,8 +392,9 @@ class STM32FlasherModule {
           ` : ''}
         </div>
 
-        ${this.stlinkDetected ? `
-        <!-- Step 2: Version Setting -->
+        ${this.stlinkDetected && !this.mcuMismatch ? `
+        <!-- Step 2: Version Setting (Only for Droplet) -->
+        ${this.currentDeviceType === 'DROPLET' ? `
         <div class="mb-6 p-4 bg-purple-50 border-l-4 border-purple-500 rounded-r-lg">
           <h3 class="text-lg font-semibold mb-3 text-gray-800">
             <span class="inline-flex items-center justify-center w-8 h-8 bg-purple-500 text-white rounded-full mr-2">2</span>
@@ -256,8 +415,9 @@ class STM32FlasherModule {
             <span class="text-sm text-gray-600">Hex: <code id="version-hex-display" class="text-purple-600 font-mono">0x${this.version.toString(16).padStart(2, '0').toUpperCase()}</code></span>
           </div>
         </div>
+        ` : ''}
 
-        <!-- Step 3: Firmware Selection -->
+        <!-- Step ${this.currentDeviceType === 'DROPLET' ? '3' : '2'}: Firmware Selection -->
         <div class="mb-6 p-4 bg-orange-50 border-l-4 border-orange-500 rounded-r-lg">
           <h3 class="text-lg font-semibold mb-3 text-gray-800">
             <span class="inline-flex items-center justify-center w-8 h-8 bg-orange-500 text-white rounded-full mr-2">3</span>
@@ -287,11 +447,11 @@ class STM32FlasherModule {
           ` : ''}
         </div>
 
-        <!-- Step 4: Flash Action -->
+        <!-- Step ${this.currentDeviceType === 'DROPLET' ? '4' : '3'}: Flash Action -->
         <div class="mb-6 p-4 bg-green-50 border-l-4 border-green-500 rounded-r-lg">
           <h3 class="text-lg font-semibold mb-3 text-gray-800">
-            <span class="inline-flex items-center justify-center w-8 h-8 bg-green-500 text-white rounded-full mr-2">4</span>
-            Flash & Read Info
+            <span class="inline-flex items-center justify-center w-8 h-8 bg-green-500 text-white rounded-full mr-2">${this.currentDeviceType === 'DROPLET' ? '4' : '3'}</span>
+            Flash ${this.currentDeviceType === 'DROPLET' ? '& Read Info' : 'Firmware'}
           </h3>
           <div class="flex gap-4">
             <button 
@@ -300,9 +460,10 @@ class STM32FlasherModule {
               ${this.isFlashing || !this.firmwarePath ? 'disabled' : ''}
             >
               <i class="fas ${this.isFlashing ? 'fa-spinner fa-spin' : 'fa-upload'} mr-2"></i>
-              ${this.isFlashing ? 'Flashing...' : 'Flash & Read Info'}
+              ${this.isFlashing ? 'Flashing...' : (this.currentDeviceType === 'DROPLET' ? 'Flash & Read Info' : 'Flash Firmware')}
             </button>
 
+            ${this.currentDeviceType === 'DROPLET' ? `
             <button 
               onclick="window.stm32Flasher.readDeviceInfo()"
               class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
@@ -310,6 +471,7 @@ class STM32FlasherModule {
             >
               <i class="fas fa-info-circle mr-2"></i>Read Info Only
             </button>
+            ` : ''}
           </div>
         </div>
         ` : `
@@ -336,11 +498,11 @@ class STM32FlasherModule {
           <div class="mb-6 p-4 ${this.flashProgress.includes('Error') || this.flashProgress.includes('failed') ? 'bg-red-50 border-red-200' : 'bg-blue-50 border-blue-200'} border rounded-lg">
             <div class="flex items-center">
               ${this.isFlashing || this.isDetecting ?
-                    '<i class="fas fa-spinner fa-spin mr-2 text-blue-600"></i>' :
-                    this.flashProgress.includes('Error') || this.flashProgress.includes('failed') ?
-                        '<i class="fas fa-times-circle mr-2 text-red-600"></i>' :
-                        '<i class="fas fa-check-circle mr-2 text-green-600"></i>'
-                }
+          '<i class="fas fa-spinner fa-spin mr-2 text-blue-600"></i>' :
+          this.flashProgress.includes('Error') || this.flashProgress.includes('failed') ?
+            '<i class="fas fa-times-circle mr-2 text-red-600"></i>' :
+            '<i class="fas fa-check-circle mr-2 text-green-600"></i>'
+        }
               <span id="stm32-flash-progress" class="text-sm ${this.flashProgress.includes('Error') || this.flashProgress.includes('failed') ? 'text-red-700' : 'text-gray-700'}">${this.flashProgress}</span>
             </div>
           </div>
@@ -350,10 +512,11 @@ class STM32FlasherModule {
         ${this.flashResult && this.flashResult.success ? `
           <div class="bg-gradient-to-br from-gray-50 to-blue-50 border-2 border-blue-200 rounded-lg p-6 shadow-inner">
             <h3 class="text-xl font-bold mb-4 text-gray-800 flex items-center">
-              <i class="fas fa-info-circle text-blue-600 mr-2"></i>
-              Device Information
+              <i class="fas fa-check-circle text-green-600 mr-2"></i>
+              Flash Successful
             </h3>
             
+            ${this.flashResult.uid && this.flashResult.loraID ? `
             <!-- UID Information -->
             <div class="mb-6 bg-white rounded-lg p-4 shadow-sm">
               <h4 class="text-sm font-semibold text-gray-700 mb-3 uppercase tracking-wide">Unique ID (UID)</h4>
@@ -425,18 +588,26 @@ class STM32FlasherModule {
                 </div>
               </div>
             </div>
+            ` : `
+            <!-- Zone Controller Success Message -->
+            <div class="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-300 rounded-lg p-6 shadow-md text-center">
+              <i class="fas fa-check-circle text-green-600 text-6xl mb-4"></i>
+              <h4 class="text-2xl font-bold text-gray-800 mb-2">${this.flashResult.deviceType || 'Device'} Flashed Successfully!</h4>
+              <p class="text-gray-600">${this.flashResult.message || 'Firmware has been programmed to the device.'}</p>
+            </div>
+            `}
           </div>
         ` : ''}
       </div>
     `;
-    }
+  }
 
-    hide() {
-        const container = document.getElementById('stm32-flasher-container');
-        if (container) {
-            container.innerHTML = '';
-        }
+  hide() {
+    const container = document.getElementById('stm32-flasher-container');
+    if (container) {
+      container.innerHTML = '';
     }
+  }
 }
 
 // Initialize module

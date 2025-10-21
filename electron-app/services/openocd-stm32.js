@@ -1,18 +1,77 @@
 /**
  * OpenOCD STM32 Service
- * Provides STM32WLE5 flashing and UID reading for Droplet devices
+ * Provides STM32 flashing for Droplet (STM32WLE5) and Zone Controller (STM32F030C8T6)
  */
 
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { app } = require('electron');
+
+// Device type configurations
+const DEVICE_TYPES = {
+    DROPLET: {
+        name: 'Droplet',
+        mcu: 'STM32WLE5',
+        target: 'stm32wlx.cfg',
+        flashSize: '256KB',
+        supportsLoRaID: true,
+        flashAddress: '0x08000000',
+        uidAddress: '0x1FFF7590'
+    },
+    ZONE_CONTROLLER: {
+        name: 'Zone Controller',
+        mcu: 'STM32F030C8T6',
+        target: 'stm32f0x.cfg',
+        flashSize: '64KB',
+        supportsLoRaID: false,
+        flashAddress: '0x08000000',
+        uidAddress: '0x1FFFF7AC'
+    }
+};
 
 class OpenOCDSTM32Service {
     constructor() {
-        this.openocdPath = path.join(__dirname, '../embedded/openocd-binaries/windows/bin/openocd.exe');
-        this.scriptsPath = path.join(__dirname, '../embedded/openocd-binaries/windows/openocd/scripts');
+        // Use app.getAppPath() in production, __dirname in development
+        const basePath = app.isPackaged
+            ? path.join(process.resourcesPath)
+            : path.join(__dirname, '..');
+
+        this.openocdPath = path.join(basePath, 'embedded/openocd-binaries/windows/bin/openocd.exe');
+        this.scriptsPath = path.join(basePath, 'embedded/openocd-binaries/windows/openocd/scripts');
         this.isFlashing = false;
-        this.VERSION = 0x01; // Droplet version, có thể thay đổi
+        this.VERSION = 0xC0; // Droplet version for LoRa ID calculation
+        this.currentDeviceType = 'DROPLET'; // Default device type
+    }
+
+    /**
+     * Set current device type
+     * @param {string} deviceType - 'DROPLET' or 'ZONE_CONTROLLER'
+     */
+    setDeviceType(deviceType) {
+        if (DEVICE_TYPES[deviceType]) {
+            this.currentDeviceType = deviceType;
+            // console.log(`Device type changed to: ${DEVICE_TYPES[deviceType].name}`);
+            return {
+                success: true,
+                deviceType: DEVICE_TYPES[deviceType]
+            };
+        }
+        throw new Error(`Invalid device type: ${deviceType}`);
+    }
+
+    /**
+     * Get current device configuration
+     */
+    getDeviceConfig() {
+        return DEVICE_TYPES[this.currentDeviceType];
+    }
+
+    /**
+     * Get all available device types
+     */
+    getDeviceTypes() {
+        return DEVICE_TYPES;
     }
 
     /**
@@ -31,52 +90,305 @@ class OpenOCDSTM32Service {
             throw new Error('OpenOCD binary not found');
         }
 
+        const deviceConfig = this.getDeviceConfig();
+        let result = null;
+        let detectedMCUType = null;
+        let detectedChip = null;
+
         try {
+            // First attempt: Use selected device config
+            // console.log(`=== Attempting detection with ${deviceConfig.name} config ===`);
             const args = [
                 '-s', this.scriptsPath,
                 '-f', 'interface/stlink.cfg',
-                '-f', 'target/stm32wlx.cfg',
-                '-c', 'reset_config srst_only',
+                '-f', `target/${deviceConfig.target}`,
+                '-c', 'adapter speed 480',              // Lower speed for reliability
+                '-c', 'reset_config srst_only srst_nogate connect_assert_srst',  // Force reset on connect
                 '-c', 'init',
-                '-c', 'reset halt',
                 '-c', 'targets',
-                '-c', 'flash probe 0',
-                '-c', 'shutdown'
+                '-c', 'reset halt',
+                '-c', 'shutdown'                        // Keep chip halted for subsequent operations
             ];
 
-            const result = await this.executeOpenOCD(args);
+            try {
+                result = await this.executeOpenOCD(args);
+            } catch (error) {
+            // console.log('Current config failed, trying auto-detection...');
+                result = { output: error.message || '' };
+            }
 
-            // Parse MCU info from output
-            const chipMatch = result.output.match(/stm32wlx\.(cpu|core)/i);
+            // console.log('=== OpenOCD Detection Output ===');
+            // console.log(result.output);
+            // console.log('================================');
+
+            // Parse MCU info from output to detect actual chip type
+            let processorMatch = result.output.match(/Cortex-(M\d+)/i);
+            let deviceIdMatch = result.output.match(/device id\s*=\s*0x([0-9a-fA-F]+)/i);
             const flashMatch = result.output.match(/flash size = (\d+)/i) ||
                 result.output.match(/(\d+)\s*kbytes/i);
 
+            // If no processor or device ID found, try with alternative config
+            if (!processorMatch && !deviceIdMatch) {
+            // console.log('No device info detected, trying alternative config...');
+
+                const altConfig = this.currentDeviceType === 'DROPLET' ?
+                    DEVICE_TYPES.ZONE_CONTROLLER : DEVICE_TYPES.DROPLET;
+
+            // console.log(`Trying ${altConfig.name} config...`);
+
+                const altArgs = [
+                    '-s', this.scriptsPath,
+                    '-f', 'interface/stlink.cfg',
+                    '-f', `target/${altConfig.target}`,
+                    '-c', 'adapter speed 480',
+                    '-c', 'reset_config srst_only srst_nogate connect_assert_srst',
+                    '-c', 'init',
+                    '-c', 'targets',
+                    '-c', 'reset halt',
+                    '-c', 'shutdown'                    // Keep chip halted
+                ];
+
+                try {
+                    const altResult = await this.executeOpenOCD(altArgs);
+            // console.log('Alternative config output:', altResult.output);
+
+                    processorMatch = altResult.output.match(/Cortex-(M\d+)/i);
+                    deviceIdMatch = altResult.output.match(/device id\s*=\s*0x([0-9a-fA-F]+)/i);
+
+                    if (processorMatch || deviceIdMatch) {
+                        result.output = altResult.output;
+            // console.log('Alternative config succeeded!');
+                    }
+                } catch (altError) {
+            // console.log('Alternative config also failed');
+                    const altErrorOutput = altError.message || '';
+                    processorMatch = altErrorOutput.match(/Cortex-(M\d+)/i);
+                    deviceIdMatch = altErrorOutput.match(/device id\s*=\s*0x([0-9a-fA-F]+)/i);
+
+                    if (processorMatch || deviceIdMatch) {
+                        result.output = altErrorOutput;
+            // console.log('Got info from alternative config error');
+                    }
+                }
+            }
+
+            // Determine actual MCU type from multiple sources
+            // Method 1: Check Device ID (most reliable)
+            if (deviceIdMatch) {
+                const deviceId = deviceIdMatch[1].toLowerCase();
+            // console.log(`Device ID: 0x${deviceId}`);
+
+                // STM32WLE5 device IDs: 0x10036497
+                // STM32F030 device IDs: 0x440, 0x444, 0x445
+                if (deviceId.includes('497') || deviceId.includes('10036497')) {
+                    detectedMCUType = 'DROPLET';
+                    detectedChip = 'STM32WLE5';
+            // console.log('Detected by Device ID: STM32WLE5');
+                } else if (deviceId.includes('440') || deviceId.includes('444') || deviceId.includes('445')) {
+                    detectedMCUType = 'ZONE_CONTROLLER';
+                    detectedChip = 'STM32F030C8T6';
+            // console.log('Detected by Device ID: STM32F030');
+                }
+            }
+
+            // Method 2: Check Processor Type (backup method)
+            if (!detectedMCUType && processorMatch) {
+                const processor = processorMatch[1];
+            // console.log(`Detected Processor: Cortex-${processor}`);
+
+                if (processor === 'M0') {
+                    detectedMCUType = 'ZONE_CONTROLLER';
+                    detectedChip = 'STM32F030C8T6';
+                } else if (processor === 'M4') {
+                    detectedMCUType = 'DROPLET';
+                    detectedChip = 'STM32WLE5';
+                }
+            }
+
+            // console.log(`Detected MCU Type: ${detectedMCUType}`);
+            // console.log(`Current Selected Type: ${this.currentDeviceType}`);
+
+            // Check if detected MCU matches selected device type
+            const mismatch = detectedMCUType && detectedMCUType !== this.currentDeviceType;
+
+            // console.log(`Mismatch: ${mismatch}`);
+
             return {
                 success: true,
-                detected: !!chipMatch,
+                detected: !!(processorMatch || deviceIdMatch),
+                mismatch: mismatch,
+                detectedType: detectedMCUType,
+                selectedType: this.currentDeviceType,
                 info: {
-                    chip: 'STM32WLE5',
-                    flashSize: flashMatch ? `${flashMatch[1]}KB` : '256KB',
+                    chip: detectedChip || deviceConfig.mcu,
+                    deviceType: detectedMCUType ? DEVICE_TYPES[detectedMCUType].name : deviceConfig.name,
+                    flashSize: flashMatch ? `${flashMatch[1]}KB` : deviceConfig.flashSize,
                     interface: 'ST-Link'
                 },
                 rawOutput: result.output
             };
         } catch (error) {
             // Even if OpenOCD fails, try to parse if ST-Link was detected
+            // console.log('=== OpenOCD Error, attempting to parse ===');
+            // console.log(error.message);
+
             const errorOutput = error.message || '';
-            if (errorOutput.includes('stm32') || errorOutput.includes('ST-Link')) {
+
+            // Try to detect device type from error output
+            detectedMCUType = null;
+            detectedChip = null;
+
+            // Check Device ID in error output
+            const deviceIdMatch = errorOutput.match(/device id\s*=\s*0x([0-9a-fA-F]+)/i);
+            if (deviceIdMatch) {
+                const deviceId = deviceIdMatch[1].toLowerCase();
+            // console.log(`Device ID from error: 0x${deviceId}`);
+
+                if (deviceId.includes('497') || deviceId.includes('10036497')) {
+                    detectedMCUType = 'DROPLET';
+                    detectedChip = 'STM32WLE5';
+                } else if (deviceId.includes('440') || deviceId.includes('444') || deviceId.includes('445')) {
+                    detectedMCUType = 'ZONE_CONTROLLER';
+                    detectedChip = 'STM32F030C8T6';
+                }
+            }
+
+            // Check Processor type in error output
+            if (!detectedMCUType) {
+                const processorMatch = errorOutput.match(/Cortex-(M\d+)/i);
+                if (processorMatch) {
+                    const processor = processorMatch[1];
+            // console.log(`Processor from error: Cortex-${processor}`);
+
+                    if (processor === 'M0') {
+                        detectedMCUType = 'ZONE_CONTROLLER';
+                        detectedChip = 'STM32F030C8T6';
+                    } else if (processor === 'M4') {
+                        detectedMCUType = 'DROPLET';
+                        detectedChip = 'STM32WLE5';
+                    }
+                }
+            }
+
+            // console.log(`Detected from error: ${detectedMCUType}`);
+            // console.log(`Selected: ${this.currentDeviceType}`);
+
+            const mismatch = detectedMCUType && detectedMCUType !== this.currentDeviceType;
+            // console.log(`Mismatch: ${mismatch}`);
+
+            if (errorOutput.includes('stm32') || errorOutput.includes('ST-Link') || errorOutput.includes('STLINK')) {
                 return {
                     success: true,
                     detected: true,
+                    mismatch: mismatch,
+                    detectedType: detectedMCUType,
+                    selectedType: this.currentDeviceType,
                     info: {
-                        chip: 'STM32WLE5',
-                        flashSize: '256KB',
+                        chip: detectedChip || deviceConfig.mcu,
+                        deviceType: detectedMCUType ? DEVICE_TYPES[detectedMCUType].name : deviceConfig.name,
+                        flashSize: deviceConfig.flashSize,
                         interface: 'ST-Link'
                     },
                     rawOutput: errorOutput
                 };
             }
             throw new Error(`ST-Link not detected: ${error.message}`);
+        }
+    }
+
+    /**
+     * Get actual flash size from device
+     * @returns {Object} Flash size info
+     */
+    async getActualFlashSize() {
+        if (!this.checkOpenOCD()) {
+            throw new Error('OpenOCD binary not found');
+        }
+
+        try {
+            const deviceConfig = this.getDeviceConfig();
+            const resetConfigs = [
+                'reset_config none separate',
+                'reset_config srst_only',
+                'reset_config none',
+                'reset_config srst_only srst_nogate connect_assert_srst'
+            ];
+
+            let result = null;
+            let lastError = null;
+
+            for (let i = 0; i < resetConfigs.length; i++) {
+                const resetConfig = resetConfigs[i];
+            // console.log(`[Flash Size] Trying: ${resetConfig}`);
+
+                const args = [
+                    '-s', this.scriptsPath,
+                    '-f', 'interface/stlink.cfg',
+                    '-f', `target/${deviceConfig.target}`,
+                    '-c', 'adapter speed 480',
+                    '-c', resetConfig,
+                    '-c', 'init',
+                    '-c', 'flash list',
+                    '-c', 'shutdown'
+                ];
+
+                try {
+                    result = await this.executeOpenOCD(args);
+            // console.log(`[Flash Size] Success with: ${resetConfig}`);
+                    break;
+                } catch (error) {
+                    lastError = error;
+            // console.log(`[Flash Size] Failed with ${resetConfig}`);
+                    result = { output: error.message || '' };
+
+                    if (i < resetConfigs.length - 1) {
+                        await new Promise(resolve => setTimeout(resolve, 300));
+                    }
+                }
+            }
+
+            const output = result ? result.output : (lastError?.message || '');
+            // console.log('Flash size detection output:', output);
+
+            // Parse flash size and device ID
+            const flashMatch = output.match(/flash size\s*=\s*(\d+)\s*k?i?b?/i);
+            const deviceIdMatch = output.match(/device id\s*=\s*0x([0-9a-fA-F]+)/i);
+
+            let flashSizeKB = null;
+            let deviceId = null;
+
+            if (flashMatch) {
+                flashSizeKB = parseInt(flashMatch[1]);
+            }
+
+            if (deviceIdMatch) {
+                deviceId = '0x' + deviceIdMatch[1];
+            }
+
+            // For STM32F030, check variant
+            let variant = null;
+            if (this.currentDeviceType === 'ZONE_CONTROLLER' && deviceId && deviceConfig.variants) {
+                const shortId = '0x' + deviceId.substring(deviceId.length - 3);
+                variant = deviceConfig.variants[shortId];
+                if (variant && !flashSizeKB) {
+                    flashSizeKB = variant.flashSize / 1024;
+                }
+            }
+
+            return {
+                success: true,
+                flashSizeKB: flashSizeKB,
+                flashSizeBytes: flashSizeKB ? flashSizeKB * 1024 : null,
+                deviceId: deviceId,
+                variant: variant,
+                rawOutput: output
+            };
+        } catch (error) {
+            // console.error('Failed to detect flash size:', error.message);
+            return {
+                success: false,
+                error: error.message
+            };
         }
     }
 
@@ -101,6 +413,50 @@ class OpenOCDSTM32Service {
         this.isFlashing = true;
 
         try {
+            // Check firmware file size
+            const firmwareStats = fs.statSync(firmwarePath);
+            const firmwareSizeBytes = firmwareStats.size;
+            const firmwareSizeKB = Math.ceil(firmwareSizeBytes / 1024);
+
+            // console.log(`Firmware size: ${firmwareSizeKB} KB (${firmwareSizeBytes} bytes)`);
+
+            // Try to detect actual flash size
+            if (progressCallback) {
+                progressCallback({ stage: 'detecting', message: 'Detecting chip flash size...' });
+            }
+
+            const flashInfo = await this.getActualFlashSize();
+
+            if (flashInfo.success && flashInfo.flashSizeKB) {
+            // console.log(`Detected flash size: ${flashInfo.flashSizeKB} KB`);
+
+                if (flashInfo.variant) {
+            // console.log(`Detected variant: ${flashInfo.variant.name}`);
+                }
+
+                // Check if firmware fits
+                if (firmwareSizeBytes > flashInfo.flashSizeBytes) {
+                    const errorMsg = `Firmware size (${firmwareSizeKB} KB) exceeds chip flash size (${flashInfo.flashSizeKB} KB)!\n` +
+                        (flashInfo.variant ? `Detected chip: ${flashInfo.variant.name}\n` : '') +
+                        `Please use a firmware compiled for this chip variant.`;
+
+                    this.isFlashing = false;
+                    throw new Error(errorMsg);
+                }
+
+                // Warn if firmware is close to limit (>90%)
+                const usagePercent = (firmwareSizeBytes / flashInfo.flashSizeBytes) * 100;
+                if (usagePercent > 90) {
+                    console.warn(`WARNING: Firmware uses ${usagePercent.toFixed(1)}% of flash!`);
+                    if (progressCallback) {
+                        progressCallback({
+                            stage: 'warning',
+                            message: `Warning: Firmware uses ${usagePercent.toFixed(1)}% of available flash`
+                        });
+                    }
+                }
+            }
+
             if (progressCallback) {
                 progressCallback({ stage: 'flashing', message: 'Programming flash...' });
             }
@@ -108,23 +464,70 @@ class OpenOCDSTM32Service {
             // Convert Windows backslash to forward slash for OpenOCD
             const normalizedPath = firmwarePath.replace(/\\/g, '/');
 
-            // Use simple 'program' command like your working OpenOCD command
-            const args = [
-                '-s', this.scriptsPath,
-                '-f', 'interface/stlink.cfg',
-                '-f', 'target/stm32wlx.cfg',
-                '-c', 'reset_config srst_only',
-                '-c', `program {${normalizedPath}} verify reset exit 0x08000000`
+            const deviceConfig = this.getDeviceConfig();
+
+            // Reset configs optimized per device type
+            // For STM32F0 (Zone Controller), prefer software/SYSRESETREQ over hardware SRST
+            const resetConfigs = this.currentDeviceType === 'ZONE_CONTROLLER' ? [
+                'reset_config none separate',           // SYSRESETREQ only (best for STM32F0)
+                'reset_config none',                    // No reset, JTAG-only
+                'reset_config srst_only',               // Hardware SRST
+                'reset_config srst_only srst_nogate connect_assert_srst'
+            ] : [
+                'reset_config srst_only srst_nogate connect_assert_srst', // Droplet default
+                'reset_config none separate',
+                'reset_config srst_only',
+                'reset_config none'
             ];
 
-            const result = await this.executeOpenOCD(args, progressCallback);
+            let lastError = null;
 
-            if (progressCallback) {
-                progressCallback({ stage: 'complete', message: 'Flash completed successfully' });
+            // Try different reset configurations
+            for (let i = 0; i < resetConfigs.length; i++) {
+                const resetConfig = resetConfigs[i];
+            // console.log(`[Flash] Attempt ${i + 1}/${resetConfigs.length} with: ${resetConfig}`);
+
+                if (progressCallback && i > 0) {
+                    progressCallback({
+                        stage: 'retry',
+                        message: `Retrying with different configuration (${i + 1}/${resetConfigs.length})...`
+                    });
+                }
+
+                const args = [
+                    '-s', this.scriptsPath,
+                    '-f', 'interface/stlink.cfg',
+                    '-f', `target/${deviceConfig.target}`,
+                    '-c', 'adapter speed 480',
+                    '-c', resetConfig,
+                    '-c', `program {${normalizedPath}} verify reset exit 0x08000000`
+                ];
+
+                try {
+                    const result = await this.executeOpenOCD(args, progressCallback);
+
+                    if (progressCallback) {
+                        progressCallback({ stage: 'complete', message: 'Flash completed successfully' });
+                    }
+
+                    this.isFlashing = false;
+            // console.log(`[Flash] Success with: ${resetConfig}`);
+                    return { success: true, output: result.output };
+                } catch (error) {
+                    lastError = error;
+            // console.log(`[Flash] Failed with ${resetConfig}: ${error.message}`);
+
+                    // If this is not the last attempt, continue to next config
+                    if (i < resetConfigs.length - 1) {
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        continue;
+                    }
+                }
             }
 
+            // All attempts failed
             this.isFlashing = false;
-            return { success: true, output: result.output };
+            throw lastError || new Error('Flash failed with all reset configurations');
         } catch (error) {
             this.isFlashing = false;
             throw error;
@@ -141,31 +544,43 @@ class OpenOCDSTM32Service {
         }
 
         try {
+            const deviceConfig = this.getDeviceConfig();
             const args = [
                 '-s', this.scriptsPath,
                 '-f', 'interface/stlink.cfg',
-                '-f', 'target/stm32wlx.cfg',
-                '-c', 'reset_config srst_only',
-                '-c', 'init',
-                '-c', 'reset halt',
-                '-c', 'sleep 100',
-                '-c', 'mdw 0x1FFF7590 3',
-                '-c', 'shutdown'
+                '-f', `target/${deviceConfig.target}`,
+                '-c', 'adapter speed 480',
+                '-c', 'reset_config srst_only srst_nogate connect_assert_srst',
+                '-c', 'init',                           // Init to connect
+                '-c', 'reset halt',                     // Ensure halted
+                '-c', 'sleep 100',                      // Wait for chip to stabilize
+                '-c', `mdw ${deviceConfig.uidAddress} 3`,  // Read UID
+                '-c', 'shutdown'                        // Keep halted (don't reset run)
             ];
 
             const result = await this.executeOpenOCD(args);
 
-            console.log('UID Read Output:', result.output);
+            // console.log('UID Read Output:', result.output);
 
-            // Parse UID from output - try multiple patterns
-            // Pattern 1: "0x1fff7590: xxxxxxxx xxxxxxxx xxxxxxxx"
-            let uidMatch = result.output.match(/0x1fff7590:\s+([0-9a-fA-F]{8})\s+([0-9a-fA-F]{8})\s+([0-9a-fA-F]{8})/i);
+            // Parse UID from output - use dynamic address
+            const uidAddr = deviceConfig.uidAddress.toLowerCase();
+            const addr0 = uidAddr;
+            const addr1 = '0x' + (parseInt(uidAddr, 16) + 4).toString(16);
+            const addr2 = '0x' + (parseInt(uidAddr, 16) + 8).toString(16);
+
+            // Pattern 1: "0xXXXXXXXX: xxxxxxxx xxxxxxxx xxxxxxxx" (single line)
+            const pattern1 = new RegExp(`${uidAddr}:\\s+([0-9a-fA-F]{8})\\s+([0-9a-fA-F]{8})\\s+([0-9a-fA-F]{8})`, 'i');
+            let uidMatch = result.output.match(pattern1);
 
             // Pattern 2: Multiple lines with individual addresses
             if (!uidMatch) {
-                const uid0Match = result.output.match(/0x1fff7590:\s+([0-9a-fA-F]{8})/i);
-                const uid1Match = result.output.match(/0x1fff7594:\s+([0-9a-fA-F]{8})/i);
-                const uid2Match = result.output.match(/0x1fff7598:\s+([0-9a-fA-F]{8})/i);
+                const pattern0 = new RegExp(`${addr0}:\\s+([0-9a-fA-F]{8})`, 'i');
+                const pattern1_line = new RegExp(`${addr1}:\\s+([0-9a-fA-F]{8})`, 'i');
+                const pattern2 = new RegExp(`${addr2}:\\s+([0-9a-fA-F]{8})`, 'i');
+
+                const uid0Match = result.output.match(pattern0);
+                const uid1Match = result.output.match(pattern1_line);
+                const uid2Match = result.output.match(pattern2);
 
                 if (uid0Match && uid1Match && uid2Match) {
                     uidMatch = [null, uid0Match[1], uid1Match[1], uid2Match[1]];
@@ -173,11 +588,9 @@ class OpenOCDSTM32Service {
             }
 
             if (!uidMatch) {
-                console.error('Failed to parse UID. Raw output:', result.output);
-                console.error('Raw output length:', result.output.length);
-                console.error('Output contains "halted":', result.output.includes('halted'));
-                console.error('Output contains "0x1fff":', result.output.toLowerCase().includes('0x1fff'));
-                throw new Error(`Failed to parse UID from OpenOCD output. Output: ${result.output.substring(0, 500)}`);
+                // console.error('Failed to parse UID. Raw output:', result.output);
+                // console.error('Expected address:', uidAddr);
+                throw new Error(`Failed to parse UID from OpenOCD output. Expected address: ${uidAddr}`);
             }
 
             const uid0 = parseInt(uidMatch[1], 16);
@@ -256,6 +669,8 @@ class OpenOCDSTM32Service {
      */
     async flashAndReadInfo(firmwarePath, progressCallback = null) {
         try {
+            const deviceConfig = this.getDeviceConfig();
+
             // Step 1: Flash firmware
             if (progressCallback) {
                 progressCallback({ stage: 'flash', message: 'Flashing firmware...' });
@@ -263,6 +678,20 @@ class OpenOCDSTM32Service {
 
             await this.flashFirmware(firmwarePath, progressCallback);
 
+            // For Zone Controller, just return success without reading UID
+            if (!deviceConfig.supportsLoRaID) {
+                if (progressCallback) {
+                    progressCallback({ stage: 'complete', message: 'Flash completed successfully' });
+                }
+
+                return {
+                    success: true,
+                    deviceType: deviceConfig.name,
+                    message: 'Firmware flashed successfully'
+                };
+            }
+
+            // For Droplet: Continue to read UID and generate LoRa ID
             // Wait for MCU to stabilize after flash and reset
             if (progressCallback) {
                 progressCallback({ stage: 'wait', message: 'Waiting for MCU to stabilize...' });
@@ -289,6 +718,7 @@ class OpenOCDSTM32Service {
 
             return {
                 success: true,
+                deviceType: deviceConfig.name,
                 uid: {
                     uid0: uidResult.uid0,
                     uid1: uidResult.uid1,
@@ -311,7 +741,7 @@ class OpenOCDSTM32Service {
      */
     executeOpenOCD(args, progressCallback = null) {
         return new Promise((resolve, reject) => {
-            console.log('Executing OpenOCD:', this.openocdPath, args.join(' '));
+            // console.log('Executing OpenOCD:', this.openocdPath, args.join(' '));
 
             const proc = spawn(this.openocdPath, args);
 
@@ -322,7 +752,7 @@ class OpenOCDSTM32Service {
             // Timeout to force kill if process doesn't exit
             const timeout = setTimeout(() => {
                 if (!isResolved) {
-                    console.log('[OpenOCD] Timeout - force killing process');
+            // console.log('[OpenOCD] Timeout - force killing process');
                     proc.kill('SIGKILL');
                     isResolved = true;
                     const combinedOutput = errorOutput + output;
@@ -333,7 +763,7 @@ class OpenOCDSTM32Service {
             proc.stdout.on('data', (data) => {
                 const text = data.toString();
                 output += text;
-                console.log('[OpenOCD]:', text.trim());
+            // console.log('[OpenOCD]:', text.trim());
 
                 if (progressCallback) {
                     // Parse progress from output
@@ -345,12 +775,40 @@ class OpenOCDSTM32Service {
                         progressCallback({ stage: 'verified', message: 'Verification successful' });
                     }
                 }
+
+                // If we see "Verified OK" or "Programming Finished", exit soon
+                if (text.includes('** Verified OK **') || text.includes('** Programming Finished **')) {
+                    setTimeout(() => {
+                        if (!isResolved) {
+            // console.log('[OpenOCD] Flash completed, force exit');
+                            clearTimeout(timeout);
+                            proc.kill('SIGKILL');
+                            isResolved = true;
+                            const combinedOutput = errorOutput + output;
+                            resolve({ success: true, output: combinedOutput, code: 0 });
+                        }
+                    }, 300); // Short delay to catch any final output
+                }
             });
 
             proc.stderr.on('data', (data) => {
                 const text = data.toString();
                 errorOutput += text;
-                console.error('[OpenOCD Error]:', text.trim());
+                // console.error('[OpenOCD Error]:', text.trim());
+
+                // Check for critical errors
+                if (text.includes('** Verify Failed **') || text.includes('** Programming Failed **')) {
+                    setTimeout(() => {
+                        if (!isResolved) {
+            // console.log('[OpenOCD] Flash failed, terminating');
+                            clearTimeout(timeout);
+                            proc.kill('SIGKILL');
+                            isResolved = true;
+                            const combinedOutput = errorOutput + output;
+                            reject(new Error(`OpenOCD flash failed\n${combinedOutput}`));
+                        }
+                    }, 300);
+                }
 
                 // If shutdown command is invoked, force resolve after short delay
                 if (text.includes('shutdown command invoked')) {
@@ -360,7 +818,15 @@ class OpenOCDSTM32Service {
                             proc.kill('SIGKILL');
                             isResolved = true;
                             const combinedOutput = errorOutput + output;
-                            resolve({ success: true, output: combinedOutput, code: 0 });
+
+                            // Check if there were critical errors before shutdown
+                            if (combinedOutput.includes('** Verify Failed **') ||
+                                combinedOutput.includes('** Programming Failed **') ||
+                                combinedOutput.includes('no flash bank found')) {
+                                reject(new Error(`OpenOCD flash failed\n${combinedOutput}`));
+                            } else {
+                                resolve({ success: true, output: combinedOutput, code: 0 });
+                            }
                         }
                     }, 500);
                 }
@@ -403,20 +869,53 @@ class OpenOCDSTM32Service {
      */
     async disconnectSTLink() {
         try {
+            // console.log('Disconnecting ST-Link and resuming target...');
+
+            // Try with current device config first
+            const deviceConfig = this.getDeviceConfig();
             const args = [
                 '-s', this.scriptsPath,
                 '-f', 'interface/stlink.cfg',
-                '-f', 'target/stm32wlx.cfg',
+                '-f', `target/${deviceConfig.target}`,
+                '-c', 'adapter speed 480',
+                '-c', 'reset_config srst_only srst_nogate connect_assert_srst',
                 '-c', 'init',
                 '-c', 'reset run',
-                '-c', 'exit'
+                '-c', 'shutdown'
             ];
 
-            await this.executeOpenOCD(args);
+            try {
+                await this.executeOpenOCD(args);
+            // console.log('Target resumed successfully');
+            } catch (error) {
+                // If current config fails, try alternative config
+            // console.log('Current config failed, trying alternative...');
+
+                const altConfig = this.currentDeviceType === 'DROPLET' ?
+                    DEVICE_TYPES.ZONE_CONTROLLER : DEVICE_TYPES.DROPLET;
+
+                const altArgs = [
+                    '-s', this.scriptsPath,
+                    '-f', 'interface/stlink.cfg',
+                    '-f', `target/${altConfig.target}`,
+                    '-c', 'adapter speed 480',
+                    '-c', 'reset_config srst_only srst_nogate connect_assert_srst',
+                    '-c', 'init',
+                    '-c', 'reset run',
+                    '-c', 'shutdown'
+                ];
+
+                try {
+                    await this.executeOpenOCD(altArgs);
+            // console.log('Target resumed with alternative config');
+                } catch (altError) {
+            // console.log('Could not resume target, but will disconnect anyway');
+                }
+            }
 
             return {
                 success: true,
-                message: 'ST-Link disconnected successfully'
+                message: 'ST-Link disconnected and target resumed'
             };
         } catch (error) {
             // Even if error, ST-Link is likely disconnected
