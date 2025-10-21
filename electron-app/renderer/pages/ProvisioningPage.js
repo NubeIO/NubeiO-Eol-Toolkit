@@ -5,7 +5,7 @@ class ProvisioningPage {
     this.config = {
       port: '',
       chip: 'esp32s3',
-      offset: '0x3D0000',
+      offset: '0xA20000',
       size: '0x10000',
       baudRate: '921600',
       caUrl: 'http://128.199.170.214:8080',
@@ -78,7 +78,7 @@ class ProvisioningPage {
               <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label class="block text-sm font-medium text-gray-700 mb-2">NVS Offset</label>
-                  <input type="text" id="prov-offset" value="${this.config.offset}" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="0x3D0000" ${this.isProvisioning ? 'disabled' : ''}>
+                  <input type="text" id="prov-offset" value="${this.config.offset}" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="0xA20000" ${this.isProvisioning ? 'disabled' : ''}>
                 </div>
                 
                 <div>
@@ -155,7 +155,7 @@ class ProvisioningPage {
                 <label class="block text-sm font-medium text-gray-700 mb-2">Erase Type</label>
                 <select id="prov-erase-type" onchange="window.provisioningPage.toggleCustomErase()" class="w-full md:w-1/2 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" ${this.isProvisioning ? 'disabled' : ''}>
                   <option value="all">Erase All Flash</option>
-                  <option value="nvs">Erase NVS Only (0x3D0000)</option>
+                  <option value="nvs">Erase NVS Only (0xA20000)</option>
                   <option value="allnvs">Erase All NVS Partitions</option>
                   <option value="custom">Custom Region</option>
                 </select>
@@ -165,7 +165,7 @@ class ProvisioningPage {
                 <div class="grid grid-cols-2 gap-4 md:w-1/2">
                   <div>
                     <label class="block text-sm font-medium text-gray-700 mb-2">Address</label>
-                    <input type="text" id="prov-erase-address" value="0x3D0000" class="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="0x3D0000" ${this.isProvisioning ? 'disabled' : ''}>
+                    <input type="text" id="prov-erase-address" value="0xA20000" class="w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="0xA20000" ${this.isProvisioning ? 'disabled' : ''}>
                   </div>
                   <div>
                     <label class="block text-sm font-medium text-gray-700 mb-2">Size</label>
@@ -477,7 +477,7 @@ class ProvisioningPage {
     // Confirmation dialog
     const eraseTypeNames = {
       'all': 'ALL FLASH MEMORY',
-      'nvs': 'NVS partition only (0x3D0000)',
+      'nvs': 'NVS partition only (0xA20000)',
       'allnvs': 'ALL NVS partitions',
       'custom': 'custom region'
     };
