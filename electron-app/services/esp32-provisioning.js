@@ -573,7 +573,7 @@ class ESP32Provisioning {
       await this.flashNVSBinary(
         config.port,
         config.chip,
-        config.offset || '0x3D0000',
+        config.offset || '0xA20000',
         binPath,
         config.baudRate || '921600'
       );
@@ -629,76 +629,76 @@ class ESP32Provisioning {
       }
 
       // Step 7: Configure WiFi via serial (optional)
-      if (config.configureWiFi && config.wifiSsid && config.wifiPassword) {
-        result.stage = 'wifi_config';
-        result.message = 'Configuring WiFi via serial console...';
-        try {
-          console.log('Starting WiFi configuration via serial...');
+      // if (config.configureWiFi && config.wifiSsid && config.wifiPassword) {
+      //   result.stage = 'wifi_config';
+      //   result.message = 'Configuring WiFi via serial console...';
+      //   try {
+      //     console.log('Starting WiFi configuration via serial...');
           
-          // Send progress update
-          if (this.progressCallback) {
-            this.progressCallback({
-              stage: 'wifi_config',
-              progress: 85,
-              message: 'Connecting to serial console for WiFi configuration...'
-            });
-          }
+      //     // Send progress update
+      //     if (this.progressCallback) {
+      //       this.progressCallback({
+      //         stage: 'wifi_config',
+      //         progress: 85,
+      //         message: 'Connecting to serial console for WiFi configuration...'
+      //       });
+      //     }
           
-          const wifiResult = await this.configureWiFiViaSerial(
-            config.port,
-            config.wifiSsid,
-            config.wifiPassword,
-            115200, // Serial console uses 115200 baud (not provisioning baud rate)
-            30000 // 30 second timeout
-          );
+      //     const wifiResult = await this.configureWiFiViaSerial(
+      //       config.port,
+      //       config.wifiSsid,
+      //       config.wifiPassword,
+      //       115200, // Serial console uses 115200 baud (not provisioning baud rate)
+      //       30000 // 30 second timeout
+      //     );
 
-          if (wifiResult.success) {
-            console.log('✓ WiFi configured successfully');
-            console.log('WiFi Responses:', wifiResult.responses.join(' | '));
-            result.wifiConfigured = true;
-            result.wifiResponses = wifiResult.responses;
-            result.message = `Provisioning completed! WiFi configured (${wifiResult.responses.length} responses)`;
+      //     if (wifiResult.success) {
+      //       console.log('✓ WiFi configured successfully');
+      //       console.log('WiFi Responses:', wifiResult.responses.join(' | '));
+      //       result.wifiConfigured = true;
+      //       result.wifiResponses = wifiResult.responses;
+      //       result.message = `Provisioning completed! WiFi configured (${wifiResult.responses.length} responses)`;
             
-            // Send success update
-            if (this.progressCallback) {
-              this.progressCallback({
-                stage: 'wifi_config',
-                progress: 95,
-                message: `✓ WiFi configured: ${wifiResult.responses.slice(-3).join(' → ')}`
-              });
-            }
-          } else {
-            console.warn('WiFi configuration incomplete:', wifiResult.message);
-            console.warn('Responses received:', wifiResult.responses);
-            result.wifiConfigured = false;
-            result.wifiMessage = wifiResult.message;
-            result.message = `Provisioning completed but WiFi config ${wifiResult.partial ? 'timed out' : 'failed'}: ${wifiResult.message}`;
+      //       // Send success update
+      //       if (this.progressCallback) {
+      //         this.progressCallback({
+      //           stage: 'wifi_config',
+      //           progress: 95,
+      //           message: `✓ WiFi configured: ${wifiResult.responses.slice(-3).join(' → ')}`
+      //         });
+      //       }
+      //     } else {
+      //       console.warn('WiFi configuration incomplete:', wifiResult.message);
+      //       console.warn('Responses received:', wifiResult.responses);
+      //       result.wifiConfigured = false;
+      //       result.wifiMessage = wifiResult.message;
+      //       result.message = `Provisioning completed but WiFi config ${wifiResult.partial ? 'timed out' : 'failed'}: ${wifiResult.message}`;
             
-            // Send warning update
-            if (this.progressCallback) {
-              this.progressCallback({
-                stage: 'wifi_config',
-                progress: 90,
-                message: `⚠️ WiFi config incomplete: ${wifiResult.message}`
-              });
-            }
-          }
-        } catch (wifiError) {
-          console.error('WiFi configuration error:', wifiError);
-          result.wifiConfigured = false;
-          result.wifiMessage = wifiError.message;
-          result.message = `Provisioning completed but WiFi config error: ${wifiError.message}`;
+      //       // Send warning update
+      //       if (this.progressCallback) {
+      //         this.progressCallback({
+      //           stage: 'wifi_config',
+      //           progress: 90,
+      //           message: `⚠️ WiFi config incomplete: ${wifiResult.message}`
+      //         });
+      //       }
+      //     }
+      //   } catch (wifiError) {
+      //     console.error('WiFi configuration error:', wifiError);
+      //     result.wifiConfigured = false;
+      //     result.wifiMessage = wifiError.message;
+      //     result.message = `Provisioning completed but WiFi config error: ${wifiError.message}`;
           
-          // Send error update
-          if (this.progressCallback) {
-            this.progressCallback({
-              stage: 'wifi_config',
-              progress: 90,
-              message: `❌ WiFi config error: ${wifiError.message}`
-            });
-          }
-        }
-      }
+      //     // Send error update
+      //     if (this.progressCallback) {
+      //       this.progressCallback({
+      //         stage: 'wifi_config',
+      //         progress: 90,
+      //         message: `❌ WiFi config error: ${wifiError.message}`
+      //       });
+      //     }
+      //   }
+      // }
 
       // Step 8: Monitor logs after provisioning (optional, extended monitoring)
       if (config.monitorLogs !== false) { // Enabled by default
@@ -778,11 +778,11 @@ class ESP32Provisioning {
           args.push('erase_flash');
           break;
         case 'nvs':
-          // Erase NVS partition at 0x3D0000, size 0x10000 (64KB)
-          args.push('erase_region', '0x3D0000', '0x10000');
+          // Erase NVS partition at 0xA20000, size 0x10000 (64KB)
+          args.push('erase_region', '0xA20000', '0x10000');
           break;
         case 'allnvs':
-          // Erase all NVS partitions: nvs (0x9000), zc_cfg (0x3D0000), cert_storage (0x3E0000)
+          // Erase all NVS partitions: nvs (0x9000), zc_cfg (0xA20000), cert_storage (0x3E0000)
           args.push('erase_region', '0x9000', '0x10000');
           
           // Execute first erase
@@ -799,7 +799,7 @@ class ESP32Provisioning {
             }
             
             // Then erase zc_cfg and cert_storage together
-            const args2 = ['--port', port, 'erase_region', '0x3D0000', '0x30000'];
+            const args2 = ['--port', port, 'erase_region', '0xA20000', '0x1E0000'];
             const cmd2 = spawn(this.esptoolPath, args2);
             let output2 = '';
             
