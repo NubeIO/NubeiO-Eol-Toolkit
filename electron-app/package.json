@@ -71,6 +71,13 @@
         ]
       },
       {
+        "from": "embedded/openocd-binaries",
+        "to": "embedded/openocd-binaries",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
         "from": "embedded/esptool-binaries",
         "to": "embedded/esptool-binaries",
         "filter": [
