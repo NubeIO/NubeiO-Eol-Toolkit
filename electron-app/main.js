@@ -15,6 +15,7 @@ const TCPConsoleClient = require('./services/tcp-console');
 const ESP32Provisioning = require('./services/esp32-provisioning');
 const SerialConsole = require('./services/serial-console');
 const FleetMonitoringService = require('./services/fleet-monitoring');
+const OpenOCDSTM32Service = require('./services/openocd-stm32');
 
 // Disable hardware acceleration to avoid libva errors
 app.disableHardwareAcceleration();
@@ -278,7 +279,7 @@ function createWindow() {
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
     console.log('Window is ready and visible');
-    
+
     // Test IPC after a delay
     setTimeout(() => {
       console.log('Sending test event to renderer...');
@@ -322,7 +323,7 @@ function createWindow() {
 app.whenReady().then(() => {
   // Create application menu
   createMenu();
-  
+
   // Initialize services
   mqttService = new MQTTService(app);
   udpLogger = new UDPLogger();
@@ -341,9 +342,9 @@ app.whenReady().then(() => {
   provisioningService.initialize().catch(err => {
     console.error('Failed to initialize provisioning service:', err);
   });
-  
+
   createWindow();
-  
+
   // UDP logger starts manually via UI with port configuration
   // TCP console client connects manually via UI
 
@@ -645,7 +646,7 @@ ipcMain.handle('serial:connect', async (event, port, baudRate) => {
         mainWindow.webContents.send('serial:message', message);
       }
     });
-    
+
     return await serialConsole.connect(port, baudRate);
   } catch (error) {
     console.error('Failed to connect serial console:', error);
@@ -723,7 +724,7 @@ ipcMain.handle('provisioning:flashNVSBinary', async (event, port, chip, offset, 
         mainWindow.webContents.send('provisioning:progress', progress);
       }
     });
-    
+
     return await provisioningService.flashNVSBinary(port, chip, offset, binPath, baudRate);
   } catch (error) {
     console.error('Failed to flash NVS binary:', error);
@@ -740,7 +741,7 @@ ipcMain.handle('provisioning:provisionESP32', async (event, config) => {
         mainWindow.webContents.send('provisioning:progress', progress);
       }
     });
-    
+
     return await provisioningService.provisionESP32(config);
   } catch (error) {
     console.error('Failed to provision ESP32:', error);
@@ -798,4 +799,122 @@ ipcMain.handle('fleet:clearMessages', () => {
 
 ipcMain.handle('fleet:getDevices', () => {
   return fleetMonitoring.getDevices();
+});
+
+// STM32 OpenOCD IPC Handlers
+ipcMain.handle('stm32:flashDroplet', async (event, firmwarePath, version) => {
+  try {
+    if (version !== undefined) {
+      OpenOCDSTM32Service.setVersion(version);
+    }
+
+    const mainWindow = BrowserWindow.getAllWindows()[0];
+
+    const result = await OpenOCDSTM32Service.flashAndReadInfo(firmwarePath, (progress) => {
+      if (mainWindow) {
+        mainWindow.webContents.send('stm32:flash-progress', progress);
+      }
+    });
+
+    if (mainWindow) {
+      mainWindow.webContents.send('stm32:flash-complete', result);
+    }
+
+    return result;
+  } catch (error) {
+    console.error('Failed to flash STM32 droplet:', error);
+    const mainWindow = BrowserWindow.getAllWindows()[0];
+    if (mainWindow) {
+      mainWindow.webContents.send('stm32:flash-error', { error: error.message });
+    }
+    throw error;
+  }
+});
+
+ipcMain.handle('stm32:readUID', async () => {
+  try {
+    const uidResult = await OpenOCDSTM32Service.readUID();
+    const loraInfo = OpenOCDSTM32Service.generateLoRaID(uidResult.uid0, uidResult.uid1, uidResult.uid2);
+
+    return {
+      success: true,
+      uid: {
+        uid0: uidResult.uid0,
+        uid1: uidResult.uid1,
+        uid2: uidResult.uid2,
+        uid0Hex: uidResult.uid0.toString(16).padStart(8, '0').toUpperCase(),
+        uid1Hex: uidResult.uid1.toString(16).padStart(8, '0').toUpperCase(),
+        uid2Hex: uidResult.uid2.toString(16).padStart(8, '0').toUpperCase()
+      },
+      loraID: loraInfo,
+      rawOutput: uidResult.raw
+    };
+  } catch (error) {
+    console.error('Failed to read STM32 UID:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('stm32:detectSTLink', async () => {
+  try {
+    return await OpenOCDSTM32Service.detectSTLink();
+  } catch (error) {
+    console.error('Failed to detect ST-Link:', error);
+    return {
+      success: false,
+      detected: false,
+      error: error.message
+    };
+  }
+});
+
+ipcMain.handle('stm32:getStatus', () => {
+  return OpenOCDSTM32Service.getStatus();
+});
+
+ipcMain.handle('stm32:setVersion', (event, version) => {
+  OpenOCDSTM32Service.setVersion(version);
+  return { success: true, version };
+});
+
+ipcMain.handle('stm32:disconnect', async () => {
+  try {
+    return await OpenOCDSTM32Service.disconnectSTLink();
+  } catch (error) {
+    console.error('Failed to disconnect ST-Link:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+});
+
+ipcMain.handle('dialog:openFile', async (event, options) => {
+  const mainWindow = BrowserWindow.getAllWindows()[0];
+  if (!mainWindow) {
+    throw new Error('No main window found');
+  }
+
+  return await dialog.showOpenDialog(mainWindow, options);
+});
+
+// STM32 Device Type Management
+ipcMain.handle('stm32:setDeviceType', async (event, deviceType) => {
+  try {
+    return OpenOCDSTM32Service.setDeviceType(deviceType);
+  } catch (error) {
+    console.error('Failed to set device type:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('stm32:getDeviceTypes', () => {
+  return OpenOCDSTM32Service.getDeviceTypes();
+});
+
+ipcMain.handle('stm32:getCurrentDeviceType', () => {
+  return {
+    success: true,
+    deviceType: OpenOCDSTM32Service.currentDeviceType
+  };
 });
