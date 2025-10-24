@@ -44,11 +44,19 @@ class ESP32Provisioning {
       let esptoolBinaryName, esptoolSourcePath;
       if (platform === 'win32') {
         esptoolBinaryName = 'esptool.exe';
+        // Handle both development and packaged app paths
         esptoolSourcePath = path.join(__dirname, '../embedded/esptool-binaries/windows', esptoolBinaryName);
+        if (!fs.existsSync(esptoolSourcePath)) {
+          esptoolSourcePath = path.join(process.resourcesPath, 'embedded/esptool-binaries/windows', esptoolBinaryName);
+        }
         this.esptoolPath = path.join(esptoolDir, esptoolBinaryName);
       } else {
         esptoolBinaryName = 'esptool';
+        // Handle both development and packaged app paths
         esptoolSourcePath = path.join(__dirname, '../embedded/esptool-binaries/linux', esptoolBinaryName);
+        if (!fs.existsSync(esptoolSourcePath)) {
+          esptoolSourcePath = path.join(process.resourcesPath, 'embedded/esptool-binaries/linux', esptoolBinaryName);
+        }
         this.esptoolPath = path.join(esptoolDir, esptoolBinaryName);
       }
 
@@ -58,6 +66,7 @@ class ESP32Provisioning {
                                    fs.statSync(esptoolSourcePath).mtime > fs.statSync(this.esptoolPath).mtime;
 
         if (shouldCopyEsptool) {
+          console.log(`Extracting esptool binary from: ${esptoolSourcePath}`);
           console.log(`Extracting esptool binary to: ${this.esptoolPath}`);
           fs.copyFileSync(esptoolSourcePath, this.esptoolPath);
 
@@ -66,8 +75,12 @@ class ESP32Provisioning {
             fs.chmodSync(this.esptoolPath, 0o755);
           }
         }
+        console.log(`esptool path confirmed: ${this.esptoolPath}`);
       } else {
-        console.warn(`esptool binary not found at: ${esptoolSourcePath}`);
+        console.error(`esptool binary not found at: ${esptoolSourcePath}`);
+        console.error(`__dirname: ${__dirname}`);
+        console.error(`process.resourcesPath: ${process.resourcesPath}`);
+        throw new Error(`esptool binary not found at: ${esptoolSourcePath}`);
       }
 
       // Set nvs_partition_gen path
@@ -78,10 +91,18 @@ class ESP32Provisioning {
 
       let sourcePath;
       if (platform === 'win32') {
+        // Handle both development and packaged app paths
         sourcePath = path.join(__dirname, '../embedded/nvs-binaries/windows/nvs_partition_gen.exe');
+        if (!fs.existsSync(sourcePath)) {
+          sourcePath = path.join(process.resourcesPath, 'embedded/nvs-binaries/windows/nvs_partition_gen.exe');
+        }
         this.nvsGenPath = path.join(nvsDir, 'nvs_partition_gen.exe');
       } else {
+        // Handle both development and packaged app paths
         sourcePath = path.join(__dirname, '../embedded/nvs-binaries/linux/nvs_partition_gen');
+        if (!fs.existsSync(sourcePath)) {
+          sourcePath = path.join(process.resourcesPath, 'embedded/nvs-binaries/linux/nvs_partition_gen');
+        }
         this.nvsGenPath = path.join(nvsDir, 'nvs_partition_gen');
       }
 
@@ -91,6 +112,7 @@ class ESP32Provisioning {
                           fs.statSync(sourcePath).mtime > fs.statSync(this.nvsGenPath).mtime;
 
         if (shouldCopy) {
+          console.log(`Copying nvs_partition_gen from: ${sourcePath}`);
           console.log(`Copying nvs_partition_gen to: ${this.nvsGenPath}`);
           fs.copyFileSync(sourcePath, this.nvsGenPath);
 
@@ -99,8 +121,10 @@ class ESP32Provisioning {
             fs.chmodSync(this.nvsGenPath, 0o755);
           }
         }
+        console.log(`nvs_partition_gen path confirmed: ${this.nvsGenPath}`);
       } else {
-        console.warn(`nvs_partition_gen binary not found at: ${sourcePath}`);
+        console.error(`nvs_partition_gen binary not found at: ${sourcePath}`);
+        throw new Error(`nvs_partition_gen binary not found at: ${sourcePath}`);
       }
 
       this.initialized = true;
@@ -527,6 +551,18 @@ class ESP32Provisioning {
    * Complete provisioning workflow
    */
   async provisionESP32(config) {
+    // Check if initialized
+    if (!this.initialized || !fs.existsSync(this.esptoolPath)) {
+      console.error('Provisioning service not initialized properly');
+      console.error('esptoolPath:', this.esptoolPath);
+      console.error('initialized:', this.initialized);
+      // Try to re-initialize
+      await this.initialize();
+      if (!fs.existsSync(this.esptoolPath)) {
+        throw new Error('esptool binary not found. Please restart the application.');
+      }
+    }
+
     const result = {
       success: false,
       message: '',
