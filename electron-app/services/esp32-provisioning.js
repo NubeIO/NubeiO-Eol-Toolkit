@@ -309,8 +309,7 @@ class ESP32Provisioning {
         '--chip', chip,
         '--port', port,
         '--baud', baudRate,
-        '--after', 'no_reset',
-        'write_flash', offset, binPath
+        'write-flash', offset, binPath
       ];
 
       console.log(`Flashing NVS: ${this.esptoolPath} ${args.join(' ')}`);
