@@ -345,6 +345,8 @@ class ESP32FlasherNative {
       bootloader: '',
       partition: '',
       otaData: '',
+      otaDataInitial: '',
+      storage: '',
       firmware: ''
     };
 
@@ -360,12 +362,19 @@ class ESP32FlasherNative {
           const fileName = file.toLowerCase();
 
           // Categorize based on naming patterns
+          // Note: Check ota_data_initial BEFORE ota_data to avoid wrong classification
           if (fileName.includes('bootloader') && !discovered.bootloader) {
             discovered.bootloader = fullPath;
           } else if (fileName.includes('partition') && !discovered.partition) {
             discovered.partition = fullPath;
-          } else if (fileName === 'ota_data_initial.bin' && !discovered.otaData) {
+          } else if (fileName.includes('ota_data_initial') && !discovered.otaDataInitial) {
+            // Match ota_data_initial.bin, ota_data_initial-v1.1.2.bin, etc.
+            discovered.otaDataInitial = fullPath;
+          } else if (fileName.includes('ota_data') && !discovered.otaData) {
+            // Match ota_data.bin but NOT ota_data_initial
             discovered.otaData = fullPath;
+          } else if (fileName.includes('storage') && !discovered.storage) {
+            discovered.storage = fullPath;
           } else {
             // Any other .bin file is potential firmware
             potentialFirmware.push(fullPath);
@@ -395,6 +404,24 @@ class ESP32FlasherNative {
         }
       }
 
+      // Check ota_data_initial subfolder
+      if (!discovered.otaDataInitial) {
+        const otaDataSubfolder = path.join(folderPath, 'ota_data_initial');
+        if (fs.existsSync(otaDataSubfolder)) {
+          const subFiles = this.scanFolderForBinFiles(otaDataSubfolder);
+          if (subFiles.otaDataInitial) discovered.otaDataInitial = subFiles.otaDataInitial;
+        }
+      }
+
+      // Check storage subfolder
+      if (!discovered.storage) {
+        const storageSubfolder = path.join(folderPath, 'storage');
+        if (fs.existsSync(storageSubfolder)) {
+          const subFiles = this.scanFolderForBinFiles(storageSubfolder);
+          if (subFiles.storage) discovered.storage = subFiles.storage;
+        }
+      }
+
     } catch (error) {
       console.error('Error scanning folder:', error);
     }
@@ -403,7 +430,7 @@ class ESP32FlasherNative {
   }
 
   /**
-   * Flash complete firmware (bootloader + partition + OTA + firmware)
+   * Flash complete firmware (bootloader + partition + OTA + firmware + storage)
    */
   async flashComplete(options) {
     const {
@@ -412,6 +439,8 @@ class ESP32FlasherNative {
       bootloaderPath = '',
       partitionPath = '',
       otaDataPath = '',
+      otaDataInitialPath = '',
+      storagePath = '',
       firmwarePath = '',
       eraseFlash = true,
       chipType = null,
@@ -467,8 +496,14 @@ class ESP32FlasherNative {
         const firmwareAddr = isESP32S3 ? '0x20000' : '0x10000';
         console.log('flashComplete: firmwareAddr =', firmwareAddr, 'for chipType:', chipType);
 
+        // OTA data initial address - 0x19000
+        const otaDataInitialAddr = '0x19000';
+
+        // Storage address - 0xa70000
+        const storageAddr = '0xa70000';
+
         // Add files in address order (ascending) - esptool format
-        // Match ESP-IDF command: bootloader, partition, firmware (OTA data is optional)
+        // Match ESP-IDF command: bootloader, partition, firmware, ota_data_initial, storage (OTA data is optional)
 
         // Add bootloader
         if (bootloaderPath && fs.existsSync(bootloaderPath)) {
@@ -487,6 +522,18 @@ class ESP32FlasherNative {
 
         // Add firmware (required)
         args.push(firmwareAddr, firmwarePath);
+
+        // Add OTA data initial at 0x19000
+        if (otaDataInitialPath && fs.existsSync(otaDataInitialPath)) {
+          args.push(otaDataInitialAddr, otaDataInitialPath);
+          console.log('Adding ota_data_initial.bin at', otaDataInitialAddr);
+        }
+
+        // Add storage at 0xa70000
+        if (storagePath && fs.existsSync(storagePath)) {
+          args.push(storageAddr, storagePath);
+          console.log('Adding storage.bin at', storageAddr);
+        }
 
         console.log('Complete flash command:', this.esptoolPath, args.join(' '));
 

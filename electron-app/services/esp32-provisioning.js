@@ -1201,6 +1201,111 @@ class ESP32Provisioning {
       nvsGenPath: this.nvsGenPath
     };
   }
+
+  /**
+   * Check CA URL connectivity (HTTP/HTTPS server)
+   */
+  async checkCAConnection(caUrl) {
+    try {
+      console.log('Checking CA URL connectivity:', caUrl);
+      
+      // Parse the URL to validate format
+      let url;
+      try {
+        url = new URL(caUrl);
+      } catch (error) {
+        throw new Error(`Invalid CA URL format: ${error.message}`);
+      }
+
+      // Only allow http:// or https:// protocols
+      if (!['http:', 'https:'].includes(url.protocol)) {
+        throw new Error(`Invalid protocol. Use http:// or https://. Got: ${url.protocol}`);
+      }
+
+      // Extract host and port
+      const host = url.hostname;
+      const port = url.port || (url.protocol === 'https:' ? 443 : 80);
+
+      console.log(`Attempting to connect to CA server at ${host}:${port}`);
+
+      // Use node's http/https module to test connection
+      const httpModule = url.protocol === 'https:' ? require('https') : require('http');
+      
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          req.destroy();
+          reject(new Error(`Connection timeout: Could not connect to ${host}:${port} within 10 seconds`));
+        }, 10000); // 10 second timeout
+
+        const options = {
+          hostname: host,
+          port: port,
+          path: url.pathname || '/',
+          method: 'HEAD', // Use HEAD to minimize data transfer
+          timeout: 10000,
+          headers: {
+            'User-Agent': 'FGA-AC-Simulator/1.0'
+          }
+        };
+
+        // For HTTPS, allow self-signed certificates (common in local CA servers)
+        if (url.protocol === 'https:') {
+          options.rejectUnauthorized = false;
+        }
+
+        const req = httpModule.request(options, (res) => {
+          clearTimeout(timeout);
+          
+          // Accept any 2xx, 3xx, 4xx response (server is reachable)
+          // Even 404 means the server is responding
+          if (res.statusCode) {
+            console.log(`Successfully connected to CA URL (HTTP ${res.statusCode})`);
+            resolve({
+              success: true,
+              message: `Successfully connected to ${host}:${port} (HTTP ${res.statusCode})`,
+              host,
+              port,
+              statusCode: res.statusCode
+            });
+          } else {
+            reject(new Error(`Unexpected response from ${host}:${port}`));
+          }
+          
+          // Consume response to free up memory
+          res.resume();
+        });
+
+        req.on('error', (error) => {
+          clearTimeout(timeout);
+          let errorMessage = error.message;
+          
+          // Provide more user-friendly error messages
+          if (error.code === 'ECONNREFUSED') {
+            errorMessage = `Connection refused. Server is not running at ${host}:${port}`;
+          } else if (error.code === 'ENOTFOUND') {
+            errorMessage = `Host not found: ${host}`;
+          } else if (error.code === 'ETIMEDOUT' || error.code === 'ESOCKETTIMEDOUT') {
+            errorMessage = `Connection timeout: ${host}:${port} is not responding`;
+          } else if (error.code === 'ECONNRESET') {
+            errorMessage = `Connection reset by server at ${host}:${port}`;
+          }
+          
+          reject(new Error(`Connection failed: ${errorMessage}`));
+        });
+
+        req.on('timeout', () => {
+          clearTimeout(timeout);
+          req.destroy();
+          reject(new Error(`Request timeout: ${host}:${port} did not respond within 10 seconds`));
+        });
+
+        req.end();
+      });
+    } catch (error) {
+      console.error('CA URL check failed:', error);
+      throw error;
+    }
+  }
 }
 
 module.exports = ESP32Provisioning;

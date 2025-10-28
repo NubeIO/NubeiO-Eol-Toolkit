@@ -1475,8 +1475,9 @@ class App {
         `Port: ${this.selectedPort}\n` +
         `Bootloader: ${this.discoveredFiles.bootloader ? '✓' : '✗'}\n` +
         `Partition: ${this.discoveredFiles.partition ? '✓' : '✗'}\n` +
-        `OTA Data: ${this.discoveredFiles.otaData ? '✓' : '✗'}\n` +
         `Firmware: ${this.discoveredFiles.firmware ? '✓' : '✗'}\n` +
+        `OTA Data Initial: ${this.discoveredFiles.otaDataInitial ? '✓' : '✗'}\n` +
+        `Storage: ${this.discoveredFiles.storage ? '✓' : '✗'}\n` +
         `Baud Rate: ${baudRate}\n` +
         `Erase Flash: ${eraseFlash ? 'Yes' : 'No'}\n\n` +
         `This will take 2-3 minutes. Continue?`
@@ -1496,6 +1497,8 @@ class App {
           bootloaderPath: this.discoveredFiles.bootloader,
           partitionPath: this.discoveredFiles.partition,
           otaDataPath: this.discoveredFiles.otaData,
+          otaDataInitialPath: this.discoveredFiles.otaDataInitial,
+          storagePath: this.discoveredFiles.storage,
           firmwarePath: this.discoveredFiles.firmware,
           eraseFlash: eraseFlash,
           chipType: this.chipType,
@@ -1751,18 +1754,25 @@ class App {
                   <span class="text-gray-500 text-xs">@ 0x8000</span>
                 </div>
                 <div class="flex justify-between text-xs">
-                  <span class="text-gray-600">OTA Data (optional):</span>
-                  <span class="${this.discoveredFiles.otaData ? 'text-green-600 font-semibold' : 'text-gray-400'}">
-                    ${this.discoveredFiles.otaData ? this.discoveredFiles.otaData.split('/').pop() : 'Not found (will skip)'}
-                  </span>
-                  <span class="text-gray-500 text-xs">@ 0xd000</span>
-                </div>
-                <div class="flex justify-between text-xs">
                   <span class="text-gray-600">Firmware (required):</span>
                   <span class="${this.discoveredFiles.firmware ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}">
                     ${this.discoveredFiles.firmware ? this.discoveredFiles.firmware.split('/').pop() : 'Not found (required!)'}
                   </span>
                   <span class="text-gray-500 text-xs">@ ${this.chipType && this.chipType.includes('ESP32-S3') ? '0x20000' : '0x10000'}</span>
+                </div>
+                <div class="flex justify-between text-xs">
+                  <span class="text-gray-600">OTA Data Initial (optional):</span>
+                  <span class="${this.discoveredFiles.otaDataInitial ? 'text-green-600 font-semibold' : 'text-gray-400'}">
+                    ${this.discoveredFiles.otaDataInitial ? this.discoveredFiles.otaDataInitial.split('/').pop() : 'Not found (will skip)'}
+                  </span>
+                  <span class="text-gray-500 text-xs">@ 0x19000</span>
+                </div>
+                <div class="flex justify-between text-xs">
+                  <span class="text-gray-600">Storage (optional):</span>
+                  <span class="${this.discoveredFiles.storage ? 'text-green-600 font-semibold' : 'text-gray-400'}">
+                    ${this.discoveredFiles.storage ? this.discoveredFiles.storage.split('/').pop() : 'Not found (will skip)'}
+                  </span>
+                  <span class="text-gray-500 text-xs">@ 0xa70000</span>
                 </div>
               </div>
             ` : ''}

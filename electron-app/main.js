@@ -749,6 +749,21 @@ ipcMain.handle('provisioning:provisionESP32', async (event, config) => {
   }
 });
 
+// Check CA URL connectivity
+ipcMain.handle('provisioning:checkCAConnection', async (event, caUrl) => {
+  try {
+    console.log('Checking CA connection for URL:', caUrl);
+    const result = await provisioningService.checkCAConnection(caUrl);
+    return { success: true, data: result };
+  } catch (error) {
+    console.error('CA connection check failed:', error);
+    return { 
+      success: false, 
+      error: error.message 
+    };
+  }
+});
+
 ipcMain.handle('provisioning:getChipTypes', () => {
   return provisioningService.getChipTypes();
 });

@@ -123,6 +123,7 @@ contextBridge.exposeInMainWorld('provisioningService', {
   flashNVSBinary: (port, chip, offset, binPath, baudRate) =>
     ipcRenderer.invoke('provisioning:flashNVSBinary', port, chip, offset, binPath, baudRate),
   provisionESP32: (config) => ipcRenderer.invoke('provisioning:provisionESP32', config),
+  checkCAConnection: (caUrl) => ipcRenderer.invoke('provisioning:checkCAConnection', caUrl),
   getChipTypes: () => ipcRenderer.invoke('provisioning:getChipTypes'),
   eraseFlash: (port, eraseType) => ipcRenderer.invoke('provisioning:eraseFlash', port, eraseType),
   eraseCustomRegion: (port, address, size) => ipcRenderer.invoke('provisioning:eraseCustomRegion', port, address, size),

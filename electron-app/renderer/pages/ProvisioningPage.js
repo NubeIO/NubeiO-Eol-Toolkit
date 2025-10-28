@@ -87,8 +87,18 @@ class ProvisioningPage {
                 </div>
                 
                 <div>
-                  <label class="block text-sm font-medium text-gray-700 mb-2">CA Service URL</label>
-                  <input type="text" id="prov-caurl" value="${this.config.caUrl}" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="http://128.199.170.214:8080" ${this.isProvisioning ? 'disabled' : ''}>
+                  <label class="block text-sm font-medium text-gray-700 mb-2">CA Service URL (HTTP/HTTPS)</label>
+                  <div class="flex gap-2">
+                    <input type="text" id="prov-caurl" value="${this.config.caUrl}" class="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="http://128.199.170.214:8080" ${this.isProvisioning ? 'disabled' : ''}>
+                    <button 
+                      onclick="provisioningPage.testCAConnection()" 
+                      class="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      ${this.isProvisioning ? 'disabled' : ''}
+                    >
+                      Test
+                    </button>
+                  </div>
+                  <p class="mt-1 text-xs text-gray-500">Enter the HTTP/HTTPS URL of your Certificate Authority server</p>
                 </div>
               </div>
             </div>
@@ -416,6 +426,22 @@ class ProvisioningPage {
 
     try {
       this.isProvisioning = true;
+      this.stage = 'Validating CA URL connectivity...';
+      this.app.render();
+
+      // Check CA URL connectivity first
+      const caCheckResult = await window.provisioningService.checkCAConnection(caUrl);
+      
+      if (!caCheckResult.success) {
+        throw new Error(`CA URL validation failed: ${caCheckResult.error}`);
+      }
+
+      this.stage = `✓ CA URL validated: ${caCheckResult.data.host}:${caCheckResult.data.port} (HTTP ${caCheckResult.data.statusCode})`;
+      this.app.render();
+
+      // Wait a moment to show the success message
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
       this.stage = 'Starting complete provisioning...';
       this.app.render();
 
@@ -445,6 +471,35 @@ class ProvisioningPage {
 
   toggleWiFi() {
     this.includeWiFi = document.getElementById('prov-include-wifi').checked;
+    this.app.render();
+  }
+
+  async testCAConnection() {
+    const caUrl = document.getElementById('prov-caurl').value;
+    
+    if (!caUrl) {
+      alert('❌ Please enter a CA URL');
+      return;
+    }
+
+    this.stage = 'Testing CA connection...';
+    this.app.render();
+
+    try {
+      const result = await window.provisioningService.checkCAConnection(caUrl);
+      
+      if (result.success) {
+        this.stage = `✓ Connected to ${result.data.host}:${result.data.port} (HTTP ${result.data.statusCode})`;
+        alert(`✅ CA Connection Successful\n\nHost: ${result.data.host}\nPort: ${result.data.port}\nHTTP Status: ${result.data.statusCode}\n\nThe CA server is reachable.`);
+      } else {
+        this.stage = '❌ CA connection failed';
+        alert(`❌ CA Connection Failed\n\n${result.error}`);
+      }
+    } catch (error) {
+      this.stage = '❌ CA connection test failed';
+      alert(`❌ Connection Test Failed\n\n${error.message}`);
+    }
+    
     this.app.render();
   }
 
