@@ -48,6 +48,23 @@ jobs:
           cache: 'npm'
           cache-dependency-path: electron-app/package-lock.json
       
+      - name: Update version in package.json
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" == "push" ]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            VERSION="${TAG#v}"
+          else
+            TAG="${{ github.event.inputs.release_tag }}"
+            if [ -z "$TAG" ]; then
+              VERSION="1.0.0"
+            else
+              VERSION="${TAG#v}"
+            fi
+          fi
+          echo "Setting version to: $VERSION"
+          npm version $VERSION --no-git-tag-version --allow-same-version
+      
       - name: Install dependencies
         run: npm ci
       
@@ -79,6 +96,22 @@ jobs:
           cache: 'npm'
           cache-dependency-path: electron-app/package-lock.json
       
+      - name: Update version in package.json
+        run: |
+          if [ "${{ github.event_name }}" == "push" ]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            VERSION="${TAG#v}"
+          else
+            TAG="${{ github.event.inputs.release_tag }}"
+            if [ -z "$TAG" ]; then
+              VERSION="1.0.0"
+            else
+              VERSION="${TAG#v}"
+            fi
+          fi
+          echo "Setting version to: $VERSION"
+          npm version $VERSION --no-git-tag-version --allow-same-version
+      
       - name: Install dependencies
         run: npm ci
       
@@ -103,6 +136,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch full history for changelog generation
       
       - name: Download Windows artifacts
         if: ${{ needs.build-windows.result == 'success' }}
@@ -133,6 +168,17 @@ jobs:
             echo "tag=$TAG" >> $GITHUB_OUTPUT
           fi
       
+      - name: Auto-detect previous version
+        id: detect_version
+        run: |
+          CURRENT_TAG="${{ steps.get_tag.outputs.tag }}"
+          LATEST_TAG=$(git tag --sort=-version:refname | grep -v "^${CURRENT_TAG}$" | head -1)
+          if [ -z "$LATEST_TAG" ]; then
+            LATEST_TAG=$(git rev-list --max-parents=0 HEAD)
+          fi
+          echo "previous_version=$LATEST_TAG" >> $GITHUB_OUTPUT
+          echo "Auto-detected previous version: $LATEST_TAG"
+      
       - name: List downloaded artifacts
         run: |
           if [ -d "./windows-build" ]; then
@@ -146,10 +192,121 @@ jobs:
             echo ""
           fi
       
+      - name: Generate release notes
+        run: |
+          CURRENT_TAG="${{ steps.get_tag.outputs.tag }}"
+          PREVIOUS_VERSION="${{ steps.detect_version.outputs.previous_version }}"
+          
+          # Start with main title
+          echo "## 🚀 Nube iO Toolkit Release ${CURRENT_TAG}" > release_notes.md
+          echo "" >> release_notes.md
+          echo "Complete development tool for ESP32: Flash, Monitor, Control & Simulate" >> release_notes.md
+          echo "" >> release_notes.md
+          
+          # Generate commit-based changelog
+          echo "### 📝 Changes Since ${PREVIOUS_VERSION}" >> release_notes.md
+          echo "" >> release_notes.md
+          
+          # Get commits since previous version
+          if [ "$PREVIOUS_VERSION" != "$(git rev-list --max-parents=0 HEAD)" ]; then
+            git log --pretty=format:"- %s (%h)" ${PREVIOUS_VERSION}..HEAD --reverse >> release_notes.md
+          else
+            git log --pretty=format:"- %s (%h)" --reverse >> release_notes.md
+          fi
+          echo "" >> release_notes.md
+          echo "" >> release_notes.md
+          
+          # Add download information
+          cat >> release_notes.md <<'EOF'
+          ## 📦 Downloads
+          
+          ### Windows
+          - **Installer**: `Nube-iO-Toolkit-Setup-${CURRENT_TAG}.exe` - Full installer with all dependencies
+          
+          ### Linux
+          - **AppImage**: `Nube-iO-Toolkit-${CURRENT_TAG}.AppImage` - Portable application (no installation needed)
+          - **Debian Package**: `nube-io-toolkit_${CURRENT_TAG}_amd64.deb` - For Debian/Ubuntu systems
+          
+          ## 🚀 Quick Start
+          
+          **Windows:**
+          1. Download the `.exe` installer
+          2. Run the installer and follow the prompts
+          3. Launch "Nube iO Toolkit" from Start Menu
+          
+          **Linux (AppImage):**
+          ```bash
+          chmod +x Nube-iO-Toolkit-*.AppImage
+          ./Nube-iO-Toolkit-*.AppImage
+          ```
+          
+          **Linux (Debian/Ubuntu):**
+          ```bash
+          sudo dpkg -i nube-io-toolkit_*.deb
+          sudo apt-get install -f  # Install dependencies if needed
+          nube-io-toolkit
+          ```
+          
+          ## ✨ Features
+          
+          - **ESP32 Flash Tool**: Flash firmware to ESP32 devices with ease
+          - **Serial Console**: Monitor and interact with device serial output
+          - **UDP Logger**: Capture and analyze UDP log messages
+          - **Device Provisioning**: Complete ESP32 provisioning workflow
+          - **Fleet Monitoring**: Monitor multiple devices simultaneously
+          - **MQTT Integration**: Connect and manage MQTT-enabled devices
+          
+          ## ℹ️ Build Information
+          
+          - **Version:** ${CURRENT_TAG}
+          - **Build Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          - **Commit:** ${{ github.sha }}
+          - **Branch:** ${{ github.ref_name }}
+          - **Changes Since:** ${PREVIOUS_VERSION}
+          
+          ## 🛠️ System Requirements
+          
+          **Windows:**
+          - Windows 10 or later (64-bit)
+          - .NET Framework 4.6 or later
+          
+          **Linux:**
+          - Ubuntu 18.04 or later (or equivalent)
+          - GLIBC 2.27 or later
+          - libusb (for serial communication)
+          
+          ## 📋 What's Included
+          
+          - **ESP32 Flasher**: Native esptool integration
+          - **Serial Port Support**: Full serial communication
+          - **Device Provisioning**: MAC address reading, UUID/PSK generation, NVS flashing
+          - **WiFi Configuration**: Automatic WiFi setup via serial console
+          - **Boot Log Monitoring**: Real-time device boot analysis
+          - **CA URL Validation**: HTTP/HTTPS connectivity checking
+          
+          ---
+          
+          🤖 **Generated automatically from commits**
+          
+          📝 **Need help?** Check our documentation
+          
+          🐛 **Found an issue?** Please report it on GitHub Issues
+          
+          ⭐ **Like this tool?** Give us a star on GitHub!
+          EOF
+          
+          # Replace ${CURRENT_TAG} in the markdown
+          sed -i "s/\${CURRENT_TAG}/${CURRENT_TAG}/g" release_notes.md
+          
+          echo "=== Generated Release Notes ==="
+          cat release_notes.md
+      
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.get_tag.outputs.tag }}
+          name: Nube iO Toolkit ${{ steps.get_tag.outputs.tag }}
+          body_path: release_notes.md
           files: |
             ./windows-build/*.exe
             ./linux-build/*.AppImage
