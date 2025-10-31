@@ -37,11 +37,39 @@ class OpenOCDSTM32Service {
             ? path.join(process.resourcesPath)
             : path.join(__dirname, '..');
 
-        this.openocdPath = path.join(basePath, 'embedded/openocd-binaries/windows/bin/openocd.exe');
-        this.scriptsPath = path.join(basePath, 'embedded/openocd-binaries/windows/openocd/scripts');
+        // Detect platform and set paths accordingly
+        const platform = process.platform; // 'win32', 'linux', 'darwin'
+        let openocdBinary, scriptsSubPath;
+
+        if (platform === 'win32') {
+            openocdBinary = path.join(basePath, 'embedded/openocd-binaries/windows/bin/openocd.exe');
+            scriptsSubPath = 'embedded/openocd-binaries/windows/openocd/scripts';
+        } else if (platform === 'linux') {
+            openocdBinary = path.join(basePath, 'embedded/openocd-binaries/linux/bin/openocd');
+            // Check if using xPack structure (share/openocd/scripts) or custom structure (openocd/scripts)
+            const xpackScriptsPath = path.join(basePath, 'embedded/openocd-binaries/linux/share/openocd/scripts');
+            const customScriptsPath = path.join(basePath, 'embedded/openocd-binaries/linux/openocd/scripts');
+            scriptsSubPath = fs.existsSync(xpackScriptsPath) 
+                ? 'embedded/openocd-binaries/linux/share/openocd/scripts'
+                : 'embedded/openocd-binaries/linux/openocd/scripts';
+        } else if (platform === 'darwin') {
+            // macOS support (future)
+            openocdBinary = path.join(basePath, 'embedded/openocd-binaries/macos/bin/openocd');
+            scriptsSubPath = 'embedded/openocd-binaries/macos/share/openocd/scripts';
+        } else {
+            throw new Error(`Unsupported platform: ${platform}`);
+        }
+
+        this.openocdPath = openocdBinary;
+        this.scriptsPath = path.join(basePath, scriptsSubPath);
+        this.platform = platform;
         this.isFlashing = false;
         this.VERSION = 0xC0; // Droplet version for LoRa ID calculation
         this.currentDeviceType = 'DROPLET'; // Default device type
+        
+        console.log(`OpenOCD STM32 Service initialized for platform: ${platform}`);
+        console.log(`OpenOCD binary: ${this.openocdPath}`);
+        console.log(`Scripts path: ${this.scriptsPath}`);
     }
 
     /**
@@ -98,23 +126,48 @@ class OpenOCDSTM32Service {
         try {
             // First attempt: Use selected device config
             // console.log(`=== Attempting detection with ${deviceConfig.name} config ===`);
-            const args = [
-                '-s', this.scriptsPath,
-                '-f', 'interface/stlink.cfg',
-                '-f', `target/${deviceConfig.target}`,
-                '-c', 'adapter speed 480',              // Lower speed for reliability
-                '-c', 'reset_config srst_only srst_nogate connect_assert_srst',  // Force reset on connect
-                '-c', 'init',
-                '-c', 'targets',
-                '-c', 'reset halt',
-                '-c', 'shutdown'                        // Keep chip halted for subsequent operations
+            
+            // Try multiple speeds and reset configs
+            const speeds = [480, 100];
+            const resetConfigs = [
+                'reset_config none separate',           // Software reset only (best for most cases, no NRST needed)
+                'reset_config none',                    // No reset
+                'reset_config srst_only',               // Hardware reset (needs NRST)
+                'reset_config srst_only srst_nogate connect_assert_srst'  // Connect under reset (needs NRST)
             ];
+            
+            let detectionResult = null;
+            let detectionSucceeded = false;
+            
+            // Try all combinations of speed and reset config
+            for (const speed of speeds) {
+                if (detectionSucceeded) break;
+                
+                for (const resetConfig of resetConfigs) {
+                    const args = [
+                        '-s', this.scriptsPath,
+                        '-f', 'interface/stlink.cfg',
+                        '-f', `target/${deviceConfig.target}`,
+                        '-c', `adapter speed ${speed}`,
+                        '-c', resetConfig,
+                        '-c', 'init',
+                        '-c', 'targets',
+                        '-c', 'reset halt',
+                        '-c', 'shutdown'
+                    ];
 
-            try {
-                result = await this.executeOpenOCD(args);
-            } catch (error) {
-            // console.log('Current config failed, trying auto-detection...');
-                result = { output: error.message || '' };
+                    try {
+                        detectionResult = await this.executeOpenOCD(args);
+                        result = detectionResult;
+                        detectionSucceeded = true;
+                        // console.log(`Detection succeeded at ${speed} kHz with ${resetConfig}`);
+                        break; // Success, exit inner loop
+                    } catch (error) {
+                        // console.log(`Detection at ${speed} kHz with ${resetConfig} failed`);
+                        detectionResult = { output: error.message || '' };
+                        result = detectionResult;
+                    }
+                }
             }
 
             // console.log('=== OpenOCD Detection Output ===');
@@ -466,61 +519,103 @@ class OpenOCDSTM32Service {
 
             const deviceConfig = this.getDeviceConfig();
 
-            // Reset configs optimized per device type
-            // For STM32F0 (Zone Controller), prefer software/SYSRESETREQ over hardware SRST
-            const resetConfigs = this.currentDeviceType === 'ZONE_CONTROLLER' ? [
-                'reset_config none separate',           // SYSRESETREQ only (best for STM32F0)
-                'reset_config none',                    // No reset, JTAG-only
-                'reset_config srst_only',               // Hardware SRST
-                'reset_config srst_only srst_nogate connect_assert_srst'
-            ] : [
-                'reset_config srst_only srst_nogate connect_assert_srst', // Droplet default
-                'reset_config none separate',
-                'reset_config srst_only',
-                'reset_config none'
+            // SWD speeds to try (from fast to slow)
+            const swdSpeeds = [100, 480]; // Try 100 kHz first (more reliable), then 480 kHz
+
+            // Multiple connection strategies to try (from most to least aggressive)
+            const connectionStrategies = [
+                {
+                    name: 'software_reset',
+                    resetConfig: 'reset_config none separate',
+                    initSequence: ['init', 'reset init', 'halt']
+                },
+                {
+                    name: 'halt_immediately',
+                    resetConfig: 'reset_config none',
+                    initSequence: ['init', 'halt']
+                },
+                {
+                    name: 'connect_under_reset',
+                    resetConfig: 'reset_config srst_only srst_nogate connect_assert_srst',
+                    initSequence: ['init', 'reset halt']
+                },
+                {
+                    name: 'jtag_style',
+                    resetConfig: 'reset_config none',
+                    initSequence: ['init']
+                }
             ];
 
             let lastError = null;
+            let attemptCount = 0;
+            const totalAttempts = swdSpeeds.length * connectionStrategies.length;
 
-            // Try different reset configurations
-            for (let i = 0; i < resetConfigs.length; i++) {
-                const resetConfig = resetConfigs[i];
-            // console.log(`[Flash] Attempt ${i + 1}/${resetConfigs.length} with: ${resetConfig}`);
+            // Try different SWD speeds and connection strategies
+            for (const speed of swdSpeeds) {
+                for (const strategy of connectionStrategies) {
+                    attemptCount++;
+                    // console.log(`[Flash] Attempt ${attemptCount}/${totalAttempts}: ${speed} kHz, ${strategy.name}`);
 
-                if (progressCallback && i > 0) {
-                    progressCallback({
-                        stage: 'retry',
-                        message: `Retrying with different configuration (${i + 1}/${resetConfigs.length})...`
-                    });
-                }
-
-                const args = [
-                    '-s', this.scriptsPath,
-                    '-f', 'interface/stlink.cfg',
-                    '-f', `target/${deviceConfig.target}`,
-                    '-c', 'adapter speed 480',
-                    '-c', resetConfig,
-                    '-c', `program {${normalizedPath}} verify reset exit 0x08000000`
-                ];
-
-                try {
-                    const result = await this.executeOpenOCD(args, progressCallback);
-
-                    if (progressCallback) {
-                        progressCallback({ stage: 'complete', message: 'Flash completed successfully' });
+                    if (progressCallback && attemptCount > 1) {
+                        progressCallback({
+                            stage: 'retry',
+                            message: `Trying different method (${attemptCount}/${totalAttempts})...`
+                        });
                     }
 
-                    this.isFlashing = false;
-            // console.log(`[Flash] Success with: ${resetConfig}`);
-                    return { success: true, output: result.output };
-                } catch (error) {
-                    lastError = error;
-            // console.log(`[Flash] Failed with ${resetConfig}: ${error.message}`);
+                    let args;
+                    
+                    if (strategy.initSequence === null) {
+                        // Simple program command (one-shot)
+                        args = [
+                            '-s', this.scriptsPath,
+                            '-f', 'interface/stlink.cfg',
+                            '-f', `target/${deviceConfig.target}`,
+                            '-c', `adapter speed ${speed}`,
+                            '-c', strategy.resetConfig,
+                            '-c', `program {${normalizedPath}} verify reset exit 0x08000000`
+                        ];
+                    } else {
+                        // Manual flash sequence with custom init
+                        args = [
+                            '-s', this.scriptsPath,
+                            '-f', 'interface/stlink.cfg',
+                            '-f', `target/${deviceConfig.target}`,
+                            '-c', `adapter speed ${speed}`,
+                            '-c', strategy.resetConfig,
+                            '-c', strategy.initSequence[0],
+                            '-c', strategy.initSequence[1],
+                            '-c', `flash write_image erase {${normalizedPath}} 0x08000000`,
+                            '-c', `verify_image {${normalizedPath}} 0x08000000`,
+                            '-c', 'reset run',
+                            '-c', 'shutdown'
+                        ];
+                    }
 
-                    // If this is not the last attempt, continue to next config
-                    if (i < resetConfigs.length - 1) {
-                        await new Promise(resolve => setTimeout(resolve, 500));
-                        continue;
+                    try {
+                        const result = await this.executeOpenOCD(args, progressCallback);
+
+                        if (progressCallback) {
+                            progressCallback({ stage: 'complete', message: 'Flash completed successfully' });
+                        }
+
+                        this.isFlashing = false;
+                        // console.log(`[Flash] Success with: ${speed} kHz, ${strategy.name}`);
+                        return { 
+                            success: true, 
+                            output: result.output,
+                            speedUsed: speed,
+                            strategyUsed: strategy.name
+                        };
+                    } catch (error) {
+                        lastError = error;
+                        // console.log(`[Flash] Failed with ${speed} kHz, ${strategy.name}: ${error.message}`);
+
+                        // If this is not the last attempt, continue to next strategy
+                        if (attemptCount < totalAttempts) {
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                            continue;
+                        }
                     }
                 }
             }
@@ -545,20 +640,51 @@ class OpenOCDSTM32Service {
 
         try {
             const deviceConfig = this.getDeviceConfig();
-            const args = [
-                '-s', this.scriptsPath,
-                '-f', 'interface/stlink.cfg',
-                '-f', `target/${deviceConfig.target}`,
-                '-c', 'adapter speed 480',
-                '-c', 'reset_config srst_only srst_nogate connect_assert_srst',
-                '-c', 'init',                           // Init to connect
-                '-c', 'reset halt',                     // Ensure halted
-                '-c', 'sleep 100',                      // Wait for chip to stabilize
-                '-c', `mdw ${deviceConfig.uidAddress} 3`,  // Read UID
-                '-c', 'shutdown'                        // Keep halted (don't reset run)
+            
+            // Try multiple speeds and reset configs
+            const speeds = [480, 100];
+            const resetConfigs = [
+                'reset_config none separate',           // Software reset only (no NRST needed)
+                'reset_config none',                    // No reset
+                'reset_config srst_only',               // Hardware reset (needs NRST)
+                'reset_config srst_only srst_nogate connect_assert_srst'  // Connect under reset (needs NRST)
             ];
+            
+            let result = null;
+            let lastError = null;
+            
+            // Try all combinations of speed and reset config
+            for (const speed of speeds) {
+                for (const resetConfig of resetConfigs) {
+                    const args = [
+                        '-s', this.scriptsPath,
+                        '-f', 'interface/stlink.cfg',
+                        '-f', `target/${deviceConfig.target}`,
+                        '-c', `adapter speed ${speed}`,
+                        '-c', resetConfig,
+                        '-c', 'init',
+                        '-c', 'reset halt',
+                        '-c', 'sleep 100',
+                        '-c', `mdw ${deviceConfig.uidAddress} 3`,
+                        '-c', 'shutdown'
+                    ];
 
-            const result = await this.executeOpenOCD(args);
+                    try {
+                        result = await this.executeOpenOCD(args);
+                        // console.log(`UID read succeeded at ${speed} kHz with ${resetConfig}`);
+                        break; // Success, exit inner loop
+                    } catch (error) {
+                        lastError = error;
+                        // console.log(`UID read at ${speed} kHz with ${resetConfig} failed`);
+                    }
+                }
+                
+                if (result) break; // Success, exit outer loop
+            }
+            
+            if (!result) {
+                throw lastError || new Error('Failed to read UID');
+            }
 
             // console.log('UID Read Output:', result.output);
 
@@ -934,6 +1060,8 @@ class OpenOCDSTM32Service {
             isFlashing: this.isFlashing,
             openocdAvailable: this.checkOpenOCD(),
             openocdPath: this.openocdPath,
+            scriptsPath: this.scriptsPath,
+            platform: this.platform,
             version: this.VERSION
         };
     }
