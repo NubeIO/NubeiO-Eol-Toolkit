@@ -510,7 +510,7 @@ class App {
 
     const handleModeClick = async () => {
       if (!this.isConnected || !acState.power) return;
-      const modes = ['Auto', 'Cool', 'Dry', 'Fan', 'Heat'];
+      const modes = ['Auto', 'Cool',  'Heat', 'Fan', 'Dry'];
       const currentIndex = modes.indexOf(acState.mode);
       const nextMode = modes[(currentIndex + 1) % modes.length];
       try {
@@ -755,7 +755,7 @@ class App {
     const device = this.discoveredDevices.find(d => d.deviceId === deviceId);
     if (!device || !this.isConnected || !device.state.power) return;
 
-    const modes = ['Auto', 'Cool', 'Dry', 'Fan', 'Heat'];
+    const modes = ['Auto', 'Cool',  'Heat', 'Fan', 'Dry'];
     const currentIndex = modes.indexOf(device.state.mode);
     const nextMode = modes[(currentIndex + 1) % modes.length];
 
