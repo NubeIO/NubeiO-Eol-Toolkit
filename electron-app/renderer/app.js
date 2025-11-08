@@ -523,7 +523,7 @@ class App {
 
     const handleFanClick = async () => {
       if (!this.isConnected || !acState.power) return;
-      const fans = ['Auto', 'Low', 'Medium', 'High'];
+      const fans = ['Auto', 'Quiet', 'Low', 'Medium', 'High'];
       const currentIndex = fans.indexOf(acState.fanSpeed);
       const nextFan = fans[(currentIndex + 1) % fans.length];
       try {
@@ -771,7 +771,7 @@ class App {
     const device = this.discoveredDevices.find(d => d.deviceId === deviceId);
     if (!device || !this.isConnected || !device.state.power) return;
 
-    const fans = ['Auto', 'Low', 'Medium', 'High'];
+    const fans = ['Auto', 'Quiet', 'Low', 'Medium', 'High'];
     const currentIndex = fans.indexOf(device.state.fanSpeed);
     const nextFan = fans[(currentIndex + 1) % fans.length];
 
