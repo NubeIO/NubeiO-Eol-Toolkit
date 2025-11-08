@@ -389,13 +389,13 @@ func (a *App) SetFanSpeed(speed string) *AirConditioner {
 
 		// Publish control command to ESP32
 		if a.mqtt != nil {
-			// Map speed names to ESP32 expected values (0-3)
+			// Map speed names to ESP32 expected values (0-4)
 			fanSpeedMap := map[string]int{
-				"Quiet":  0,
-				"Low":    1,
-				"Medium": 2,
-				"High":   3,
-				"Auto":   2, // Default to medium for auto
+				"Auto":   0,
+				"Quiet":  1,
+				"Low":    2,
+				"Medium": 3,
+				"High":   4,
 			}
 			if fanValue, ok := fanSpeedMap[speed]; ok {
 				a.mqtt.publishControlCommand("set_fan_speed", fanValue)
