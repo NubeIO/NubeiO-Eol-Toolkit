@@ -33,9 +33,6 @@ jobs:
   build-windows:
     if: ${{ !github.event.inputs.platform || github.event.inputs.platform == 'windows' || github.event.inputs.platform == 'all' }}
     runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: electron-app
     
     steps:
       - name: Checkout code
@@ -50,6 +47,7 @@ jobs:
       
       - name: Update version in package.json
         shell: bash
+        working-directory: electron-app
         run: |
           if [ "${{ github.event_name }}" == "push" ]; then
             TAG="${GITHUB_REF#refs/tags/}"
@@ -66,24 +64,34 @@ jobs:
           npm version $VERSION --no-git-tag-version --allow-same-version
       
       - name: Install dependencies
+        working-directory: electron-app
         run: npm ci
       
       - name: Build for Windows
+        working-directory: electron-app
         run: npm run build:win
+        env:
+          DEBUG: electron-builder
+      
+      - name: List build output
+        if: always()
+        shell: bash
+        working-directory: electron-app
+        run: |
+          echo "=== Build output ==="
+          ls -lh dist/ || echo "No dist folder"
       
       - name: Upload Windows artifacts (directory)
         uses: actions/upload-artifact@v4
         with:
           name: windows-build
-          path: electron-app/dist/
+          path: electron-app/dist/*.exe
           retention-days: 30
+          if-no-files-found: warn
 
   build-linux:
     if: ${{ !github.event.inputs.platform || github.event.inputs.platform == 'linux' || github.event.inputs.platform == 'all' }}
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: electron-app
     
     steps:
       - name: Checkout code
@@ -97,6 +105,7 @@ jobs:
           cache-dependency-path: electron-app/package-lock.json
       
       - name: Update version in package.json
+        working-directory: electron-app
         run: |
           if [ "${{ github.event_name }}" == "push" ]; then
             TAG="${GITHUB_REF#refs/tags/}"
@@ -113,16 +122,28 @@ jobs:
           npm version $VERSION --no-git-tag-version --allow-same-version
       
       - name: Install dependencies
+        working-directory: electron-app
         run: npm ci
       
       - name: Build for Linux
+        working-directory: electron-app
         run: npm run build:linux
+        env:
+          DEBUG: electron-builder
+      
+      - name: List build output
+        if: always()
+        working-directory: electron-app
+        run: |
+          echo "=== Build output ==="
+          ls -lh dist/ || echo "No dist folder"
       
       - name: Upload Linux artifacts (directory)
         uses: actions/upload-artifact@v4
         with:
           name: linux-build
-          path: electron-app/dist/
+          path: electron-app/dist/*.AppImage
+          if-no-files-found: warn
           retention-days: 30
 
   create-release:
@@ -301,7 +322,7 @@ jobs:
           echo "=== Generated Release Notes ==="
           cat release_notes.md
       
-      - name: Create GitHub Release
+      - name: Create GitHub Release (This Repository)
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.get_tag.outputs.tag }}
@@ -310,9 +331,25 @@ jobs:
           files: |
             ./windows-build/*.exe
             ./linux-build/*.AppImage
-            ./linux-build/*.deb
           draft: false
           prerelease: false
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Create GitHub Release (Public Repository)
+        uses: softprops/action-gh-release@v1
+        with:
+          repository: NubeIO/ZC-NubeiO-Toolkit-Release
+          tag_name: ${{ steps.get_tag.outputs.tag }}
+          name: Nube iO Toolkit ${{ steps.get_tag.outputs.tag }}
+          body_path: release_notes.md
+          files: |
+            ./windows-build/*.exe
+            ./linux-build/*.AppImage
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+        continue-on-error: true
