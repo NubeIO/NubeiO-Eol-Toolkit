@@ -62,43 +62,31 @@
       "node_modules/serialport/**/*",
       "node_modules/@serialport/**/*"
     ],
-    "extraResources": [
-      {
-        "from": "tools/esptool",
-        "to": "tools/esptool",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "embedded/openocd-binaries",
-        "to": "embedded/openocd-binaries",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "embedded/esptool-binaries",
-        "to": "embedded/esptool-binaries",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "embedded/nvs-binaries",
-        "to": "embedded/nvs-binaries",
-        "filter": [
-          "**/*"
-        ]
-      }
-    ],
     "linux": {
       "target": [
         "AppImage"
       ],
       "category": "Utility",
       "maintainer": "Nube IO <info@nube-io.com>",
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "extraResources": [
+        {
+          "from": "tools/esptool",
+          "to": "tools/esptool"
+        },
+        {
+          "from": "embedded/openocd-binaries/linux",
+          "to": "embedded/openocd-binaries/linux"
+        },
+        {
+          "from": "embedded/esptool-binaries",
+          "to": "embedded/esptool-binaries"
+        },
+        {
+          "from": "embedded/nvs-binaries",
+          "to": "embedded/nvs-binaries"
+        }
+      ]
     },
     "win": {
       "target": [
@@ -114,23 +102,19 @@
       "extraResources": [
         {
           "from": "tools/esptool",
-          "to": "tools/esptool",
-          "filter": ["**/*"]
+          "to": "tools/esptool"
         },
         {
           "from": "embedded/openocd-binaries/windows",
-          "to": "embedded/openocd-binaries/windows",
-          "filter": ["**/*"]
+          "to": "embedded/openocd-binaries/windows"
         },
         {
           "from": "embedded/esptool-binaries",
-          "to": "embedded/esptool-binaries",
-          "filter": ["**/*"]
+          "to": "embedded/esptool-binaries"
         },
         {
           "from": "embedded/nvs-binaries",
-          "to": "embedded/nvs-binaries",
-          "filter": ["**/*"]
+          "to": "embedded/nvs-binaries"
         }
       ]
     },
