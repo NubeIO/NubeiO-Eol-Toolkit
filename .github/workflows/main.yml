@@ -45,6 +45,15 @@ jobs:
           cache: 'npm'
           cache-dependency-path: electron-app/package-lock.json
       
+      - name: Clean cache and node_modules
+        shell: bash
+        working-directory: electron-app
+        run: |
+          echo "Cleaning electron-builder cache..."
+          rm -rf ~/.cache/electron-builder
+          rm -rf ~/AppData/Local/electron-builder/Cache || true
+          echo "Cache cleaned"
+      
       - name: Update version in package.json
         shell: bash
         working-directory: electron-app
@@ -103,6 +112,13 @@ jobs:
           node-version: '18'
           cache: 'npm'
           cache-dependency-path: electron-app/package-lock.json
+      
+      - name: Clean cache
+        working-directory: electron-app
+        run: |
+          echo "Cleaning electron-builder cache..."
+          rm -rf ~/.cache/electron-builder
+          echo "Cache cleaned"
       
       - name: Update version in package.json
         working-directory: electron-app
