@@ -352,20 +352,3 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Create GitHub Release (Public Repository)
-        uses: softprops/action-gh-release@v1
-        with:
-          repository: NubeIO/ZC-NubeiO-Toolkit-Release
-          tag_name: ${{ steps.get_tag.outputs.tag }}
-          name: Nube iO Toolkit ${{ steps.get_tag.outputs.tag }}
-          body_path: release_notes.md
-          files: |
-            ./windows-build/*.exe
-            ./linux-build/*.AppImage
-          draft: false
-          prerelease: false
-          generate_release_notes: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
-        continue-on-error: true
