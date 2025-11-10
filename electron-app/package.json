@@ -12,8 +12,8 @@
     "rebuild": "electron-rebuild -f -w serialport",
     "build": "npm run rebuild && electron-builder",
     "build:all": "npm run rebuild && electron-builder --linux --win",
-    "build:linux": "npm run rebuild && electron-builder --linux",
-    "build:win": "npm run rebuild && electron-builder --win",
+    "build:linux": "npm run rebuild && electron-builder --linux appimage",
+    "build:win": "npm run rebuild && electron-builder --win portable",
     "build:mac": "npm run rebuild && electron-builder --mac",
     "build:docker": "./build.sh"
   },
@@ -101,14 +101,26 @@
       "icon": "build/icon.png"
     },
     "win": {
-      "target": "portable",
-      "icon": "build/icon.ico"
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "Nube_iO_Toolkit-Setup-${version}.${ext}",
+      "files": [
+        "!embedded/openocd-binaries/linux/**/*"
+      ]
     },
     "portable": {
-      "artifactName": "Nube-iO-Toolkit-${version}.exe"
+      "artifactName": "Nube_iO_Toolkit-${version}-Portable.exe"
     },
     "mac": {
       "target": "dmg"
-    }
+    },
+    "compression": "normal"
   }
 }
