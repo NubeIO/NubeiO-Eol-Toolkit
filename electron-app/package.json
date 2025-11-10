@@ -111,8 +111,27 @@
       ],
       "icon": "build/icon.ico",
       "artifactName": "Nube_iO_Toolkit-Setup-${version}.${ext}",
-      "files": [
-        "!embedded/openocd-binaries/linux/**/*"
+      "extraResources": [
+        {
+          "from": "tools/esptool",
+          "to": "tools/esptool",
+          "filter": ["**/*"]
+        },
+        {
+          "from": "embedded/openocd-binaries/windows",
+          "to": "embedded/openocd-binaries/windows",
+          "filter": ["**/*"]
+        },
+        {
+          "from": "embedded/esptool-binaries",
+          "to": "embedded/esptool-binaries",
+          "filter": ["**/*"]
+        },
+        {
+          "from": "embedded/nvs-binaries",
+          "to": "embedded/nvs-binaries",
+          "filter": ["**/*"]
+        }
       ]
     },
     "portable": {
