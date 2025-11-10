@@ -352,3 +352,25 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Create Release in Public Repo
+        env:
+          GITHUB_TOKEN: ${{ secrets.NUBEIO_CI_GITHUBPROJECT_TOKEN }}
+        run: |
+          TAG="${{ steps.get_tag.outputs.tag }}"
+          
+          # Build file list
+          FILES=""
+          if [ -d "./windows-build" ]; then
+            FILES="$FILES ./windows-build/*.exe"
+          fi
+          if [ -d "./linux-build" ]; then
+            FILES="$FILES ./linux-build/*.AppImage"
+          fi
+          
+          # Create release with notes
+          gh release create ${TAG} \
+            ${FILES} \
+            --title "Nube iO Toolkit ${TAG}" \
+            --notes-file release_notes.md \
+            --repo NubeIO/ZC-NubeiO-Toolkit-Release
