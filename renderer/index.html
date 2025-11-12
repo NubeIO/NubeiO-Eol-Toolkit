@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nube iO Toolkit</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+    }
+
+    // Configure console.log to show more details (no truncation)
+    if (typeof process !== 'undefined' && process.versions && process.versions.electron) {
+      const util = require('util');
+      util.inspect.defaultOptions.maxArrayLength = null; // Show all array items
+      util.inspect.defaultOptions.depth = null; // Show all nested levels
+      util.inspect.defaultOptions.colors = true; // Enable colors
+    }
+  </script>
+  <style>
+    /* Smooth transitions for theme switching */
+    * {
+      transition-property: background-color, border-color, color;
+      transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+      transition-duration: 300ms;
+    }
+  </style>
+</head>
+
+<body class="bg-gray-100 dark:bg-gray-900">
+  <div id="app"></div>
+
+  <!-- Pages -->
+  <script src="pages/DevicesPage.js"></script>
+  <script src="pages/UDPLogsPage.js"></script>
+  <script src="pages/ProvisioningPage.js"></script>
+  <script src="pages/FleetMonitoringPage.js"></script>
+  <script src="pages/STM32FlasherPage.js"></script>
+
+  <!-- Modules -->
+  <script src="modules/HelpModule.js"></script>
+  <script src="modules/TCPConsoleModule.js"></script>
+  <script src="modules/SerialConsoleModule.js"></script>
+  <script src="modules/ESP32FlasherModule.js"></script>
+  <script src="modules/STM32FlasherModule.js"></script>
+
+  <!-- Main App -->
+  <script src="app.js"></script>
+</body>
+
+</html>

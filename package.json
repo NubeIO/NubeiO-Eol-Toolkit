@@ -1,0 +1,129 @@
+{
+  "name": "nube-io-toolkit",
+  "version": "1.0.0",
+  "description": "Nube iO Toolkit - Complete Development Tool: Flash, Monitor, Control & Simulate",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron . --no-sandbox",
+    "start:memory": "NODE_OPTIONS='--max-old-space-size=4096' electron . --no-sandbox",
+    "dev": "electron . --no-sandbox --dev",
+    "dev:memory": "NODE_OPTIONS='--max-old-space-size=4096' electron . --no-sandbox --dev",
+    "postinstall": "electron-builder install-app-deps",
+    "rebuild": "electron-rebuild -f -w serialport",
+    "build": "npm run rebuild && electron-builder",
+    "build:all": "npm run rebuild && electron-builder --linux --win",
+    "build:linux": "npm run rebuild && electron-builder --linux appimage",
+    "build:win": "npm run rebuild && electron-builder --win portable",
+    "build:mac": "npm run rebuild && electron-builder --mac",
+    "build:docker": "./build.sh"
+  },
+  "keywords": [
+    "fujitsu",
+    "ac",
+    "simulator",
+    "mqtt",
+    "electron"
+  ],
+  "author": {
+    "name": "Nube IO",
+    "email": "info@nube-io.com"
+  },
+  "homepage": "https://nube-io.com",
+  "license": "MIT",
+  "dependencies": {
+    "@serialport/parser-readline": "^13.0.0",
+    "mqtt": "^5.3.4",
+    "pg": "^8.16.3",
+    "serialport": "^13.0.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1"
+  },
+  "build": {
+    "appId": "com.nubeio.toolkit",
+    "productName": "Nube_iO_Toolkit",
+    "publish": null,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "services/**/*",
+      "config/**/*",
+      "tools/**/*",
+      "embedded/**/*",
+      "node_modules/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/serialport/**/*",
+      "node_modules/@serialport/**/*"
+    ],
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Utility",
+      "maintainer": "Nube IO <info@nube-io.com>",
+      "icon": "build/icon.png",
+      "extraResources": [
+        {
+          "from": "tools/esptool",
+          "to": "tools/esptool"
+        },
+        {
+          "from": "embedded/openocd-binaries/linux",
+          "to": "embedded/openocd-binaries/linux"
+        },
+        {
+          "from": "embedded/esptool-binaries",
+          "to": "embedded/esptool-binaries"
+        },
+        {
+          "from": "embedded/nvs-binaries",
+          "to": "embedded/nvs-binaries"
+        }
+      ]
+    },
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "Nube_iO_Toolkit-Setup-${version}.${ext}",
+      "extraResources": [
+        {
+          "from": "tools/esptool",
+          "to": "tools/esptool"
+        },
+        {
+          "from": "embedded/openocd-binaries/windows",
+          "to": "embedded/openocd-binaries/windows"
+        },
+        {
+          "from": "embedded/esptool-binaries",
+          "to": "embedded/esptool-binaries"
+        },
+        {
+          "from": "embedded/nvs-binaries",
+          "to": "embedded/nvs-binaries"
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "Nube_iO_Toolkit-${version}-Portable.exe"
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "compression": "normal"
+  }
+}
