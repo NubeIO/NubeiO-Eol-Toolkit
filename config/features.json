@@ -1,0 +1,32 @@
+{
+  "esp32Flasher": {
+    "enabled": true,
+    "description": "ESP32 Firmware Flasher - Flash firmware to ESP32 devices",
+    "requiresEsptool": true
+  },
+  "udpLogger": {
+    "enabled": true,
+    "description": "UDP Logger - Log UDP messages from devices"
+  },
+  "tcpConsole": {
+    "enabled": true,
+    "description": "TCP Console - Connect to devices via TCP"
+  },
+  "serialConsole": {
+    "enabled": true,
+    "description": "Serial Console - Monitor and debug ESP32 via serial port"
+  },
+  "provisioning": {
+    "enabled": true,
+    "description": "ESP32 Device Provisioning - Generate credentials and provision ESP32 devices (requires nvs_partition_gen tool)",
+    "requiresEsptool": true,
+    "requiresNVSGen": true,
+    "configureWiFi": true,
+    "note": "Includes esptool and nvs_partition_gen binaries for device provisioning."
+  },
+  "fleetMonitoring": {
+    "enabled": true,
+    "description": "Fleet Monitoring - Monitor FGA-Gen2-Fw devices via MQTT"
+  }
+}
+

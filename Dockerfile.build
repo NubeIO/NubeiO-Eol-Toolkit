@@ -1,0 +1,25 @@
+# Dockerfile for cross-platform Electron builds
+# WARNING: This Docker build CANNOT properly compile native modules (serialport) for Windows
+# The Windows build will fail on target PCs due to incorrect native bindings
+# 
+# RECOMMENDATION:
+# - For Windows: Build on Windows PC using: npm run build:win
+# - For Linux: Use this Docker build: ./build.sh or docker-compose
+# 
+# This is a limitation of cross-compiling native Node.js modules from Linux to Windows
+
+FROM electronuserland/builder:wine
+
+WORKDIR /project
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy project files
+COPY . .
+
+# Build for Linux only (Windows build not reliable with native modules)
+CMD ["npm", "run", "build:linux"]
