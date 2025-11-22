@@ -95,9 +95,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // STM32 OpenOCD methods
   detectSTM32: () => ipcRenderer.invoke('stm32:detectSTLink'),
+  detectSTM32Once: (speed) => ipcRenderer.invoke('stm32:detectSTLinkOnce', speed),
+  probeConnect: () => ipcRenderer.invoke('stm32:probeConnect'),
   flashSTM32Droplet: (firmwarePath, version) => ipcRenderer.invoke('stm32:flashDroplet', firmwarePath, version),
+  flashWithToken: (connectToken, firmwarePath, version) => ipcRenderer.invoke('stm32:flashWithToken', connectToken, firmwarePath, version),
   readSTM32UID: () => ipcRenderer.invoke('stm32:readUID'),
   disconnectSTM32: () => ipcRenderer.invoke('stm32:disconnect'),
+  disconnectCubeCLI: () => ipcRenderer.invoke('stm32:disconnectCubeCLI'),
+  forceReleaseSTM32: () => ipcRenderer.invoke('stm32:forceRelease'),
+  abortSTM32: () => ipcRenderer.invoke('stm32:abort'),
   getSTM32Status: () => ipcRenderer.invoke('stm32:getStatus'),
   setSTM32Version: (version) => ipcRenderer.invoke('stm32:setVersion', version),
 
@@ -140,6 +146,28 @@ contextBridge.exposeInMainWorld('fleetMonitoringAPI', {
   disconnect: () => ipcRenderer.invoke('fleet:disconnect'),
   clearMessages: () => ipcRenderer.invoke('fleet:clearMessages'),
   getDevices: () => ipcRenderer.invoke('fleet:getDevices')
+});
+
+// Expose Factory Testing service
+contextBridge.exposeInMainWorld('factoryTestingAPI', {
+  connect: (port, baudRate) => ipcRenderer.invoke('factoryTesting:connect', port, baudRate),
+  disconnect: () => ipcRenderer.invoke('factoryTesting:disconnect'),
+  readDeviceInfo: () => ipcRenderer.invoke('factoryTesting:readDeviceInfo'),
+  runFactoryTests: (device) => ipcRenderer.invoke('factoryTesting:runFactoryTests', device),
+  saveResults: (version, device, deviceInfo, testResults, preTesting) => 
+    ipcRenderer.invoke('factoryTesting:saveResults', version, device, deviceInfo, testResults, preTesting),
+  getStatus: () => ipcRenderer.invoke('factoryTesting:getStatus'),
+  // ACB-M specific tests
+  acbWifiTest: () => ipcRenderer.invoke('factoryTesting:acb:wifi'),
+  acbRs485Test: () => ipcRenderer.invoke('factoryTesting:acb:rs485'),
+  acbRs485_2Test: () => ipcRenderer.invoke('factoryTesting:acb:rs485_2'),
+  acbEthTest: () => ipcRenderer.invoke('factoryTesting:acb:eth'),
+  acbLoraTest: () => ipcRenderer.invoke('factoryTesting:acb:lora'),
+  acbRtcTest: () => ipcRenderer.invoke('factoryTesting:acb:rtc'),
+  acbFullTest: () => ipcRenderer.invoke('factoryTesting:acb:full'),
+  onProgress: (callback) => {
+    ipcRenderer.on('factoryTesting:progress', (event, progress) => callback(progress));
+  }
 });
 
 console.log('electronAPI exposed to window');

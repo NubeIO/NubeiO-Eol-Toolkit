@@ -8,6 +8,8 @@ class STM32FlasherModule {
     this.firmwarePath = '';
     this.isFlashing = false;
     this.isDetecting = false;
+    this.isContinuousDetecting = false;
+    this.continuousDetectionInterval = null;
     this.flashProgress = '';
     this.flashResult = null;
     this.version = 192; // Droplet version for LoRa ID calculation (default)
@@ -22,6 +24,8 @@ class STM32FlasherModule {
     this.mcuMismatch = false;
     this.detectedType = null;
     this.selectedType = null;
+    this.backendStatus = null;
+    this._detectionTimerId = null;
   }
 
   async init() {
@@ -56,6 +60,13 @@ class STM32FlasherModule {
       this.flashProgress = `Error: ${data.error}`;
       this.render();
     });
+
+    // Get backend status (OpenOCD or CubeProg CLI availability)
+    try {
+      this.backendStatus = await electronAPI.getSTM32Status();
+    } catch (e) {
+      this.backendStatus = null;
+    }
   }
 
   async detectSTLink() {
@@ -65,6 +76,105 @@ class STM32FlasherModule {
 
     try {
       this.isDetecting = true;
+      // clear any previous connect token
+      this._connectToken = null;
+      
+      // Special handling for Micro Edge - continuous detection
+      if (this.currentDeviceType === 'MICRO_EDGE') {
+        const proceed = confirm(
+          '⚠️ MICRO EDGE - CONTINUOUS DETECTION\n\n' +
+          'Instructions:\n' +
+          '1. HOLD the RESET button on the board\n' +
+          '2. Click OK to start continuous detection\n' +
+          '3. RELEASE the RESET button when you see "Connecting..."\n' +
+          '4. Click Cancel button to stop detection\n\n' +
+          'Ready?'
+        );
+        
+        if (!proceed) {
+          this.isDetecting = false;
+          return;
+        }
+        
+        // Start two-step probe flow: we will ask backend to probe-connect and return a token
+        this.flashProgress = '🔄 Probing ST-Link for connect token...';
+        this.render();
+
+        try {
+          const probeRes = await electronAPI.probeConnect();
+          if (probeRes && probeRes.success && probeRes.connectToken) {
+            // Save connect token and instruct user to release RESET then press Continue
+            this._connectToken = probeRes.connectToken;
+            this._probeInfo = probeRes.info || null;
+
+            this.flashProgress = `✅ Probe successful. Token: ${this._connectToken}\nRelease RESET now, then press Continue to flash.`;
+            // Mark ST-Link as detected for UI enable
+            this.stlinkDetected = true;
+            this.mcuInfo = this._probeInfo || { chip: this._probeInfo?.chip };
+            this.render();
+            return;
+          } else {
+            this.flashProgress = '❌ Probe failed. Please ensure RESET is being held and try again.';
+            this.render();
+            this.isDetecting = false;
+            return;
+          }
+        } catch (e) {
+          this.flashProgress = `Probe error: ${e.message}`;
+          this.render();
+          this.isDetecting = false;
+          return;
+        }
+        
+        this.isContinuousDetecting = true;
+        let attempt = 0;
+        const maxAttempts = 30; // 30 attempts × 2 seconds = 60 seconds max
+        
+        const tryDetection = async () => {
+          if (!this.isContinuousDetecting || attempt >= maxAttempts) {
+            this.isContinuousDetecting = false;
+            this.isDetecting = false;
+            if (attempt >= maxAttempts) {
+              this.flashProgress = '❌ Detection timeout. Please try again.';
+            } else {
+              this.flashProgress = 'Detection cancelled.';
+            }
+            this.render();
+            return;
+          }
+          
+          attempt++;
+          this.flashProgress = `🔄 Connecting... (attempt ${attempt}/${maxAttempts}) - Release RESET now!`;
+          this.render();
+          
+          // Try detection
+          try {
+            const result = await electronAPI.detectSTM32Once(4000); // Use 4000 kHz like STM32CubeProgrammer
+            
+            if (result && result.success && result.detected) {
+              // Success!
+              this.isContinuousDetecting = false;
+              this.isDetecting = false;
+              this.stlinkDetected = true;
+              this.mcuInfo = result.info;
+              this.flashProgress = '✅ Connected successfully!';
+              this.render();
+              return;
+            }
+          } catch (error) {
+            console.log(`Detection attempt ${attempt} failed:`, error);
+          }
+          
+          // Try again after 2 seconds (give OpenOCD time to complete)
+          this._detectionTimerId = setTimeout(tryDetection, 2000);
+        };
+        
+        // Start first attempt
+            tryDetection();
+          return;
+      }
+      
+      // Normal detection for other devices
       this.flashProgress = 'Detecting ST-Link and MCU...';
 
       // Reset ALL detection state before new detection
@@ -166,6 +276,7 @@ class STM32FlasherModule {
         this.currentDeviceType = deviceType;
 
         // Reset all detection state when changing device type
+        this._connectToken = null;
         this.stlinkDetected = false;
         this.mcuInfo = null;
         this.flashResult = null;
@@ -192,6 +303,7 @@ class STM32FlasherModule {
 
       if (result.success) {
         // Reset all detection state
+        this._connectToken = null;
         this.stlinkDetected = false;
         this.mcuInfo = null;
         this.flashResult = null;
@@ -203,13 +315,103 @@ class STM32FlasherModule {
       } else {
         this.flashProgress = 'Failed to disconnect ST-Link';
       }
-
       this.render();
     } catch (error) {
-      this.flashProgress = `Disconnect failed: ${error.message}`;
+      this.flashProgress = `Disconnect error: ${error.message}`;
       this.render();
       // console.error('Disconnect error:', error);
     }
+  }
+
+  async forceRelease() {
+    try {
+      // Cancel any ongoing continuous detection
+      if (this.isContinuousDetecting) {
+        this.stopContinuousDetection();
+      }
+      // Immediately clear frontend detection state so UI stops showing Connecting...
+      this._connectToken = null;
+      this.stlinkDetected = false;
+      this.mcuInfo = null;
+      this.isDetecting = false;
+      this.isContinuousDetecting = false;
+      this.flashProgress = 'Attempting immediate abort of backend processes...';
+      this.render();
+
+      // First attempt an immediate abort (best-effort kill of OpenOCD and CubeCLI)
+      let abortRes = null;
+      try {
+        abortRes = await electronAPI.abortSTM32();
+      } catch (err) {
+        abortRes = { success: false, error: err && err.message ? err.message : String(err) };
+      }
+
+      // If abort succeeded, clear frontend state and inform the operator
+      if (abortRes && abortRes.success) {
+        this._connectToken = null;
+        this.stlinkDetected = false;
+        this.mcuInfo = null;
+        this.flashResult = null;
+        // Clear detection UI state immediately so operator can attempt fresh detect
+        this._connectToken = null;
+        this.isDetecting = false;
+        this.isContinuousDetecting = false;
+        if (this._detectionTimerId) { clearTimeout(this._detectionTimerId); this._detectionTimerId = null; }
+
+        this.flashProgress = 'Backend abort executed. ST-Link processes should be terminated.' + (abortRes ? '\n' + JSON.stringify(abortRes, null, 2) : '');
+        if (abortRes && abortRes.logTailCube) {
+          this.flashProgress += '\n\n--- Last CubeCLI log ---\n' + abortRes.logTailCube.substring(Math.max(0, abortRes.logTailCube.length - 8000));
+        }
+        if (abortRes && abortRes.logTailOpenOCD) {
+          this.flashProgress += '\n\n--- Last OpenOCD log ---\n' + abortRes.logTailOpenOCD.substring(Math.max(0, abortRes.logTailOpenOCD.length - 8000));
+        }
+        this.render();
+      } else {
+        // If abort didn't succeed, fall back to graceful disconnect then force kill
+        this.flashProgress = 'Abort did not fully succeed, attempting graceful disconnect then force release...';
+        this.render();
+
+        try {
+          const disc = await electronAPI.disconnectSTM32();
+          if (disc && (disc.openocd || disc.cubecli)) {
+            this.flashProgress = 'Graceful disconnect attempted. Proceeding to force release if still stuck.';
+            this.render();
+          }
+        } catch (e) {
+          // ignore and continue to force kill
+        }
+
+        const res = await electronAPI.forceReleaseSTM32();
+        if (res && res.success) {
+          this._connectToken = null;
+          this.isDetecting = false;
+          this.isContinuousDetecting = false;
+          this.stlinkDetected = false;
+          this.mcuInfo = null;
+          this.flashResult = null;
+          this.flashProgress = 'Force release attempted.' + (res && res.logTailCube ? '\n\n--- Last CubeCLI log ---\n' + res.logTailCube.substring(Math.max(0, res.logTailCube.length - 8000)) : '');
+          if (res && res.logTailOpenOCD) this.flashProgress += '\n\n--- Last OpenOCD log ---\n' + res.logTailOpenOCD.substring(Math.max(0, res.logTailOpenOCD.length - 8000));
+        } else {
+          this.flashProgress = `Force release failed: ${res && res.error ? res.error : 'unknown'}`;
+        }
+        this.render();
+      }
+    } catch (e) {
+      this.flashProgress = `Force release error: ${e.message}`;
+      this.render();
+    }
+  }
+
+  stopContinuousDetection() {
+    this.isContinuousDetecting = false;
+    this.isDetecting = false;
+    if (this._detectionTimerId) {
+      clearTimeout(this._detectionTimerId);
+      this._detectionTimerId = null;
+    }
+    this.flashProgress = 'Detection cancelled by user.';
+    this.render();
+
   }
 
   async selectFirmware() {
@@ -249,8 +451,14 @@ class STM32FlasherModule {
       this.flashResult = null;
       this.render();
 
-      // console.log('[STM32Flasher] Starting flash operation...');
-      const result = await electronAPI.flashSTM32Droplet(this.firmwarePath, this.version);
+      // For Micro Edge use two-step token flow if available
+      let result = null;
+      if (this.currentDeviceType === 'MICRO_EDGE' && this._connectToken) {
+        // Use token-based flash (assumes user released RESET and pressed Continue)
+        result = await electronAPI.flashWithToken(this._connectToken, this.firmwarePath, this.version);
+      } else {
+        result = await electronAPI.flashSTM32Droplet(this.firmwarePath, this.version);
+      }
       // console.log('[STM32Flasher] Flash result:', result);
 
       this.isFlashing = false;
@@ -348,6 +556,9 @@ class STM32FlasherModule {
             <i class="fas fa-info-circle mr-1"></i>
             Current: <b>${deviceConfig.name}</b> - <b>${deviceConfig.mcu}</b>
             ${deviceConfig.supportsLoRaID ? ' - Supports LoRa ID' : ''}
+            ${this.currentDeviceType === 'MICRO_EDGE' && this.backendStatus ? `
+              <div class="mt-1 text-xs text-gray-500">Backend: <b>${this.backendStatus.cubeCliAvailable ? 'STM32CubeProgrammer CLI' : (this.backendStatus.openocdAvailable ? 'OpenOCD' : 'None')}</b></div>
+            ` : ''}
           </div>
         </div>
 
@@ -364,10 +575,19 @@ class STM32FlasherModule {
               ${this.isDetecting || this.isFlashing ? 'disabled' : ''}
             >
               <i class="fas ${this.isDetecting ? 'fa-spinner fa-spin' : 'fa-search'} mr-2"></i>
-              ${this.isDetecting ? 'Detecting...' : 'Detect ST-Link'}
+              ${this.isDetecting ? 'Connecting...' : 'Detect ST-Link'}
             </button>
             
-            ${this.stlinkDetected ? `
+            ${this.isContinuousDetecting ? `
+              <button 
+                onclick="window.stm32Flasher.stopContinuousDetection()"
+                class="px-6 py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors font-semibold"
+              >
+                <i class="fas fa-stop mr-2"></i>Cancel
+              </button>
+            ` : ''}
+            
+            ${this.stlinkDetected && !this.isContinuousDetecting ? `
               <button 
                 onclick="window.stm32Flasher.disconnectSTLink()"
                 class="px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed font-semibold"
@@ -376,6 +596,13 @@ class STM32FlasherModule {
                 <i class="fas fa-unlink mr-2"></i>Disconnect
               </button>
             ` : ''}
+
+            <button
+              onclick="window.stm32Flasher.forceRelease()"
+              class="px-6 py-3 bg-red-900 text-white rounded-lg hover:bg-red-800 transition-colors font-semibold"
+            >
+              <i class="fas fa-bolt mr-2"></i>Force Release ST-Link
+            </button>
           </div>
 
           ${this.stlinkDetected && this.mcuInfo ? `
@@ -453,15 +680,26 @@ class STM32FlasherModule {
             <span class="inline-flex items-center justify-center w-8 h-8 bg-green-500 text-white rounded-full mr-2">${this.currentDeviceType === 'DROPLET' ? '4' : '3'}</span>
             Flash ${this.currentDeviceType === 'DROPLET' ? '& Read Info' : 'Firmware'}
           </h3>
-          <div class="flex gap-4">
-            <button 
-              onclick="window.stm32Flasher.flashFirmware()"
-              class="flex-1 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed font-semibold"
-              ${this.isFlashing || !this.firmwarePath ? 'disabled' : ''}
-            >
-              <i class="fas ${this.isFlashing ? 'fa-spinner fa-spin' : 'fa-upload'} mr-2"></i>
-              ${this.isFlashing ? 'Flashing...' : (this.currentDeviceType === 'DROPLET' ? 'Flash & Read Info' : 'Flash Firmware')}
-            </button>
+            <div class="flex gap-4">
+              ${this.currentDeviceType === 'MICRO_EDGE' && this._connectToken ? `
+                <button
+                  onclick="window.stm32Flasher.flashFirmware()"
+                  class="flex-1 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed font-semibold"
+                  ${this.isFlashing || !this.firmwarePath ? 'disabled' : ''}
+                >
+                  <i class="fas ${this.isFlashing ? 'fa-spinner fa-spin' : 'fa-upload'} mr-2"></i>
+                  ${this.isFlashing ? 'Flashing...' : 'Continue (Flash)'}
+                </button>
+              ` : `
+                <button 
+                  onclick="window.stm32Flasher.flashFirmware()"
+                  class="flex-1 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed font-semibold"
+                  ${this.isFlashing || !this.firmwarePath ? 'disabled' : ''}
+                >
+                  <i class="fas ${this.isFlashing ? 'fa-spinner fa-spin' : 'fa-upload'} mr-2"></i>
+                  ${this.isFlashing ? 'Flashing...' : (this.currentDeviceType === 'DROPLET' ? 'Flash & Read Info' : 'Flash Firmware')}
+                </button>
+              `}
 
             ${this.currentDeviceType === 'DROPLET' ? `
             <button 

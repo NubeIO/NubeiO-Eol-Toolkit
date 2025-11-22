@@ -16,6 +16,7 @@ const ESP32Provisioning = require('./services/esp32-provisioning');
 const SerialConsole = require('./services/serial-console');
 const FleetMonitoringService = require('./services/fleet-monitoring');
 const OpenOCDSTM32Service = require('./services/openocd-stm32');
+const FactoryTestingService = require('./services/factory-testing');
 
 // Disable hardware acceleration to avoid libva errors
 app.disableHardwareAcceleration();
@@ -28,6 +29,7 @@ let tcpConsole = null;
 let provisioningService = null;
 let serialConsole = null;
 let fleetMonitoring = null;
+let factoryTesting = null;
 
 // Create application menu
 function createMenu() {
@@ -150,6 +152,17 @@ function createMenu() {
             const mainWindow = BrowserWindow.getFocusedWindow();
             if (mainWindow) {
               mainWindow.webContents.send('menu:switch-page', 'fleet-monitoring');
+            }
+          }
+        },
+        {
+          label: 'Factory Testing',
+          accelerator: 'CmdOrCtrl+6',
+          click: () => {
+            console.log('Menu: Factory Testing clicked');
+            const mainWindow = BrowserWindow.getFocusedWindow();
+            if (mainWindow) {
+              mainWindow.webContents.send('menu:switch-page', 'factory-testing');
             }
           }
         },
@@ -332,6 +345,7 @@ app.whenReady().then(() => {
   provisioningService = new ESP32Provisioning();
   serialConsole = new SerialConsole();
   fleetMonitoring = new FleetMonitoringService();
+  factoryTesting = new FactoryTestingService();
 
   // Initialize ESP32 flasher
   esp32Flasher.initialize().catch(err => {
@@ -883,8 +897,26 @@ ipcMain.handle('stm32:detectSTLink', async () => {
   }
 });
 
+ipcMain.handle('stm32:detectSTLinkOnce', async (event, speed) => {
+  try {
+    const result = await OpenOCDSTM32Service.detectSTLinkOnce(speed);
+    return result;
+  } catch (error) {
+    return null;
+  }
+});
+
 ipcMain.handle('stm32:getStatus', () => {
   return OpenOCDSTM32Service.getStatus();
+});
+
+ipcMain.handle('stm32:disconnectCubeCLI', async () => {
+  try {
+    return await OpenOCDSTM32Service.disconnectCubeCLI();
+  } catch (error) {
+    console.error('disconnectCubeCLI failed:', error);
+    return { success: false, error: error.message };
+  }
 });
 
 ipcMain.handle('stm32:setVersion', (event, version) => {
@@ -894,13 +926,141 @@ ipcMain.handle('stm32:setVersion', (event, version) => {
 
 ipcMain.handle('stm32:disconnect', async () => {
   try {
-    return await OpenOCDSTM32Service.disconnectSTLink();
+    // Try OpenOCD disconnect first
+    const openocdRes = await OpenOCDSTM32Service.disconnectSTLink().catch(e => ({ success: false, error: e.message }));
+    // Also attempt to disconnect CubeProgrammer CLI to fully release the ST-Link
+    const cubeRes = await OpenOCDSTM32Service.disconnectCubeCLI().catch(() => ({ success: false }));
+
+    return {
+      openocd: openocdRes,
+      cubecli: cubeRes
+    };
   } catch (error) {
     console.error('Failed to disconnect ST-Link:', error);
     return {
       success: false,
       error: error.message
     };
+  }
+});
+
+// Force release: kill any lingering OpenOCD or STM32_Programmer_CLI processes
+ipcMain.handle('stm32:forceRelease', async () => {
+  try {
+    const results = {};
+
+    // First try graceful disconnects so ST-Link is released cleanly
+    try {
+      results.openocd_disconnect = await OpenOCDSTM32Service.disconnectSTLink().catch(e => ({ success: false, error: e.message }));
+    } catch (e) {
+      results.openocd_disconnect = { success: false, error: e.message };
+    }
+
+    try {
+      results.cubecli_disconnect = await OpenOCDSTM32Service.disconnectCubeCLI().catch(e => ({ success: false, error: e.message }));
+    } catch (e) {
+      results.cubecli_disconnect = { success: false, error: e.message };
+    }
+
+    // If graceful disconnects indicate success, return early and let UI refresh
+    const openOk = results.openocd_disconnect && results.openocd_disconnect.success;
+    const cliOk = results.cubecli_disconnect && results.cubecli_disconnect.success;
+    if (openOk || cliOk) {
+      // Append to diagnostics and return tails
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        const logPath = path.join(__dirname, 'cubecli-diagnostics.log');
+        fs.appendFileSync(logPath, `\n=== FORCE RELEASE (graceful) (${new Date().toISOString()}) ===\n` + JSON.stringify(results, null, 2) + '\n');
+      } catch (e) {}
+
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        const readTail = (p, lines = 200) => {
+          try {
+            if (!fs.existsSync(p)) return '';
+            const content = fs.readFileSync(p, 'utf8');
+            const arr = content.split(/\r?\n/);
+            return arr.slice(-lines).join('\n');
+          } catch (e) { return ''; }
+        };
+
+        const pathCube = require('path').join(__dirname, 'cubecli-diagnostics.log');
+        const pathOpen = require('path').join(__dirname, 'openocd-diagnostics.log');
+        const tailCube = readTail(pathCube, 200);
+        const tailOpen = readTail(pathOpen, 200);
+        return { success: true, results, logTailCube: tailCube, logTailOpenOCD: tailOpen };
+      } catch (e) {
+        return { success: true, results };
+      }
+    }
+
+    // If graceful disconnect did not succeed, perform force kills
+    // Try to kill OpenOCD
+    try {
+      const { spawnSync } = require('child_process');
+      if (process.platform === 'win32') {
+        const kill = spawnSync('taskkill', ['/F', '/IM', 'openocd.exe']);
+        results.openocd_kill = { status: kill.status, stdout: kill.stdout ? kill.stdout.toString() : '', stderr: kill.stderr ? kill.stderr.toString() : '' };
+      } else {
+        const kill = spawnSync('pkill', ['-f', 'openocd']);
+        results.openocd_kill = { status: kill.status, stdout: kill.stdout ? kill.stdout.toString() : '', stderr: kill.stderr ? kill.stderr.toString() : '' };
+      }
+    } catch (e) {
+      results.openocd_kill = { error: e.message };
+    }
+
+    // Try to kill STM32_Programmer_CLI
+    try {
+      const { spawnSync } = require('child_process');
+      if (process.platform === 'win32') {
+        const killCli = spawnSync('taskkill', ['/F', '/IM', 'STM32_Programmer_CLI.exe']);
+        results.cubecli_kill = { status: killCli.status, stdout: killCli.stdout ? killCli.stdout.toString() : '', stderr: killCli.stderr ? killCli.stderr.toString() : '' };
+      } else {
+        const killCli = spawnSync('pkill', ['-f', 'STM32_Programmer_CLI']);
+        results.cubecli_kill = { status: killCli.status, stdout: killCli.stdout ? killCli.stdout.toString() : '', stderr: killCli.stderr ? killCli.stderr.toString() : '' };
+      }
+    } catch (e) {
+      results.cubecli_kill = { error: e.message };
+    }
+
+    // Append to diagnostics
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const logPath = path.join(__dirname, 'cubecli-diagnostics.log');
+      fs.appendFileSync(logPath, `\n=== FORCE RELEASE (${new Date().toISOString()}) ===\n` + JSON.stringify(results, null, 2) + '\n');
+    } catch (e) {}
+
+    // Read last lines from diagnostics to help UI show immediate feedback
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const readTail = (p, lines = 200) => {
+        try {
+          if (!fs.existsSync(p)) return '';
+          const content = fs.readFileSync(p, 'utf8');
+          const arr = content.split(/\r?\n/);
+          return arr.slice(-lines).join('\n');
+        } catch (e) {
+          return '';
+        }
+      };
+
+      const pathCube = path.join(__dirname, 'cubecli-diagnostics.log');
+      const pathOpen = path.join(__dirname, 'openocd-diagnostics.log');
+
+      const tailCube = readTail(pathCube, 200);
+      const tailOpen = readTail(pathOpen, 200);
+
+      return { success: true, results, logTailCube: tailCube, logTailOpenOCD: tailOpen };
+    } catch (e) {
+      return { success: true, results };
+    }
+  } catch (error) {
+    console.error('Force release failed:', error);
+    return { success: false, error: error.message };
   }
 });
 
@@ -932,4 +1092,198 @@ ipcMain.handle('stm32:getCurrentDeviceType', () => {
     success: true,
     deviceType: OpenOCDSTM32Service.currentDeviceType
   };
+});
+
+// Factory Testing IPC Handlers
+ipcMain.handle('factoryTesting:connect', async (event, port, baudRate) => {
+  try {
+    return await factoryTesting.connect(port, baudRate);
+  } catch (error) {
+    console.error('Failed to connect factory testing:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:disconnect', async () => {
+  try {
+    return await factoryTesting.disconnect();
+  } catch (error) {
+    console.error('Failed to disconnect factory testing:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:readDeviceInfo', async () => {
+  try {
+    return await factoryTesting.readDeviceInfo();
+  } catch (error) {
+    console.error('Failed to read device info:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:runFactoryTests', async (event, device) => {
+  try {
+    // Setup progress callback
+    factoryTesting.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) {
+        mainWindow.webContents.send('factoryTesting:progress', progress);
+      }
+    });
+
+    return await factoryTesting.runFactoryTests(device);
+  } catch (error) {
+    console.error('Failed to run factory tests:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:saveResults', async (event, version, device, deviceInfo, testResults, preTesting) => {
+  try {
+    return await factoryTesting.saveResults(version, device, deviceInfo, testResults, preTesting);
+  } catch (error) {
+    console.error('Failed to save factory test results:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:getStatus', () => {
+  return factoryTesting.getStatus();
+});
+
+// ACB-M specific test handlers
+ipcMain.handle('factoryTesting:acb:wifi', async (event) => {
+  try {
+    factoryTesting.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) mainWindow.webContents.send('factoryTesting:progress', progress);
+    });
+    return await factoryTesting.acbWifiTest();
+  } catch (error) {
+    console.error('ACB WiFi test failed:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:acb:rs485', async (event) => {
+  try {
+    factoryTesting.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) mainWindow.webContents.send('factoryTesting:progress', progress);
+    });
+    return await factoryTesting.acbRs485Test();
+  } catch (error) {
+    console.error('ACB RS485 test failed:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:acb:rs485_2', async (event) => {
+  try {
+    factoryTesting.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) mainWindow.webContents.send('factoryTesting:progress', progress);
+    });
+    return await factoryTesting.acbRs485_2Test();
+  } catch (error) {
+    console.error('ACB RS485-2 test failed:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:acb:eth', async (event) => {
+  try {
+    factoryTesting.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) mainWindow.webContents.send('factoryTesting:progress', progress);
+    });
+    return await factoryTesting.acbEthTest();
+  } catch (error) {
+    console.error('ACB ETH test failed:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:acb:lora', async (event) => {
+  try {
+    factoryTesting.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) mainWindow.webContents.send('factoryTesting:progress', progress);
+    });
+    return await factoryTesting.acbLoraTest();
+  } catch (error) {
+    console.error('ACB LoRa test failed:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:acb:rtc', async (event) => {
+  try {
+    factoryTesting.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) mainWindow.webContents.send('factoryTesting:progress', progress);
+    });
+    return await factoryTesting.acbRtcTest();
+  } catch (error) {
+    console.error('ACB RTC test failed:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:acb:full', async (event) => {
+  try {
+    factoryTesting.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) mainWindow.webContents.send('factoryTesting:progress', progress);
+    });
+    return await factoryTesting.acbFullTest();
+  } catch (error) {
+    console.error('ACB Full test failed:', error);
+    throw error;
+  }
+});
+
+// Two-step connect: probe connect-only and return working token
+ipcMain.handle('stm32:probeConnect', async () => {
+  try {
+    return await OpenOCDSTM32Service.probeConnect_via_CubeCLI();
+  } catch (error) {
+    console.error('probeConnect failed:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Flash using connect token (used after a successful probeConnect and user released RESET)
+ipcMain.handle('stm32:flashWithToken', async (event, connectToken, firmwarePath, version) => {
+  try {
+    if (version !== undefined) {
+      OpenOCDSTM32Service.setVersion(version);
+    }
+
+    const mainWindow = BrowserWindow.getAllWindows()[0];
+
+    const result = await OpenOCDSTM32Service.flashWithToken_via_CubeCLI(connectToken, firmwarePath, (progress) => {
+      if (mainWindow) mainWindow.webContents.send('stm32:flash-progress', progress);
+    });
+
+    if (mainWindow) mainWindow.webContents.send('stm32:flash-complete', result);
+    return result;
+  } catch (error) {
+    console.error('flashWithToken failed:', error);
+    const mainWindow = BrowserWindow.getAllWindows()[0];
+    if (mainWindow) mainWindow.webContents.send('stm32:flash-error', { error: error.message });
+    return { success: false, error: error.message };
+  }
+});
+
+// Abort backend processes immediately (force kill)
+ipcMain.handle('stm32:abort', async () => {
+  try {
+    const res = await OpenOCDSTM32Service.abort();
+    return res;
+  } catch (e) {
+    console.error('stm32:abort failed:', e);
+    return { success: false, error: e.message };
+  }
 });

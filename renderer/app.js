@@ -14,9 +14,11 @@ class App {
     this.udpLogsPage = new UDPLogsPage(this); // UDP logs page
     this.provisioningPage = null; // Will be initialized conditionally
     this.fleetMonitoringPage = null; // Will be initialized conditionally
+    this.factoryTestingPage = null; // Factory testing page
+    this.factoryTestingModule = null; // Factory testing module
     this.configLoaded = false; // Track if config has been loaded
     this.features = {}; // Feature toggles
-    this.currentPage = 'devices'; // 'devices', 'udp-logs', 'tcp-console', 'serial-console', 'esp32-flasher', 'provisioning', or 'fleet-monitoring'
+    this.currentPage = 'devices'; // 'devices', 'udp-logs', 'tcp-console', 'serial-console', 'esp32-flasher', 'provisioning', 'fleet-monitoring', or 'factory-testing'
     this.flasherStatus = { isFlashing: false, hasProcess: false, portsAvailable: 0 };
     this.serialPorts = [];
     this.selectedPort = '';
@@ -121,6 +123,15 @@ class App {
     setTimeout(() => {
       this.setupMenuListeners();
     }, 100);
+
+    // Add window focus listener to re-attach pre-testing listeners
+    window.addEventListener('focus', () => {
+      if (this.currentPage === 'factory-testing' && this.factoryTestingPage) {
+        setTimeout(() => {
+          this.factoryTestingPage.attachPreTestingListeners();
+        }, 100);
+      }
+    });
   }
 
   setupMenuListeners() {
@@ -232,6 +243,27 @@ class App {
     } else {
       console.log('Fleet Monitoring feature not enabled or not in config');
     }
+
+    // Initialize factory testing page
+    if (typeof FactoryTestingPage !== 'undefined') {
+      this.factoryTestingPage = new FactoryTestingPage(this);
+      window.factoryTestingPage = this.factoryTestingPage; // Make globally accessible
+      console.log('Factory Testing page initialized');
+    } else {
+      console.warn('FactoryTestingPage class not found');
+    }
+
+    // Initialize factory testing module
+    if (typeof FactoryTestingModule !== 'undefined') {
+      this.factoryTestingModule = new FactoryTestingModule(this);
+      window.factoryTestingModule = this.factoryTestingModule; // Make globally accessible
+      this.factoryTestingModule.init().catch(err => {
+        console.error('Failed to initialize Factory Testing Module:', err);
+      });
+      console.log('Factory Testing module initialized');
+    } else {
+      console.warn('FactoryTestingModule class not found');
+    }
   }
 
   async loadMqttConfig() {
@@ -267,7 +299,17 @@ class App {
       } else {
         this.discoveredDevices = [];
       }
-      this.render();
+      // Only render if we're on the devices page and no input has focus
+      const activeElement = document.activeElement;
+      const isInputFocused = activeElement && (
+        activeElement.tagName === 'INPUT' || 
+        activeElement.tagName === 'TEXTAREA' ||
+        activeElement.tagName === 'SELECT'
+      );
+      
+      if (this.currentPage === 'devices' && !isInputFocused) {
+        this.render();
+      }
     } catch (error) {
       console.error('Failed to load discovered devices:', error);
     }
@@ -290,9 +332,8 @@ class App {
       // If on UDP logs page, update only the logs container without full re-render
       if (this.currentPage === 'udp-logs') {
         this.updateUDPLogsOnly();
-      } else {
-        this.render();
       }
+      // Don't render on other pages - let the page control when to render
     } catch (error) {
       console.error('Failed to load UDP logs:', error);
     }
@@ -436,6 +477,12 @@ class App {
             this.fleetMonitoringPage.startAutoRefresh();
           }
         });
+      }
+      tcpConsole.showConsole = false;
+    } else if (page === 'factory-testing') {
+      // Load factory testing status
+      if (this.factoryTestingModule) {
+        this.factoryTestingModule.loadSerialPorts();
       }
       tcpConsole.showConsole = false;
     } else {
@@ -863,7 +910,11 @@ class App {
         activeElement.id === 'prov-erase-size' ||
         activeElement.id === 'fleet-broker' ||
         activeElement.id === 'fleet-port' ||
-        activeElement.id === 'fleet-topic')) {
+        activeElement.id === 'fleet-topic' ||
+        activeElement.id === 'tester-name' ||
+        activeElement.id === 'hardware-version' ||
+        activeElement.id === 'batch-id' ||
+        activeElement.id === 'work-order-serial')) {
       return;
     }
 
@@ -987,6 +1038,13 @@ class App {
                 🌐 Fleet
               </button>
               ` : ''}
+              <button onclick="app.switchPage('factory-testing')" 
+                class="px-4 py-2 rounded-lg text-sm font-medium transition-colors ${this.currentPage === 'factory-testing'
+        ? 'bg-blue-500 text-white'
+        : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
+      }">
+                🔧 Factory Testing
+              </button>
             </div>
 
             ${this.showConfig ? `
@@ -1028,6 +1086,7 @@ class App {
                 this.currentPage === 'stm32-flasher' ? '<div id="stm32-flasher-container" class="p-6"></div>' :
                   this.currentPage === 'provisioning' ? (this.provisioningPage ? this.provisioningPage.render() : '<div class="p-6 text-center">Provisioning feature not enabled</div>') :
                     this.currentPage === 'fleet-monitoring' ? (this.fleetMonitoringPage ? this.fleetMonitoringPage.render() : '<div class="p-6 text-center">Fleet Monitoring feature not enabled</div>') :
+                      this.currentPage === 'factory-testing' ? (this.factoryTestingPage ? this.factoryTestingPage.render() : '<div class="p-6 text-center">Factory Testing not available</div>') :
                       this.renderDevicesPage()
       }
         </div>
@@ -1072,6 +1131,14 @@ class App {
     if (this.currentPage === 'stm32-flasher' && window.stm32Flasher) {
       setTimeout(() => {
         window.stm32Flasher.render();
+      }, 0);
+    }
+
+    // Attach pre-testing input listeners for factory testing page
+    if (this.currentPage === 'factory-testing' && this.factoryTestingPage) {
+      // Use immediate timeout (next tick) to ensure DOM is ready
+      setTimeout(() => {
+        this.factoryTestingPage.attachPreTestingListeners();
       }, 0);
     }
 
