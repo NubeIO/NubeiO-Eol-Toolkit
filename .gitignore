@@ -30,3 +30,4 @@ Thumbs.db
 
 # Wails
 /app.syso
+node_modules/
