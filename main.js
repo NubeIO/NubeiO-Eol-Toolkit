@@ -1095,9 +1095,9 @@ ipcMain.handle('stm32:getCurrentDeviceType', () => {
 });
 
 // Factory Testing IPC Handlers
-ipcMain.handle('factoryTesting:connect', async (event, port, baudRate) => {
+ipcMain.handle('factoryTesting:connect', async (event, port, baudRate, useUnlock = true) => {
   try {
-    return await factoryTesting.connect(port, baudRate);
+    return await factoryTesting.connect(port, baudRate, useUnlock);
   } catch (error) {
     console.error('Failed to connect factory testing:', error);
     throw error;
@@ -1285,5 +1285,58 @@ ipcMain.handle('stm32:abort', async () => {
   } catch (e) {
     console.error('stm32:abort failed:', e);
     return { success: false, error: e.message };
+  }
+});
+
+// ZC-LCD specific test handlers
+ipcMain.handle('factoryTesting:zc:wifi', async (event) => {
+  try {
+    factoryTesting.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) mainWindow.webContents.send('factoryTesting:progress', progress);
+    });
+    return await factoryTesting.zcWifiTest();
+  } catch (error) {
+    console.error('ZC-LCD WiFi test failed:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:zc:rs485', async (event) => {
+  try {
+    factoryTesting.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) mainWindow.webContents.send('factoryTesting:progress', progress);
+    });
+    return await factoryTesting.zcRs485Test();
+  } catch (error) {
+    console.error('ZC-LCD RS485 test failed:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:zc:i2c', async (event) => {
+  try {
+    factoryTesting.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) mainWindow.webContents.send('factoryTesting:progress', progress);
+    });
+    return await factoryTesting.zcI2cTest();
+  } catch (error) {
+    console.error('ZC-LCD I2C test failed:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:zc:full', async (event) => {
+  try {
+    factoryTesting.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) mainWindow.webContents.send('factoryTesting:progress', progress);
+    });
+    return await factoryTesting.zcFullTest();
+  } catch (error) {
+    console.error('ZC-LCD Full test failed:', error);
+    throw error;
   }
 });

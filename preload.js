@@ -150,7 +150,7 @@ contextBridge.exposeInMainWorld('fleetMonitoringAPI', {
 
 // Expose Factory Testing service
 contextBridge.exposeInMainWorld('factoryTestingAPI', {
-  connect: (port, baudRate) => ipcRenderer.invoke('factoryTesting:connect', port, baudRate),
+  connect: (port, baudRate, useUnlock = true) => ipcRenderer.invoke('factoryTesting:connect', port, baudRate, useUnlock),
   disconnect: () => ipcRenderer.invoke('factoryTesting:disconnect'),
   readDeviceInfo: () => ipcRenderer.invoke('factoryTesting:readDeviceInfo'),
   runFactoryTests: (device) => ipcRenderer.invoke('factoryTesting:runFactoryTests', device),
@@ -165,6 +165,11 @@ contextBridge.exposeInMainWorld('factoryTestingAPI', {
   acbLoraTest: () => ipcRenderer.invoke('factoryTesting:acb:lora'),
   acbRtcTest: () => ipcRenderer.invoke('factoryTesting:acb:rtc'),
   acbFullTest: () => ipcRenderer.invoke('factoryTesting:acb:full'),
+  // ZC-LCD specific tests
+  zcWifiTest: () => ipcRenderer.invoke('factoryTesting:zc:wifi'),
+  zcRs485Test: () => ipcRenderer.invoke('factoryTesting:zc:rs485'),
+  zcI2cTest: () => ipcRenderer.invoke('factoryTesting:zc:i2c'),
+  zcFullTest: () => ipcRenderer.invoke('factoryTesting:zc:full'),
   onProgress: (callback) => {
     ipcRenderer.on('factoryTesting:progress', (event, progress) => callback(progress));
   }

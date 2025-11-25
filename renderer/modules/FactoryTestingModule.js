@@ -96,7 +96,7 @@ class FactoryTestingModule {
     console.log('[Factory Testing] Dropdown updated, selected port:', this.selectedPort);
   }
 
-  async connect() {
+  async connect(portArg, baudArg, useUnlock = true) {
     console.log('[Factory Testing Module] === START CONNECT ===');
     console.log('[Factory Testing Module] Current selectedPort:', this.selectedPort);
     console.log('[Factory Testing Module] Current baudRate:', this.baudRate);
@@ -126,11 +126,15 @@ class FactoryTestingModule {
 
     try {
       console.log('[Factory Testing Module] Calling factoryTestingAPI.connect...');
-      console.log('[Factory Testing Module] Parameters:', this.selectedPort, this.baudRate);
-      
-      const result = await window.factoryTestingAPI.connect(this.selectedPort, this.baudRate);
+      console.log('[Factory Testing Module] Parameters:', this.selectedPort, this.baudRate, useUnlock);
+
+      const result = await window.factoryTestingAPI.connect(this.selectedPort, this.baudRate, useUnlock);
       
       console.log('[Factory Testing Module] API returned:', result);
+      // If backend returned deviceInfo (e.g., Unique ID / MAC), attach to module for the page
+      if (result && result.deviceInfo) {
+        this.deviceInfo = result.deviceInfo;
+      }
       console.log('[Factory Testing Module] === END CONNECT ===');
       return result;
     } catch (error) {
@@ -277,6 +281,58 @@ class FactoryTestingModule {
     if (window.factoryTestingPage) {
       window.factoryTestingPage.testProgress = '';
       window.factoryTestingPage.app.render();
+    }
+  }
+
+  // ZC-LCD specific tests
+  async zcWifiTest() {
+    try {
+      if (window.factoryTestingAPI.onProgress) window.factoryTestingAPI.onProgress(() => {});
+      const result = await window.factoryTestingAPI.zcWifiTest();
+      console.log('[FactoryTestingModule] ZC WiFi test result:', result);
+      return result;
+    } catch (error) {
+      console.error('ZC WiFi test error:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  async zcRs485Test() {
+    try {
+      const result = await window.factoryTestingAPI.zcRs485Test();
+      return result;
+    } catch (error) {
+      console.error('ZC RS485 test error:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  async zcI2cTest() {
+    try {
+      const result = await window.factoryTestingAPI.zcI2cTest();
+      return result;
+    } catch (error) {
+      console.error('ZC I2C test error:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  async zcFullTest() {
+    try {
+      if (window.factoryTestingAPI.onProgress) {
+        window.factoryTestingAPI.onProgress((p) => {
+          if (window.factoryTestingPage) {
+            window.factoryTestingPage.testProgress = p;
+            window.factoryTestingPage.app.render();
+          }
+        });
+      }
+      const result = await window.factoryTestingAPI.zcFullTest();
+      console.log('[FactoryTestingModule] ZC Full test result:', result);
+      return result;
+    } catch (error) {
+      console.error('ZC Full test error:', error);
+      return { success: false, error: error.message };
     }
   }
 }

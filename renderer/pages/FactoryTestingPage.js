@@ -53,6 +53,13 @@ class FactoryTestingPage {
     this.isConnected = false;
     this.isTesting = false;
     this.testProgress = '';
+    this.showRawJson = false;
+    this.showProfile = false; // toggles the small profile panel
+  }
+
+  toggleRawJson() {
+    this.showRawJson = !this.showRawJson;
+    this.app.render();
   }
 
   selectVersion(version) {
@@ -65,6 +72,19 @@ class FactoryTestingPage {
   selectDevice(device) {
     this.selectedDevice = device;
     this.resetData();
+    // Load saved defaults for this device type (if any)
+    try {
+      const key = `factoryDefaults:${device.replace(/\s+/g, '-').toLowerCase()}`;
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          this.preTesting = Object.assign({}, this.preTesting, parsed);
+        }
+      }
+    } catch (e) {
+      console.warn('[Factory Testing] Failed to load defaults for device:', device, e && e.message);
+    }
     this.app.render();
     
     // Force focus on first input after a short delay
@@ -195,135 +215,7 @@ class FactoryTestingPage {
     console.log('=== DEBUG PORTS END ===');
   }
 
-  renderTestResultsByDevice() {
-    if (this.selectedDevice === 'Micro Edge') {
-      return `
-        <p class="text-sm text-gray-600 dark:text-gray-400 mb-3">
-          📊 Testing: Digital I/O, Analog inputs, Pulse counter, Battery, and LoRa communication
-        </p>
-        <div class="grid grid-cols-3 gap-3 text-sm">
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">🔋 Battery Voltage</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100">${this.factoryTestResults.batteryVoltage || '—'}</div>
-          </div>
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">⚡ Pulse Counter</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100">${this.factoryTestResults.pulsesCounter || '—'}</div>
-          </div>
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">🎚️ DIP Switches</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100 text-xs">${this.factoryTestResults.dipSwitches || '—'}</div>
-          </div>
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">📈 AIN 1 (Analog)</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100">${this.factoryTestResults.ain1Voltage || '—'}</div>
-          </div>
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">📈 AIN 2 (Analog)</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100">${this.factoryTestResults.ain2Voltage || '—'}</div>
-          </div>
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">📈 AIN 3 (Analog)</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100">${this.factoryTestResults.ain3Voltage || '—'}</div>
-          </div>
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">📡 LoRa Address</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100">${this.factoryTestResults.loraAddress || '—'}</div>
-          </div>
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">📡 LoRa Detect</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100">${this.factoryTestResults.loraDetect || '—'}</div>
-          </div>
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">📡 LoRa Push Test</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100">${this.factoryTestResults.loraRawPush || '—'}</div>
-          </div>
-        </div>
-      `;
-    } else if (this.selectedDevice === 'Droplet') {
-      return `
-        <p class="text-sm text-gray-600 dark:text-gray-400 mb-3">
-          🌡️ Testing: Environmental sensors (Temperature, Humidity, Pressure, CO2) and LoRa communication
-        </p>
-        <div class="grid grid-cols-3 gap-3 text-sm">
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">🌡️ Temperature</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100">${this.factoryTestResults.temperature || '—'}</div>
-          </div>
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">💧 Humidity</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100">${this.factoryTestResults.humidity || '—'}</div>
-          </div>
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">🌪️ Pressure</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100">${this.factoryTestResults.pressure || '—'}</div>
-          </div>
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">💨 CO2 Level</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100">${this.factoryTestResults.co2 || '—'}</div>
-          </div>
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">📡 LoRa Address</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100">${this.factoryTestResults.loraAddress || '—'}</div>
-          </div>
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">📡 LoRa Detect</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100">${this.factoryTestResults.loraDetect || '—'}</div>
-          </div>
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600 col-span-3">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">📡 LoRa Push Test</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100">${this.factoryTestResults.loraRawPush || '—'}</div>
-          </div>
-        </div>
-      `;
-    } else if (this.selectedDevice === 'ACB-M') {
-      return `
-        <p class="text-sm text-gray-600 dark:text-gray-400 mb-3">
-          🔌 Testing: Power rails, Relays, Digital inputs, Analog inputs and LoRa communication
-        </p>
-        <div class="grid grid-cols-3 gap-3 text-sm">
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">🔋 VCC Voltage</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100">${this.factoryTestResults.vccVoltage || '—'}</div>
-          </div>
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">🔁 Relay 1</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100">${this.factoryTestResults.relay1Status || '—'}</div>
-          </div>
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">🔁 Relay 2</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100">${this.factoryTestResults.relay2Status || '—'}</div>
-          </div>
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">🎛️ Digital Inputs</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100 text-xs">${this.factoryTestResults.digitalInputs || '—'}</div>
-          </div>
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">📈 AIN 1 (Analog)</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100">${this.factoryTestResults.ain1Voltage || '—'}</div>
-          </div>
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">📈 AIN 2 (Analog)</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100">${this.factoryTestResults.ain2Voltage || '—'}</div>
-          </div>
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">📡 LoRa Address</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100">${this.factoryTestResults.loraAddress || '—'}</div>
-          </div>
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">📡 LoRa Detect</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100">${this.factoryTestResults.loraDetect || '—'}</div>
-          </div>
-          <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-            <div class="text-gray-500 dark:text-gray-400 mb-1">📡 LoRa Push Test</div>
-            <div class="font-mono text-gray-800 dark:text-gray-100">${this.factoryTestResults.loraRawPush || '—'}</div>
-          </div>
-        </div>
-      `;
-    } else {
-      return `<p class="text-sm text-gray-500 dark:text-gray-400">Select a device to see available tests</p>`;
-    }
-  }
+  
 
   renderInstructionsByDevice() {
     if (this.selectedDevice === 'Micro Edge') {
@@ -383,6 +275,132 @@ class FactoryTestingPage {
     console.log('[Factory Testing] Pre-testing inputs use inline handlers');
   }
 
+  // Save current preTesting as defaults for selected device type
+  saveDefaultsForDevice() {
+    if (!this.selectedDevice) return;
+    try {
+      const key = `factoryDefaults:${this.selectedDevice.replace(/\s+/g, '-').toLowerCase()}`;
+      localStorage.setItem(key, JSON.stringify(this.preTesting));
+      this.testProgress = 'Saved defaults for ' + this.selectedDevice;
+      this.app.render();
+    } catch (e) {
+      console.error('[Factory Testing] Failed to save defaults:', e && e.message);
+    }
+  }
+
+  // Reset defaults for selected device type
+  resetDefaultsForDevice() {
+    if (!this.selectedDevice) return;
+    try {
+      const key = `factoryDefaults:${this.selectedDevice.replace(/\s+/g, '-').toLowerCase()}`;
+      localStorage.removeItem(key);
+      // Clear current preTesting fields
+      this.preTesting = { testerName: '', hardwareVersion: '', batchId: '', workOrderSerial: '' };
+      this.testProgress = 'Reset defaults for ' + this.selectedDevice;
+      this.app.render();
+    } catch (e) {
+      console.error('[Factory Testing] Failed to reset defaults:', e && e.message);
+    }
+  }
+
+  toggleProfilePanel() {
+    this.showProfile = !this.showProfile;
+    this.app.render();
+  }
+
+  // Format AIN display: if value is normalized (0..1) convert to 0..3.3V, otherwise assume already volts
+  _formatAIN(value) {
+    if (value === null || typeof value === 'undefined' || value === '') return '—';
+    // If the value is already a string with 'V', try to parse the numeric part
+    let raw = value;
+    if (typeof raw === 'string') raw = raw.trim();
+    // Extract first number appearance
+    const m = String(raw).match(/-?[0-9]*\.?[0-9]+/);
+    if (!m) return String(value);
+    const n = parseFloat(m[0]);
+    if (Number.isNaN(n)) return String(value);
+    // If the reading looks normalized (0..1) convert to volts
+    let volts = n;
+    if (Math.abs(n) <= 1.05) {
+      volts = n * 3.3;
+    }
+    return `${volts.toFixed(2)} V`;
+  }
+
+  // Evaluate Micro Edge results using thresholds and update UI icons/colors
+  _evaluateMicroEdgeResults(results) {
+    if (!results) return;
+    // Helper to set icon and color
+    const makeCheck = (color) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="M20 6L9 17l-5-5"/></svg>`;
+    const makeCross = (color) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="M18 6L6 18M6 6l12 12"/></svg>`;
+    const makeDot = (color) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-6 h-6"><circle cx="12" cy="12" r="4" fill="${color}"/></svg>`;
+
+    const setStatus = (iconId, labelId, boxId, passed) => {
+      const iconEl = document.getElementById(iconId);
+      const labelEl = document.getElementById(labelId);
+      const boxEl = document.getElementById(boxId);
+      if (!iconEl || !boxEl) return;
+      // Clean previous color classes
+      iconEl.classList.remove('text-red-600', 'text-green-600', 'text-gray-400');
+      boxEl.classList.remove('border-red-600', 'border-green-600');
+      if (labelEl) labelEl.classList.remove('text-red-600', 'text-green-600', 'text-gray-400');
+
+      if (passed === true) {
+        iconEl.innerHTML = makeCheck('#16A34A');
+        if (labelEl) { labelEl.textContent = 'Done'; labelEl.style.color = '#16A34A'; }
+        boxEl.classList.add('border-green-600');
+      } else if (passed === false) {
+        iconEl.innerHTML = makeCross('#DC2626');
+        if (labelEl) { labelEl.textContent = 'Fail'; labelEl.style.color = '#DC2626'; }
+        boxEl.classList.add('border-red-600');
+      } else {
+        iconEl.innerHTML = makeDot('#9CA3AF');
+        if (labelEl) { labelEl.textContent = ''; labelEl.style.color = '#9CA3AF'; }
+      }
+    };
+
+    // Parse volts as number
+    const parseVolts = (v) => {
+      if (v === null || typeof v === 'undefined' || v === '') return NaN;
+      const m = String(v).match(/-?[0-9]*\.?[0-9]+/);
+      if (!m) return NaN;
+      let n = parseFloat(m[0]);
+      if (Math.abs(n) <= 1.05) n = n * 3.3; // normalized
+      return n;
+    };
+
+    // 1. Battery Voltage: pass if 2.5..4.5
+    const batt = parseVolts(results.batteryVoltage);
+    setStatus('me-battery-icon', 'me-battery-label', 'me-battery-box', (batt >= 2.5 && batt <= 4.5));
+    // 2. AIN1: 1.4-1.7
+    const a1 = parseVolts(results.ain1Voltage);
+    setStatus('me-ain1-icon', 'me-ain1-label', 'me-ain1-box', (a1 >= 1.4 && a1 <= 1.7));
+    // 3. AIN2: 0.75-1.2
+    const a2 = parseVolts(results.ain2Voltage);
+    setStatus('me-ain2-icon', 'me-ain2-label', 'me-ain2-box', (a2 >= 0.75 && a2 <= 1.2));
+    // 4. AIN3: 0.5-0.9
+    const a3 = parseVolts(results.ain3Voltage);
+    setStatus('me-ain3-icon', 'me-ain3-label', 'me-ain3-box', (a3 >= 0.5 && a3 <= 0.9));
+    // 5. Pulse > 3
+    const pulses = Number(results.pulsesCounter || 0);
+    setStatus('me-pulses-icon', 'me-pulses-label', 'me-pulse-box', (pulses > 3));
+    // 6. LoRa: detect + raw push OK
+    const detectOk = String(results.loraDetect || '').toLowerCase().includes('detect');
+    const pushOk = String(results.loraRawPush || '').toLowerCase().includes('ok');
+    const loraPass = detectOk && pushOk;
+    setStatus('me-lora-icon', 'me-lora-label', 'me-lora-box', loraPass);
+    // Update LoRa subtext to include push DONE/FAIL explicitly
+    try {
+      const loraSubEl = document.getElementById('me-lora-sub');
+      if (loraSubEl) {
+        const push = results.loraRawPush || '';
+        const detect = results.loraDetect || '';
+        const pushText = push.toUpperCase() === 'OK' ? 'Done' : (push ? 'Fail' : '');
+        loraSubEl.textContent = `${detect}${push ? ' · ' + push : ''}${pushText ? ' · ' + pushText : ''}`;
+      }
+    } catch (e) { /* ignore */ }
+  }
+
   validatePreTestingInfo() {
     const missing = [];
     if (!this.preTesting.testerName) missing.push('Tester Name');
@@ -425,13 +443,19 @@ class FactoryTestingPage {
       this.app.render();
       
       console.log('[Factory Testing Page] Calling module.connect()...');
-      const result = await window.factoryTestingModule.connect();
+      // Determine whether to use AT+UNLOCK - only Micro Edge requires it
+      const useUnlock = this.selectedDevice === 'Micro Edge';
+      const result = await window.factoryTestingModule.connect(this.selectedPort, undefined, useUnlock);
       console.log('[Factory Testing Page] Connect result:', result);
       
       if (result.success) {
         this.isConnected = true;
         this.testProgress = `✅ Connected to ${selectedPort}`;
         console.log('[Factory Testing Page] Connection successful');
+        // If backend returned device info (unique ID / MAC), set it in page state
+        if (result.deviceInfo) {
+          this.deviceInfo = result.deviceInfo;
+        }
         alert(`Connected successfully to ${selectedPort}`);
       } else {
         this.testProgress = `❌ Connection failed: ${result.error}`;
@@ -492,6 +516,119 @@ class FactoryTestingPage {
     }
   }
 
+  // ZC-LCD individual test runners update UI fields
+  async runZcWifiTest() {
+    if (!window.factoryTestingModule || !this.isConnected) { alert('Connect first'); return; }
+    this.testProgress = 'Running ZC WiFi test...'; this.app.render();
+    try {
+      const res = await window.factoryTestingModule.zcWifiTest();
+      this.factoryTestResults.wifi = res;
+      // Populate labeled value spans and apply status color
+      const status = res.status || (res.success ? 'done' : 'fail');
+      const statusEl = document.getElementById('zc-wifi-status-val');
+      const rssiEl = document.getElementById('zc-wifi-rssi-val');
+      const netsEl = document.getElementById('zc-wifi-networks-val');
+      if (statusEl) { statusEl.textContent = status; statusEl.classList.remove('text-red-600','text-green-600','text-gray-500'); statusEl.classList.add(status === 'done' ? 'text-green-600' : status === 'fail' ? 'text-red-600' : 'text-gray-500'); }
+      if (rssiEl) rssiEl.textContent = (typeof res.rssi !== 'undefined' ? res.rssi : '—');
+      if (netsEl) netsEl.textContent = ((res.networks && res.networks.length) ? res.networks.join(', ') : '—');
+      this.testProgress = 'ZC WiFi test complete';
+      this.app.render();
+      return res;
+    } catch (e) { this.testProgress = `Error: ${e.message}`; this.app.render(); }
+  }
+
+  async runZcI2cTest() {
+    if (!window.factoryTestingModule || !this.isConnected) { alert('Connect first'); return; }
+    this.testProgress = 'Running ZC I2C test...'; this.app.render();
+    try {
+      const res = await window.factoryTestingModule.zcI2cTest();
+      this.factoryTestResults.i2c = res;
+      // Populate labeled value spans and apply status color
+      const statusI = res.status || (res.success ? 'done' : 'fail');
+      const statusElI = document.getElementById('zc-i2c-status-val');
+      if (statusElI) { statusElI.textContent = statusI; statusElI.classList.remove('text-red-600','text-green-600','text-gray-500'); statusElI.classList.add(statusI === 'done' ? 'text-green-600' : statusI === 'fail' ? 'text-red-600' : 'text-gray-500'); }
+      const addrEl = document.getElementById('zc-i2c-addr-val'); if (addrEl) addrEl.textContent = res.sensor_addr || '—';
+      const sensorEl = document.getElementById('zc-i2c-sensor-val'); if (sensorEl) sensorEl.textContent = res.sensor || '—';
+      const tempEl = document.getElementById('zc-i2c-temp-val'); if (tempEl) tempEl.textContent = (typeof res.temperature_c !== 'undefined' ? res.temperature_c + '°C' : '—');
+      const humEl = document.getElementById('zc-i2c-hum-val'); if (humEl) humEl.textContent = (typeof res.humidity_rh !== 'undefined' ? res.humidity_rh + '%' : '—');
+      this.testProgress = 'ZC I2C test complete';
+      this.app.render();
+      return res;
+    } catch (e) { this.testProgress = `Error: ${e.message}`; this.app.render(); }
+  }
+
+  async runZcLcdTest() {
+    // LCD test removed - unsupported by firmware
+    alert('LCD test is not supported by this device firmware');
+    return { success: false, error: 'LCD test unsupported' };
+  }
+
+  async runZcRs485Test() {
+    if (!window.factoryTestingModule || !this.isConnected) { alert('Connect first'); return; }
+    this.testProgress = 'Running ZC RS485 test...'; this.app.render();
+    try {
+      const res = await window.factoryTestingModule.zcRs485Test();
+      this.factoryTestResults.rs485 = res;
+      // Populate labeled value spans and apply status color
+      const statusR = res.status || (res.success ? 'done' : 'fail');
+      const statusElR = document.getElementById('zc-rs485-status-val');
+      if (statusElR) { statusElR.textContent = statusR; statusElR.classList.remove('text-red-600','text-green-600','text-gray-500'); statusElR.classList.add(statusR === 'done' ? 'text-green-600' : statusR === 'fail' ? 'text-red-600' : 'text-gray-500'); }
+      const tempElR = document.getElementById('zc-rs485-temp-val'); if (tempElR) tempElR.textContent = (typeof res.temperature !== 'undefined' ? res.temperature + '°C' : '—');
+      const humElR = document.getElementById('zc-rs485-hum-val'); if (humElR) humElR.textContent = (typeof res.humidity !== 'undefined' ? res.humidity : '—');
+      const slaveEl = document.getElementById('zc-rs485-slave-val'); if (slaveEl) slaveEl.textContent = (typeof res.slave_ok !== 'undefined' ? (res.slave_ok ? 'Yes' : 'No') : '—');
+      const masterEl = document.getElementById('zc-rs485-master-val'); if (masterEl) masterEl.textContent = (typeof res.master_ok !== 'undefined' ? (res.master_ok ? 'Yes' : 'No') : '—');
+      this.testProgress = 'ZC RS485 test complete';
+      this.app.render();
+      return res;
+    } catch (e) { this.testProgress = `Error: ${e.message}`; this.app.render(); }
+  }
+
+  async runZcFullTest() {
+    if (!window.factoryTestingModule || !this.isConnected) { alert('Connect first'); return; }
+    if (!this.validatePreTestingInfo()) return;
+    this.isTesting = true; this.testProgress = 'Running ZC full test...'; this.app.render();
+    try {
+      const res = await window.factoryTestingModule.zcFullTest();
+      if (res.success) {
+        // populate UI fields
+        this.factoryTestResults.wifi = res.data.wifi || {};
+        this.factoryTestResults.i2c = res.data.i2c || {};
+        this.factoryTestResults.rs485 = res.data.rs485 || {};
+
+        // Populate wifi fields
+        const w = this.factoryTestResults.wifi || {};
+        const wifiStatusEl = document.getElementById('zc-wifi-status-val'); if (wifiStatusEl) { const s = w.status || (w.success ? 'done' : 'fail'); wifiStatusEl.textContent = s; wifiStatusEl.classList.remove('text-red-600','text-green-600','text-gray-500'); wifiStatusEl.classList.add(s === 'done' ? 'text-green-600' : s === 'fail' ? 'text-red-600' : 'text-gray-500'); }
+        const wifiRssiEl = document.getElementById('zc-wifi-rssi-val'); if (wifiRssiEl) wifiRssiEl.textContent = (typeof w.rssi !== 'undefined' ? w.rssi : '—');
+        const wifiNEl = document.getElementById('zc-wifi-networks-val'); if (wifiNEl) wifiNEl.textContent = ((w.networks && w.networks.length) ? w.networks.join(', ') : '—');
+
+        // Populate i2c fields
+        const ii = this.factoryTestResults.i2c || {};
+        const iStatusEl = document.getElementById('zc-i2c-status-val'); if (iStatusEl) { const s = ii.status || (ii.success ? 'done' : 'fail'); iStatusEl.textContent = s; iStatusEl.classList.remove('text-red-600','text-green-600','text-gray-500'); iStatusEl.classList.add(s === 'done' ? 'text-green-600' : s === 'fail' ? 'text-red-600' : 'text-gray-500'); }
+        const iAddrEl = document.getElementById('zc-i2c-addr-val'); if (iAddrEl) iAddrEl.textContent = ii.sensor_addr || '—';
+        const iSensorEl = document.getElementById('zc-i2c-sensor-val'); if (iSensorEl) iSensorEl.textContent = ii.sensor || '—';
+        const iTempEl = document.getElementById('zc-i2c-temp-val'); if (iTempEl) iTempEl.textContent = (typeof ii.temperature_c !== 'undefined' ? ii.temperature_c + '°C' : '—');
+        const iHumEl = document.getElementById('zc-i2c-hum-val'); if (iHumEl) iHumEl.textContent = (typeof ii.humidity_rh !== 'undefined' ? ii.humidity_rh + '%' : '—');
+
+        // Populate rs485 fields
+        const rr = this.factoryTestResults.rs485 || {};
+        const rStatusEl = document.getElementById('zc-rs485-status-val'); if (rStatusEl) { const s = rr.status || (rr.success ? 'done' : 'fail'); rStatusEl.textContent = s; rStatusEl.classList.remove('text-red-600','text-green-600','text-gray-500'); rStatusEl.classList.add(s === 'done' ? 'text-green-600' : s === 'fail' ? 'text-red-600' : 'text-gray-500'); }
+        const rTempEl = document.getElementById('zc-rs485-temp-val'); if (rTempEl) rTempEl.textContent = (typeof rr.temperature !== 'undefined' ? rr.temperature + '°C' : '—');
+        const rHumEl = document.getElementById('zc-rs485-hum-val'); if (rHumEl) rHumEl.textContent = (typeof rr.humidity !== 'undefined' ? rr.humidity : '—');
+        const rSlaveEl = document.getElementById('zc-rs485-slave-val'); if (rSlaveEl) rSlaveEl.textContent = (typeof rr.slave_ok !== 'undefined' ? (rr.slave_ok ? 'Yes' : 'No') : '—');
+        const rMasterEl = document.getElementById('zc-rs485-master-val'); if (rMasterEl) rMasterEl.textContent = (typeof rr.master_ok !== 'undefined' ? (rr.master_ok ? 'Yes' : 'No') : '—');
+
+        this.testProgress = 'ZC-LCD full test completed';
+        // Auto-save
+        await this.saveResultsToFile();
+      } else {
+        this.testProgress = `ZC-LCD full test failed: ${res.error}`;
+      }
+    } catch (e) {
+      this.testProgress = `Error: ${e.message}`;
+    }
+    this.isTesting = false; this.app.render();
+  }
+
   async runFactoryTests() {
     if (!window.factoryTestingModule || !this.isConnected) {
       alert('Please connect to device first');
@@ -519,6 +656,63 @@ class FactoryTestingPage {
         
         // Auto-save results to file
         await this.saveResultsToFile();
+        // Populate Micro Edge result spans if present (use IDs that match the rendered DOM)
+        try {
+          const setIf = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+          setIf('me-battery-val', this.factoryTestResults.batteryVoltage ? this._formatAIN(this.factoryTestResults.batteryVoltage) : '—');
+          setIf('me-pulses-val', this.factoryTestResults.pulsesCounter || '—');
+          setIf('me-dips-val', this.factoryTestResults.dipSwitches || '—');
+          setIf('me-ain1-val', this._formatAIN(this.factoryTestResults.ain1Voltage));
+          setIf('me-ain2-val', this._formatAIN(this.factoryTestResults.ain2Voltage));
+          setIf('me-ain3-val', this._formatAIN(this.factoryTestResults.ain3Voltage));
+          setIf('me-lora-val', this.factoryTestResults.loraAddress || '—');
+          // me-lora-sub contains detect and push info
+          const loraSub = `${this.factoryTestResults.loraDetect || ''}${this.factoryTestResults.loraRawPush ? ' · ' + this.factoryTestResults.loraRawPush : ''}`.trim();
+          setIf('me-lora-sub', loraSub || '—');
+        } catch (e) { console.warn('Failed to populate Micro Edge spans:', e && e.message); }
+
+        // Evaluate thresholds and set pass/fail icons; prefer service-side evaluation flags when available
+        try {
+          // If service attached _eval flags, use them to drive UI
+          if (this.factoryTestResults._eval) {
+            const f = this.factoryTestResults._eval;
+            // Map flags to UI
+            const map = [
+              ['me-battery-icon', 'me-battery-box', f.pass_battery],
+              ['me-ain1-icon', 'me-ain1-box', f.pass_ain1],
+              ['me-ain2-icon', 'me-ain2-box', f.pass_ain2],
+              ['me-ain3-icon', 'me-ain3-box', f.pass_ain3],
+              ['me-pulses-icon', 'me-pulse-box', f.pass_pulses],
+              ['me-lora-icon', 'me-lora-box', f.pass_lora]
+            ];
+            map.forEach(([iconId, boxId, pass]) => {
+              const iconEl = document.getElementById(iconId);
+              const boxEl = document.getElementById(boxId);
+              if (!iconEl || !boxEl) return;
+              // Clean previous classes
+              iconEl.classList.remove('text-red-600', 'text-green-600', 'text-gray-400');
+              boxEl.classList.remove('border-red-600', 'border-green-600');
+              if (pass === true) {
+                iconEl.textContent = '✔️'; iconEl.classList.add('text-green-600'); boxEl.classList.add('border-green-600');
+              } else if (pass === false) {
+                iconEl.textContent = '✖️'; iconEl.classList.add('text-red-600'); boxEl.classList.add('border-red-600');
+              } else {
+                iconEl.textContent = '⏺'; iconEl.classList.add('text-gray-400');
+              }
+            });
+
+            // Update LoRa subtext to include DONE/FAIL
+            const loraSubEl = document.getElementById('me-lora-sub');
+            if (loraSubEl) {
+              const push = String(this.factoryTestResults.loraRawPush || '').toUpperCase();
+              const detect = String(this.factoryTestResults.loraDetect || '');
+              const pass = f.pass_lora ? 'DONE' : 'FAIL';
+              loraSubEl.textContent = `${detect}${push ? ' · ' + push : ''} · ${pass}`;
+            }
+          } 
+          // Always run client-side evaluation to ensure UI is consistent (will be a no-op for icons already set)
+          this._evaluateMicroEdgeResults(this.factoryTestResults);
+        } catch (e) { console.warn('Eval error:', e && e.message); }
       } else {
         this.testProgress = `Factory tests failed: ${result.error}`;
       }
@@ -657,7 +851,31 @@ class FactoryTestingPage {
         window.factoryTestingModule.updatePortDropdown();
       }, 50);
     }
-    
+    // Compute Micro Edge evaluation UI state so icons persist across render
+    const _meEval = this.factoryTestResults._eval || {};
+    const makeSVG = (type, color) => {
+      if (type === 'check') return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="M20 6L9 17l-5-5"/></svg>`;
+      if (type === 'cross') return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="M18 6L6 18M6 6l12 12"/></svg>`;
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-6 h-6"><circle cx="12" cy="12" r="4" fill="${color}"/></svg>`;
+    };
+    const _meState = (key) => {
+      const p = typeof _meEval[key] === 'boolean' ? _meEval[key] : undefined;
+      if (p === true) return { icon: makeSVG('check', '#16A34A'), iconClass: '', boxClass: 'border-green-600', label: 'Done', labelColor: '#16A34A' };
+      if (p === false) return { icon: makeSVG('cross', '#DC2626'), iconClass: '', boxClass: 'border-red-600', label: 'Fail', labelColor: '#DC2626' };
+      return { icon: makeSVG('dot', '#9CA3AF'), iconClass: '', boxClass: '', label: '', labelColor: '#9CA3AF' };
+    };
+    const meBattery = _meState('pass_battery');
+    const meAin1 = _meState('pass_ain1');
+    const meAin2 = _meState('pass_ain2');
+    const meAin3 = _meState('pass_ain3');
+    const mePulses = _meState('pass_pulses');
+    const meLora = _meState('pass_lora');
+
+    // Build LoRa subtext with DONE/FAIL if evaluation exists
+    const _loraDetect = this.factoryTestResults.loraDetect || '';
+    const _loraPush = this.factoryTestResults.loraRawPush || '';
+    const _loraPassText = (typeof _meEval.pass_lora === 'boolean') ? (_meEval.pass_lora ? 'DONE' : 'FAIL') : '';
+
     return `
       <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6">
         <div class="flex items-center justify-between mb-6">
@@ -790,9 +1008,28 @@ class FactoryTestingPage {
 
           <!-- Pre-Testing Information Section -->
           <div class="mb-6 p-4 bg-purple-50 dark:bg-purple-900/20 border-2 border-purple-200 dark:border-purple-700 rounded-lg">
-            <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-3">
-              📝 Step 1.5: Pre-Testing Information
-            </h3>
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100">
+                📝 Step 1.5: Pre-Testing Information
+              </h3>
+              <div class="flex items-center gap-2">
+                <button
+                  onclick="window.factoryTestingPage.saveDefaultsForDevice()"
+                  class="px-3 py-1 bg-green-500 hover:bg-green-600 text-white rounded text-sm"
+                  title="Save these tester defaults for this device type"
+                >Save Defaults</button>
+                <button
+                  onclick="window.factoryTestingPage.resetDefaultsForDevice()"
+                  class="px-3 py-1 bg-red-500 hover:bg-red-600 text-white rounded text-sm"
+                  title="Reset saved defaults for this device type"
+                >Reset Defaults</button>
+                <button
+                  onclick="window.factoryTestingPage.toggleProfilePanel()"
+                  class="px-3 py-1 bg-gray-300 hover:bg-gray-350 rounded text-sm"
+                  title="Toggle profile panel"
+                >Profile</button>
+              </div>
+            </div>
             <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
               Fill in the following information before proceeding with device testing.
             </p>
@@ -869,6 +1106,17 @@ class FactoryTestingPage {
                 ℹ️ <strong>Note:</strong> All fields marked with <span class="text-red-500">*</span> are required before running factory tests. This information will be included in the test reports.
               </p>
             </div>
+            ${this.showProfile ? `
+              <div class="mt-3 p-3 bg-white rounded border text-sm">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div class="text-xs text-gray-600">Saved Profile for ${this.selectedDevice || 'Device'}</div>
+                    <div class="font-mono text-sm">${this.preTesting.testerName || '—'} · ${this.preTesting.hardwareVersion || '—'} · ${this.preTesting.batchId || '—'} · ${this.preTesting.workOrderSerial || '—'}</div>
+                  </div>
+                  <div class="text-xs text-gray-500">Defaults persist per device type</div>
+                </div>
+              </div>
+            ` : ''}
           </div>
 
           <!-- Device Information Section -->
@@ -877,13 +1125,7 @@ class FactoryTestingPage {
               <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100">
                 ${this.selectedDevice === 'Micro Edge' ? '⚡' : this.selectedDevice === 'Droplet' ? '🌡️' : '📋'} Step 2: Read Device Information
               </h3>
-              <button
-                onclick="window.factoryTestingPage.readDeviceInfo()"
-                class="px-4 py-2 ${this.selectedDevice === 'Micro Edge' ? 'bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700' : this.selectedDevice === 'Droplet' ? 'bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700' : 'bg-blue-500 hover:bg-blue-600'} text-white rounded-lg text-sm font-medium transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
-                ${!this.isConnected ? 'disabled' : ''}
-              >
-                📖 Read Device Info
-              </button>
+              
             </div>
             
             <div class="grid grid-cols-2 gap-4 text-sm">
@@ -931,8 +1173,6 @@ class FactoryTestingPage {
               </button>
             </div>
             
-            ${this.renderTestResultsByDevice()}
-
             <!-- ACB-M Test Controls -->
             ${this.selectedDevice === 'ACB-M' ? `
               <div class="mt-6 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
@@ -949,6 +1189,136 @@ class FactoryTestingPage {
                 </div>
               </div>
             ` : ''}
+
+            ${this.selectedDevice === 'Micro Edge' ? `
+              <div class="mt-6 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                <h4 class="text-sm font-semibold mb-3">🧩 Micro Edge - Test Results</h4>
+                <div class="grid grid-cols-4 gap-3 text-sm">
+                  <div id="me-battery-box" class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700 flex items-center justify-between ${meBattery.boxClass}">
+                    <div>
+                      <div class="text-xs text-gray-500">Battery Voltage</div>
+                        <div id="me-battery-val" class="font-mono">${this._formatAIN(this.factoryTestResults.batteryVoltage)}</div>
+                      </div>
+                      <div class="text-right">
+                        <div id="me-battery-icon" class="text-2xl ${meBattery.iconClass}">${meBattery.icon}</div>
+                        <div id="me-battery-label" class="text-xs mt-1" style="color: ${meBattery.labelColor}">${meBattery.label}</div>
+                      </div>
+                  </div>
+
+                  <div id="me-pulse-box" class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700 flex items-center justify-between ${mePulses.boxClass}">
+                    <div>
+                      <div class="text-xs text-gray-500">Pulses</div>
+                      <div id="me-pulses-val" class="font-mono">${this.factoryTestResults.pulsesCounter || '—'}</div>
+                    </div>
+                    <div class="text-right">
+                      <div id="me-pulses-icon" class="text-2xl ${mePulses.iconClass}">${mePulses.icon}</div>
+                      <div id="me-pulses-label" class="text-xs mt-1" style="color: ${mePulses.labelColor}">${mePulses.label}</div>
+                    </div>
+                  </div>
+
+                  <div id="me-dips-box" class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700 flex items-center justify-between">
+                    <div>
+                      <div class="text-xs text-gray-500">DIP Switches</div>
+                      <div id="me-dips-val" class="font-mono">${this.factoryTestResults.dipSwitches || '—'}</div>
+                    </div>
+                    <div class="text-right">
+                      <div id="me-dips-icon" class="text-2xl text-gray-400">⏺</div>
+                      <div id="me-dips-label" class="text-xs text-gray-400 mt-1"></div>
+                    </div>
+                  </div>
+
+                  <div id="me-lora-box" class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700 flex items-center justify-between ${meLora.boxClass}">
+                    <div>
+                      <div class="text-xs text-gray-500">LoRa</div>
+                      <div id="me-lora-val" class="font-mono">${this.factoryTestResults.loraAddress || '—'}</div>
+                      <div id="me-lora-sub" class="text-xs text-gray-500">${_loraDetect || ''}${_loraPush ? ' · ' + _loraPush : ''}${_loraPassText ? ' · ' + _loraPassText : ''}</div>
+                    </div>
+                    <div class="text-right">
+                      <div id="me-lora-icon" class="text-2xl ${meLora.iconClass}">${meLora.icon}</div>
+                      <div id="me-lora-label" class="text-xs mt-1" style="color: ${meLora.labelColor}">${meLora.label}</div>
+                    </div>
+                  </div>
+
+                  <div id="me-ain1-box" class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700 flex items-center justify-between ${meAin1.boxClass}">
+                    <div>
+                      <div class="text-xs text-gray-500">AIN 1</div>
+                      <div id="me-ain1-val" class="font-mono">${this._formatAIN(this.factoryTestResults.ain1Voltage)}</div>
+                    </div>
+                    <div class="text-right">
+                      <div id="me-ain1-icon" class="text-2xl ${meAin1.iconClass}">${meAin1.icon}</div>
+                      <div id="me-ain1-label" class="text-xs mt-1" style="color: ${meAin1.labelColor}">${meAin1.label}</div>
+                    </div>
+                  </div>
+
+                  <div id="me-ain2-box" class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700 flex items-center justify-between ${meAin2.boxClass}">
+                    <div>
+                      <div class="text-xs text-gray-500">AIN 2</div>
+                      <div id="me-ain2-val" class="font-mono">${this._formatAIN(this.factoryTestResults.ain2Voltage)}</div>
+                    </div>
+                    <div class="text-right">
+                      <div id="me-ain2-icon" class="text-2xl ${meAin2.iconClass}">${meAin2.icon}</div>
+                      <div id="me-ain2-label" class="text-xs mt-1" style="color: ${meAin2.labelColor}">${meAin2.label}</div>
+                    </div>
+                  </div>
+
+                  <div id="me-ain3-box" class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700 flex items-center justify-between ${meAin3.boxClass}">
+                    <div>
+                      <div class="text-xs text-gray-500">AIN 3</div>
+                      <div id="me-ain3-val" class="font-mono">${this._formatAIN(this.factoryTestResults.ain3Voltage)}</div>
+                    </div>
+                    <div class="text-right">
+                      <div id="me-ain3-icon" class="text-2xl ${meAin3.iconClass}">${meAin3.icon}</div>
+                      <div id="me-ain3-label" class="text-xs mt-1" style="color: ${meAin3.labelColor}">${meAin3.label}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ` : ''}
+
+            ${this.selectedDevice === 'ZC-LCD' ? `
+              <div class="mt-6 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                <h4 class="text-sm font-semibold mb-3">🎮 Test Controls - ZC-LCD</h4>
+                <div class="grid grid-cols-1 gap-2">
+                    <button id="zc-wifi-btn" onclick="window.factoryTestingPage.runZcWifiTest()" class="px-4 py-3 bg-gray-300 hover:bg-gray-350 rounded-lg text-sm">📶 WiFi Test</button>
+                    <button id="zc-i2c-btn" onclick="window.factoryTestingPage.runZcI2cTest()" class="px-4 py-3 bg-gray-300 hover:bg-gray-350 rounded-lg text-sm">🔬 I2C Temp/Humidity</button>
+                    <button id="zc-rs485-btn" onclick="window.factoryTestingPage.runZcRs485Test()" class="px-4 py-3 bg-gray-300 hover:bg-gray-350 rounded-lg text-sm">🧭 RS485 Test</button>
+                    <button id="zc-full-btn" onclick="window.factoryTestingPage.runZcFullTest()" class="px-4 py-3 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-semibold">✳️ Run FULL TEST (ZC-LCD)</button>
+                    <button onclick="window.factoryTestingModule.acbClearOutput()" class="px-4 py-3 bg-orange-500 hover:bg-orange-600 text-white rounded-lg text-sm font-semibold">🧹 Clear Output</button>
+                </div>
+
+                  <div class="mt-4 grid grid-cols-2 gap-3">
+                    <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
+                      <div class="text-sm text-gray-500 mb-1">WiFi Test</div>
+                      <div class="text-sm text-gray-800 dark:text-gray-100 space-y-1">
+                        <div><span class="text-gray-600">Status:</span> <span id="zc-wifi-status-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${this.factoryTestResults.wifi?.status || (this.factoryTestResults.wifi?.success ? 'done' : '—')}</span></div>
+                        <div><span class="text-gray-600">RSSI:</span> <span id="zc-wifi-rssi-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${this.factoryTestResults.wifi?.rssi ?? '—'}</span></div>
+                        <div><span class="text-gray-600">Networks:</span> <span id="zc-wifi-networks-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.wifi?.networks && this.factoryTestResults.wifi.networks.length) ? this.factoryTestResults.wifi.networks.join(', ') : '—'}</span></div>
+                      </div>
+                    </div>
+                    <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
+                      <div class="text-sm text-gray-500 mb-1">I2C Test</div>
+                      <div class="text-sm text-gray-800 dark:text-gray-100 space-y-1">
+                        <div><span class="text-gray-600">Status:</span> <span id="zc-i2c-status-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${this.factoryTestResults.i2c?.status || (this.factoryTestResults.i2c?.success ? 'done' : '—')}</span></div>
+                        <div><span class="text-gray-600">Addr:</span> <span id="zc-i2c-addr-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${this.factoryTestResults.i2c?.sensor_addr || '—'}</span></div>
+                        <div><span class="text-gray-600">Sensor:</span> <span id="zc-i2c-sensor-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${this.factoryTestResults.i2c?.sensor || '—'}</span></div>
+                        <div><span class="text-gray-600">Temp:</span> <span id="zc-i2c-temp-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${typeof this.factoryTestResults.i2c?.temperature_c !== 'undefined' ? this.factoryTestResults.i2c.temperature_c + '°C' : '—'}</span></div>
+                        <div><span class="text-gray-600">Humidity:</span> <span id="zc-i2c-hum-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${typeof this.factoryTestResults.i2c?.humidity_rh !== 'undefined' ? this.factoryTestResults.i2c.humidity_rh + '%' : '—'}</span></div>
+                      </div>
+                    </div>
+
+                    <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
+                      <div class="text-sm text-gray-500 mb-1">RS485 Test</div>
+                      <div class="text-sm text-gray-800 dark:text-gray-100 space-y-1">
+                        <div><span class="text-gray-600">Status:</span> <span id="zc-rs485-status-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${this.factoryTestResults.rs485?.status || (this.factoryTestResults.rs485?.success ? 'done' : '—')}</span></div>
+                        <div><span class="text-gray-600">Temp:</span> <span id="zc-rs485-temp-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${typeof this.factoryTestResults.rs485?.temperature !== 'undefined' ? this.factoryTestResults.rs485.temperature + '°C' : '—'}</span></div>
+                        <div><span class="text-gray-600">Humidity:</span> <span id="zc-rs485-hum-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${typeof this.factoryTestResults.rs485?.humidity !== 'undefined' ? this.factoryTestResults.rs485.humidity : '—'}</span></div>
+                        <div><span class="text-gray-600">Slave OK:</span> <span id="zc-rs485-slave-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${typeof this.factoryTestResults.rs485?.slave_ok !== 'undefined' ? (this.factoryTestResults.rs485.slave_ok ? 'Yes' : 'No') : '—'}</span></div>
+                        <div><span class="text-gray-600">Master OK:</span> <span id="zc-rs485-master-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${typeof this.factoryTestResults.rs485?.master_ok !== 'undefined' ? (this.factoryTestResults.rs485.master_ok ? 'Yes' : 'No') : '—'}</span></div>
+                      </div>
+                    </div>
+                  </div>
+              </div>
+            ` : ''}
           </div>
 
           <!-- Progress/Status Section -->
@@ -956,6 +1326,26 @@ class FactoryTestingPage {
             <div class="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg">
               <p class="text-sm text-blue-800 dark:text-blue-200 whitespace-pre-line">${this.testProgress}</p>
             </div>
+          ` : ''}
+          
+          <!-- Raw JSON Debug Toggle -->
+          ${this.selectedDevice === 'ZC-LCD' ? `
+            <div class="mt-4 flex items-center gap-2">
+              <button onclick="window.factoryTestingPage.toggleRawJson()" class="px-3 py-2 bg-gray-200 dark:bg-gray-800 rounded">${this.showRawJson ? 'Hide' : 'Show'} Raw JSON</button>
+              <div class="text-xs text-gray-500">Toggle parsed JSON for WiFi / I2C / RS485</div>
+            </div>
+            ${this.showRawJson ? `
+              <div class="mt-3 p-3 bg-white dark:bg-gray-900 rounded border border-gray-200 dark:border-gray-700">
+                <div class="text-sm text-gray-500 mb-2">Raw JSON (parsed)</div>
+                <pre class="text-xs font-mono text-gray-800 dark:text-gray-100 max-h-64 overflow-auto">
+WiFi: ${JSON.stringify(this.factoryTestResults.wifi?.parsed || this.factoryTestResults.wifi || {}, null, 2)}
+
+I2C: ${JSON.stringify(this.factoryTestResults.i2c?.parsed || this.factoryTestResults.i2c || {}, null, 2)}
+
+RS485: ${JSON.stringify(this.factoryTestResults.rs485?.parsed || this.factoryTestResults.rs485 || {}, null, 2)}
+                </pre>
+              </div>
+            ` : ''}
           ` : ''}
         ` : ''}
 

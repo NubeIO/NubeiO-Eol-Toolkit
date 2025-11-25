@@ -7,6 +7,8 @@ const { SerialPort } = require('serialport');
 const { ReadlineParser } = require('@serialport/parser-readline');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const { spawn } = require('child_process');
 
 class FactoryTestingService {
   constructor() {
@@ -20,9 +22,139 @@ class FactoryTestingService {
   }
 
   /**
+   * Send a test_* command and wait for a JSON response indicating result.
+   * Resolves object { raw, parsed, success } or rejects on timeout/error.
+   */
+  async awaitTestJSONResult(command, timeoutMs = 10000) {
+    if (!this.isConnected || !this.port) throw new Error('Not connected');
+    return new Promise((resolve, reject) => {
+      let timeout = setTimeout(() => {
+        this.parser.removeListener('data', onData);
+        reject(new Error('Timeout waiting for JSON response'));
+      }, timeoutMs);
+
+      const onData = (data) => {
+        const line = data.toString().trim();
+        if (!line) return;
+        console.log(`[Factory Testing] awaitTestJSONResult RX: ${line}`);
+        // Try parse JSON
+        try {
+          const parsed = JSON.parse(line);
+          clearTimeout(timeout);
+          this.parser.removeListener('data', onData);
+          const ok = parsed && (parsed.result === 'done' || parsed.status === 'done' || parsed.result === 'OK' || parsed.status === 'OK' || parsed.ok === true);
+          resolve({ raw: line, parsed, success: !!ok });
+          return;
+        } catch (e) {
+          // Not JSON: treat explicit error markers as failure, OK/done as success
+          const lLower = line.toLowerCase();
+          if (line === 'OK' || lLower === 'done') {
+            clearTimeout(timeout);
+            this.parser.removeListener('data', onData);
+            resolve({ raw: line, parsed: null, success: true });
+            return;
+          }
+
+          if (lLower.includes('unknown command') || line.toUpperCase().startsWith('ERROR') || lLower.includes('fail') || lLower.includes('failed')) {
+            clearTimeout(timeout);
+            this.parser.removeListener('data', onData);
+            resolve({ raw: line, parsed: null, success: false });
+            return;
+          }
+
+          // otherwise keep listening until timeout or JSON arrives
+        }
+      };
+
+      this.parser.on('data', onData);
+
+      // send command
+      const commandStr = command + '\r\n';
+      console.log(`[Factory Testing] awaitTestJSONResult TX: ${command}`);
+      this.port.write(commandStr, (err) => {
+        if (err) {
+          clearTimeout(timeout);
+          this.parser.removeListener('data', onData);
+          reject(new Error(`Failed to send command: ${err.message}`));
+        }
+      });
+    });
+  }
+
+  // Normalizers for test results to provide consistent fields for the UI
+  _normalizeWifiResult(respObj) {
+    const out = {
+      success: !!(respObj && respObj.success),
+      status: respObj && respObj.success ? 'done' : 'fail',
+      rssi: null,
+      networks: [],
+      raw: respObj ? respObj.raw : null,
+      parsed: respObj ? respObj.parsed : null
+    };
+    const p = respObj && respObj.parsed;
+    if (p) {
+      // common fields
+      if (typeof p.rssi !== 'undefined') out.rssi = p.rssi;
+      if (typeof p.rssi_dbm !== 'undefined') out.rssi = out.rssi === null ? p.rssi_dbm : out.rssi;
+      // networks may be reported as array or single ssid
+      if (Array.isArray(p.networks)) out.networks = p.networks;
+      else if (p.ssid) out.networks = [p.ssid];
+      else if (p.found) out.networks = Array.isArray(p.found) ? p.found : [p.found];
+    }
+    return out;
+  }
+
+  _normalizeI2cResult(respObj) {
+    const out = {
+      success: !!(respObj && respObj.success),
+      status: respObj && respObj.success ? 'done' : 'fail',
+      sensor_addr: null,
+      sensor: null,
+      temperature_c: null,
+      humidity_rh: null,
+      raw: respObj ? respObj.raw : null,
+      parsed: respObj ? respObj.parsed : null
+    };
+    const p = respObj && respObj.parsed;
+    if (p) {
+      if (p.sensor_addr) out.sensor_addr = p.sensor_addr;
+      if (p.sensor) out.sensor = p.sensor;
+      if (typeof p.temperature_c !== 'undefined') out.temperature_c = p.temperature_c;
+      if (typeof p.temperature !== 'undefined' && out.temperature_c === null) out.temperature_c = p.temperature;
+      if (typeof p.humidity_rh !== 'undefined') out.humidity_rh = p.humidity_rh;
+      if (typeof p.humidity !== 'undefined' && out.humidity_rh === null) out.humidity_rh = p.humidity;
+    }
+    return out;
+  }
+
+  _normalizeRs485Result(respObj) {
+    const out = {
+      success: !!(respObj && respObj.success),
+      status: respObj && respObj.success ? 'done' : 'fail',
+      temperature: null,
+      humidity: null,
+      raw: respObj ? respObj.raw : null,
+      parsed: respObj ? respObj.parsed : null
+    };
+    const p = respObj && respObj.parsed;
+    if (p) {
+      if (typeof p.temperature !== 'undefined') out.temperature = p.temperature;
+      if (typeof p.temperature_c !== 'undefined' && out.temperature === null) out.temperature = p.temperature_c;
+      if (typeof p.humidity !== 'undefined') out.humidity = p.humidity;
+      if (typeof p.humidity_rh !== 'undefined' && out.humidity === null) out.humidity = p.humidity_rh;
+      // determine success from rs485-specific fields
+      if (typeof p.slave_ok !== 'undefined' || typeof p.master_ok !== 'undefined') {
+        out.success = !!(p.slave_ok || p.master_ok);
+        out.status = out.success ? 'done' : 'fail';
+      }
+    }
+    return out;
+  }
+
+  /**
    * Connect to serial port
    */
-  async connect(portPath, baudRate = 115200) {
+  async connect(portPath, baudRate = 115200, useUnlock = true) {
     console.log('[Factory Testing Service] === START CONNECT ===');
     console.log('[Factory Testing Service] Port path:', portPath);
     console.log('[Factory Testing Service] Baud rate:', baudRate);
@@ -37,6 +169,22 @@ class FactoryTestingService {
     try {
       this.portPath = portPath;
       this.baudRate = baudRate;
+
+      // If device is non-AT, attempt to read MAC via esptool BEFORE opening the serial port
+      let preDeviceInfo = null;
+      if (!useUnlock) {
+        try {
+          console.log('[Factory Testing Service] Attempting to read MAC via esptool before opening port...');
+          console.log('[Factory Testing Service] Platform:', process.platform);
+          console.log('[Factory Testing Service] esptool attempt port:', this.portPath);
+          const espMac = await this.readEsp32MAC(this.portPath);
+          console.log('[Factory Testing Service] esptool returned MAC:', espMac);
+          if (espMac) preDeviceInfo = { uniqueId: espMac };
+        } catch (e) {
+          console.warn('[Factory Testing Service] esptool read before open failed:', e.message);
+          // continue, we'll try fallback later
+        }
+      }
 
       console.log(`[Factory Testing Service] Creating SerialPort instance...`);
 
@@ -70,56 +218,97 @@ class FactoryTestingService {
 
       console.log('[Factory Testing Service] Serial port connected successfully');
       
-      // Immediately send AT+UNLOCK=N00BIO after connection
-      try {
-        console.log('[Factory Testing Service] Waiting 500ms before AT+UNLOCK=N00BIO...');
-        await new Promise(resolve => setTimeout(resolve, 500)); // Wait 500ms for device to be ready
-        console.log('[Factory Testing Service] Sending AT+UNLOCK=N00BIO command...');
-        
-        // Send unlock command and wait for OK response
-        await new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => {
-            this.parser.removeAllListeners('data');
-            reject(new Error('Timeout waiting for unlock response'));
-          }, this.commandTimeout);
+      // Optionally send AT+UNLOCK=N00BIO after connection for AT-based devices
+      if (useUnlock) {
+        try {
+          console.log('[Factory Testing Service] Waiting 500ms before AT+UNLOCK=N00BIO...');
+          await new Promise(resolve => setTimeout(resolve, 500)); // Wait 500ms for device to be ready
+          console.log('[Factory Testing Service] Sending AT+UNLOCK=N00BIO command...');
+          
+          // Send unlock command and wait for OK response
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              this.parser.removeAllListeners('data');
+              reject(new Error('Timeout waiting for unlock response'));
+            }, this.commandTimeout);
 
-          const onData = (data) => {
-            const line = data.toString().trim();
-            console.log(`[Factory Testing Service] RX: ${line}`);
-            
-            if (line === 'OK') {
-              clearTimeout(timeout);
-              this.parser.removeListener('data', onData);
-              console.log('[Factory Testing Service] Device unlocked successfully');
-              resolve('OK');
-            } else if (line === 'ERROR') {
-              clearTimeout(timeout);
-              this.parser.removeListener('data', onData);
-              reject(new Error('Unlock failed - received ERROR'));
-            }
-          };
+            const onData = (data) => {
+              const line = data.toString().trim();
+              console.log(`[Factory Testing Service] RX: ${line}`);
+              
+              if (line === 'OK') {
+                clearTimeout(timeout);
+                this.parser.removeListener('data', onData);
+                console.log('[Factory Testing Service] Device unlocked successfully');
+                resolve('OK');
+              } else if (line === 'ERROR') {
+                clearTimeout(timeout);
+                this.parser.removeListener('data', onData);
+                reject(new Error('Unlock failed - received ERROR'));
+              }
+            };
 
-          this.parser.on('data', onData);
+            this.parser.on('data', onData);
 
-          const command = 'AT+UNLOCK=N00BIO\r\n';
-          console.log(`[Factory Testing Service] TX: AT+UNLOCK=N00BIO`);
-          this.port.write(command, (err) => {
-            if (err) {
-              clearTimeout(timeout);
-              this.parser.removeListener('data', onData);
-              reject(new Error(`Failed to send unlock command: ${err.message}`));
-            }
+            const command = 'AT+UNLOCK=N00BIO\r\n';
+            console.log(`[Factory Testing Service] TX: AT+UNLOCK=N00BIO`);
+            this.port.write(command, (err) => {
+              if (err) {
+                clearTimeout(timeout);
+                this.parser.removeListener('data', onData);
+                reject(new Error(`Failed to send unlock command: ${err.message}`));
+              }
+            });
           });
-        });
-      } catch (error) {
-        console.error('[Factory Testing Service] Failed to unlock device:', error.message);
-        // Fail connection if unlock command fails
-        this.cleanup();
-        throw new Error(`Device unlock failed: ${error.message}`);
+        } catch (error) {
+          console.error('[Factory Testing Service] Failed to unlock device:', error.message);
+          // Fail connection if unlock command fails for devices that require it
+          this.cleanup();
+          throw new Error(`Device unlock failed: ${error.message}`);
+        }
+      } else {
+        console.log('[Factory Testing Service] Skipping AT+UNLOCK for non-AT device');
       }
       
+      // Read device info (Unique ID / MAC) right after unlock
+      let deviceInfo = null;
+      try {
+        // If we previously read MAC before opening port, reuse it
+        if (preDeviceInfo) {
+          deviceInfo = preDeviceInfo;
+        } else if (useUnlock) {
+          // Micro Edge / AT-based devices: do NOT attempt esptool (it will conflict with the open port).
+          // Simply read device info via AT commands.
+          try {
+            const infoRes = await this.readDeviceInfo();
+            if (infoRes.success) deviceInfo = infoRes.data;
+          } catch (err) {
+            console.warn('[Factory Testing Service] readDeviceInfo failed for AT device:', err.message);
+          }
+        } else {
+          // Non-AT devices: Prefer reading MAC using bundled esptool if available (will try with port open)
+          try {
+            const espMac = await this.readEsp32MAC(this.portPath);
+            if (espMac) {
+              deviceInfo = { uniqueId: espMac };
+            }
+          } catch (e) {
+            console.warn('[Factory Testing Service] esptool read after open failed:', e.message);
+            // fallback to AT-based readDeviceInfo
+            try {
+              const infoRes = await this.readDeviceInfo();
+              if (infoRes.success) deviceInfo = infoRes.data;
+            } catch (err) {
+              console.warn('[Factory Testing Service] readDeviceInfo fallback failed:', err.message);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[Factory Testing Service] Failed to read device info after connect:', e.message);
+      }
+
       console.log('[Factory Testing Service] === END CONNECT (SUCCESS) ===');
-      return { success: true, port: portPath, baudRate: baudRate };
+      return { success: true, port: portPath, baudRate: baudRate, deviceInfo };
     } catch (error) {
       console.error('[Factory Testing Service] Failed to connect:', error);
       console.error('[Factory Testing Service] Error message:', error.message);
@@ -208,6 +397,317 @@ class FactoryTestingService {
   }
 
   /**
+   * Send a plain serial command (non-AT) and wait for a response line.
+   * If expectedPrefix is provided, resolves when a line startsWith that prefix.
+   * Otherwise resolves on first non-empty, non-ERROR line or when 'OK' received.
+   */
+  async sendSerialCommand(command, expectedPrefix = null) {
+    if (!this.isConnected || !this.port) {
+      throw new Error('Not connected to a serial port');
+    }
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.parser.removeListener('data', onData);
+        reject(new Error(`Timeout waiting for response to: ${command}`));
+      }, this.commandTimeout);
+
+      let got = null;
+
+      const onData = (data) => {
+        const line = data.toString().trim();
+        console.log(`[Factory Testing] RX (serial): ${line}`);
+
+        if (!line) return;
+
+        if (line === 'ERROR') {
+          clearTimeout(timeout);
+          this.parser.removeListener('data', onData);
+          reject(new Error(`Command failed: ${command}`));
+          return;
+        }
+
+        if (expectedPrefix) {
+          if (line.startsWith(expectedPrefix)) {
+            got = line;
+            clearTimeout(timeout);
+            this.parser.removeListener('data', onData);
+            resolve(got);
+          }
+        } else {
+          // accept 'OK' or first non-empty non-ERROR line
+          if (line === 'OK') {
+            got = 'OK';
+            clearTimeout(timeout);
+            this.parser.removeListener('data', onData);
+            resolve(got);
+          } else {
+            got = line;
+            clearTimeout(timeout);
+            this.parser.removeListener('data', onData);
+            resolve(got);
+          }
+        }
+      };
+
+      this.parser.on('data', onData);
+
+      const commandStr = command + '\r\n';
+      console.log(`[Factory Testing] TX (serial): ${command}`);
+      this.port.write(commandStr, (err) => {
+        if (err) {
+          clearTimeout(timeout);
+          this.parser.removeListener('data', onData);
+          reject(new Error(`Failed to send command: ${err.message}`));
+        }
+      });
+    });
+  }
+
+  async readEsp32MAC(portPath) {
+    return new Promise(async (resolve) => {
+      // If the serial port is currently open on this service, close it temporarily
+      let reopened = false;
+      let hadOpenPort = false;
+      try {
+        if (this.port && this.port.isOpen) {
+          hadOpenPort = true;
+          console.log('[Factory Testing Service] Serial port is open; closing temporarily for esptool access...');
+          try {
+            await new Promise((res) => {
+              this.port.close(() => { res(); });
+            });
+            this.isConnected = false;
+            console.log('[Factory Testing Service] Serial port closed for esptool');
+          } catch (e) {
+            console.warn('[Factory Testing Service] Failed to close serial port before esptool:', e && e.message);
+          }
+        }
+      } catch (e) {
+        console.warn('[Factory Testing Service] Error checking/closing serial port before esptool:', e && e.message);
+      }
+      try {
+        const triedPaths = [];
+
+        // Build candidate paths, prefer temp-extracted esptool used by ESP32 flasher
+        const toolsDir = path.join(__dirname, '..', 'tools', 'esptool');
+        const candidates = [];
+
+        // Check temp extraction location used by ESP32FlasherNative: {tmpdir}/fga-simulator-esptool/esptool[.exe]
+        try {
+          const tmpEsptoolDir = path.join(os.tmpdir(), 'fga-simulator-esptool');
+          const tmpExe = process.platform === 'win32' ? path.join(tmpEsptoolDir, 'esptool.exe') : path.join(tmpEsptoolDir, 'esptool');
+          candidates.push(tmpExe);
+        } catch (e) {
+          // ignore
+        }
+
+        candidates.push(path.join(toolsDir, 'esptool-win64', 'esptool.exe'));
+        candidates.push(path.join(toolsDir, 'esptool-win64', 'esptool'));
+        candidates.push(path.join(toolsDir, 'esptool-linux-amd64', 'esptool'));
+        candidates.push(path.join(toolsDir, 'esptool.py'));
+
+        // Also scan subfolders for any esptool executable
+        try {
+          if (fs.existsSync(toolsDir)) {
+            const entries = fs.readdirSync(toolsDir);
+            entries.forEach(e => {
+              const full = path.join(toolsDir, e);
+              if (e.toLowerCase().includes('esptool')) {
+                candidates.push(path.join(full, 'esptool.exe'));
+                candidates.push(path.join(full, 'esptool'));
+                candidates.push(full);
+              }
+            });
+          }
+        } catch (e) {
+          console.warn('[Factory Testing Service] Failed scanning tools/esptool directory:', e.message);
+        }
+
+        // Helper to attempt spawning and parse output; resolves mac string or null
+        const attemptSpawn = (exe, args) => {
+          return new Promise((res) => {
+            triedPaths.push({ exe, args });
+            let stdout = '';
+            let stderr = '';
+            let finished = false;
+
+            let proc = null;
+            try {
+              proc = spawn(exe, args, { windowsHide: true });
+            } catch (err) {
+              console.error('[Factory Testing Service] spawn threw error for', exe, err && err.message);
+              return res(null);
+            }
+
+            proc.on('error', (err) => {
+              console.error('[Factory Testing Service] esptool spawn error:', exe, err && err.code, err && err.message);
+              // command not found or other spawn error
+              return res(null);
+            });
+
+            proc.stdout.on('data', (data) => {
+              const s = data.toString();
+              stdout += s;
+              s.split(/\r?\n/).forEach(line => { if (line.trim()) console.log('[esptool stdout]', line); });
+            });
+            proc.stderr.on('data', (data) => {
+              const s = data.toString();
+              stderr += s;
+              s.split(/\r?\n/).forEach(line => { if (line.trim()) console.error('[esptool stderr]', line); });
+            });
+
+            proc.on('close', (code) => {
+              if (finished) return;
+              finished = true;
+              if (code !== 0) {
+                console.warn(`[Factory Testing Service] esptool exited with ${code} for ${exe}`);
+                return res(null);
+              }
+
+              // Parse MAC from stdout. esptool prints something like: MAC: aa:bb:cc:dd:ee:ff
+              const macMatch = stdout.match(/MAC:\s*([0-9A-Fa-f:]{17})/);
+              if (macMatch) return res(macMatch[1].toUpperCase());
+
+              const altMatch = stdout.match(/([0-9A-Fa-f]{12})/);
+              if (altMatch) {
+                const hex = altMatch[1];
+                const mac = hex.match(/.{1,2}/g).join(':').toUpperCase();
+                return res(mac);
+              }
+
+              return res(null);
+            });
+          });
+        };
+
+        // Try packaged candidates first - only attempt files, and inspect directories for executables
+        for (const candidate of candidates) {
+          if (!candidate) continue;
+          try {
+            if (!fs.existsSync(candidate)) continue;
+            const stat = fs.statSync(candidate);
+            if (stat.isFile()) {
+              console.log('[Factory Testing Service] Found esptool candidate file:', candidate);
+              const mac = await attemptSpawn(candidate, ['--port', portPath, 'read_mac']);
+              if (mac) return resolve(mac);
+            } else if (stat.isDirectory()) {
+              // Look for typical executable names inside the directory
+              const inside = [path.join(candidate, 'esptool.exe'), path.join(candidate, 'esptool'), path.join(candidate, 'esptool.py')];
+              for (const f of inside) {
+                try {
+                  if (fs.existsSync(f) && fs.statSync(f).isFile()) {
+                    console.log('[Factory Testing Service] Found esptool inside dir:', f);
+                    const mac = await attemptSpawn(f, ['--port', portPath, 'read_mac']);
+                    if (mac) return resolve(mac);
+                  }
+                } catch (e) {
+                  console.warn('[Factory Testing Service] Error checking candidate file:', f, e && e.message);
+                }
+              }
+            }
+          } catch (e) {
+            console.warn('[Factory Testing Service] Error while inspecting candidate:', candidate, e && e.message);
+            continue;
+          }
+        }
+
+        // Try invoking 'esptool' on PATH
+        console.log('[Factory Testing Service] Trying esptool from PATH...');
+        const macFromPath = await attemptSpawn('esptool', ['--port', portPath, 'read_mac']);
+        if (macFromPath) return resolve(macFromPath);
+
+        // Try python -m esptool (common fallback)
+        console.log('[Factory Testing Service] Trying python -m esptool fallback...');
+        const macFromPy = await attemptSpawn('python', ['-m', 'esptool', '--port', portPath, 'read_mac']);
+        if (macFromPy) return resolve(macFromPy);
+
+        // Also try 'py' on Windows
+        if (process.platform === 'win32') {
+          const macFromPyLauncher = await attemptSpawn('py', ['-m', 'esptool', '--port', portPath, 'read_mac']);
+          if (macFromPyLauncher) return resolve(macFromPyLauncher);
+        }
+
+        // Nothing worked - log attempted paths and return null to allow fallback
+        console.warn('[Factory Testing Service] esptool attempts completed, no MAC found. Tried:', triedPaths);
+        // Before returning, if we closed the serial port earlier, try to reopen it so service can continue
+        if (hadOpenPort && this.port) {
+          try {
+            console.log('[Factory Testing Service] Re-opening serial port after esptool attempts...');
+            await new Promise((res, rej) => {
+              this.port.open((err) => {
+                if (err) {
+                  console.error('[Factory Testing Service] Failed to re-open serial port:', err && err.message);
+                  return rej(err);
+                }
+                // restore parser
+                try {
+                  this.parser = this.port.pipe(new ReadlineParser({ delimiter: '\n' }));
+                } catch (e) {
+                  console.warn('[Factory Testing Service] Error restoring parser after reopen:', e && e.message);
+                }
+                this.isConnected = true;
+                console.log('[Factory Testing Service] Serial port reopened after esptool');
+                res();
+              });
+            });
+            reopened = true;
+          } catch (e) {
+            console.warn('[Factory Testing Service] Could not reopen serial port after esptool:', e && e.message);
+          }
+        }
+
+        return resolve(null);
+      } catch (error) {
+        console.error('[Factory Testing Service] readEsp32MAC unexpected error:', error && error.message);
+        // Attempt to reopen serial port if it was closed earlier
+        if (hadOpenPort && this.port) {
+          try {
+            await new Promise((res) => { this.port.open(() => res()); });
+            this.parser = this.port.pipe(new ReadlineParser({ delimiter: '\n' }));
+            this.isConnected = true;
+          } catch (ee) {
+            console.warn('[Factory Testing Service] Failed to reopen serial port after error:', ee && ee.message);
+          }
+        }
+        return resolve(null);
+      }
+    });
+  }
+
+  /**
+   * Sanitize a string to be safe for filesystem folder/file names on Windows and POSIX.
+   */
+  _sanitizeFilename(name) {
+    if (!name) return 'UNKNOWN';
+    // Replace forbidden characters on Windows: <>:"/\\|?* and control chars
+    const sanitized = String(name).replace(/[<>:"/\\|?*\x00-\x1F]/g, '-').replace(/\s+$/g, '');
+    // Also replace colon which appears in MAC addresses
+    return sanitized.replace(/:/g, '-');
+  }
+
+  /**
+   * Parse a voltage-like string and return a numeric voltage in volts.
+   * If the value looks normalized (<= 1.1) treat it as 0..1 and scale to 3.3V.
+   * Returns null on parse failure.
+   */
+  _parseVoltageValue(val) {
+    if (!val) return null;
+    try {
+      const s = String(val).trim();
+      // remove trailing V and whitespace
+      const withoutV = s.replace(/V$/i, '').trim();
+      const n = parseFloat(withoutV);
+      if (Number.isNaN(n)) return null;
+      // Heuristic: if <= 1.1, treat as normalized (0..1) and scale to 3.3V
+      if (n <= 1.1) return +(n * 3.3).toFixed(3);
+      return +n;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
    * Read device information
    */
   async readDeviceInfo() {
@@ -280,45 +780,45 @@ class FactoryTestingService {
       if (device === 'ZC-LCD') {
         const results = {};
 
-        // 1. Check LCD info
-        this.updateProgress('Checking LCD info...');
+        // Prefer reading unique ID via esptool
+        this.updateProgress('Reading device unique ID (MAC) via esptool...');
         try {
-          const lcdInfo = await this.sendATCommand('AT+LCDINFO?', '+LCDINFO:');
-          results.lcdInfo = lcdInfo.replace('+LCDINFO:', '').trim();
+          const mac = await this.readEsp32MAC(this.portPath);
+          results.uniqueId = mac || null;
         } catch (e) {
-          results.lcdInfo = 'ERROR';
+          results.uniqueId = null;
         }
 
-        // 2. Backlight status
-        this.updateProgress('Checking backlight...');
+        // 1. WiFi test
+        this.updateProgress('Running WiFi test...');
         try {
-          const back = await this.sendATCommand('AT+BACKLIGHT?', '+BACKLIGHT:');
-          results.backlight = back.replace('+BACKLIGHT:', '').trim();
+          const respObj = await this.awaitTestJSONResult('test_wifi', 10000);
+          results.wifi = respObj;
         } catch (e) {
-          results.backlight = 'ERROR';
+          results.wifi = { success: false, error: e.message };
         }
 
-        // 3. Check button/key input presence
-        this.updateProgress('Checking button inputs...');
+        // 2. I2C test (temp/humidity)
+        this.updateProgress('Running I2C (Temp/Humidity) test...');
         try {
-          const btn = await this.sendATCommand('AT+BTNSTATUS?', '+BTNSTATUS:');
-          results.buttonStatus = btn.replace('+BTNSTATUS:', '').trim();
+          const respObj = await this.awaitTestJSONResult('test_i2c', 10000);
+          results.i2c = respObj;
         } catch (e) {
-          results.buttonStatus = 'ERROR';
+          results.i2c = { success: false, error: e.message };
         }
 
-        // 4. Read basic device info using existing method
-        this.updateProgress('Reading base device info...');
+        // 3. LCD display test removed (firmware unsupported)
+
+        // 4. RS485 test
+        this.updateProgress('Running RS485 test...');
         try {
-          const base = await this.readDeviceInfo();
-          if (base.success) {
-            results.baseInfo = base.data;
-          } else {
-            results.baseInfo = { error: 'Failed to read base info' };
-          }
+          const respObj = await this.awaitTestJSONResult('test_rs485', 10000);
+          results.rs485 = respObj;
         } catch (e) {
-          results.baseInfo = { error: e.message };
+          results.rs485 = { success: false, error: e.message };
         }
+
+        // Duplicate LCD test block removed
 
         this.updateProgress('ZC-LCD tests completed');
         return { success: true, data: results };
@@ -559,6 +1059,36 @@ class FactoryTestingService {
 
       this.updateProgress('All tests completed!');
       console.log('[Factory Testing] Factory tests completed:', results);
+      // Evaluate pass/fail rules for Micro Edge here so service-side CSV can include flags
+      try {
+        const evalFlags = {};
+        // batteryVoltage expected between 2.5 and 4.5
+        const bv = this._parseVoltageValue(results.batteryVoltage);
+        evalFlags.pass_battery = bv !== null && bv >= 2.5 && bv <= 4.5;
+
+        // AIN thresholds (expected in volts after parsing)
+        const a1 = this._parseVoltageValue(results.ain1Voltage);
+        const a2 = this._parseVoltageValue(results.ain2Voltage);
+        const a3 = this._parseVoltageValue(results.ain3Voltage);
+        evalFlags.pass_ain1 = a1 !== null && a1 >= 1.4 && a1 <= 1.7;
+        evalFlags.pass_ain2 = a2 !== null && a2 >= 0.75 && a2 <= 1.2;
+        evalFlags.pass_ain3 = a3 !== null && a3 >= 0.5 && a3 <= 0.9;
+
+        // pulses > 3
+        const pulsesNum = parseInt(String(results.pulsesCounter || '').replace(/\D/g, ''), 10);
+        evalFlags.pass_pulses = !Number.isNaN(pulsesNum) && pulsesNum > 3;
+
+        // LoRa: detected and raw push OK
+        const loraDetectOk = typeof results.loraDetect === 'string' && /detect/i.test(results.loraDetect);
+        const loraPushOk = String(results.loraRawPush || '').toUpperCase() === 'OK';
+        evalFlags.pass_lora = loraDetectOk && loraPushOk;
+
+        // Attach flags into results for CSV saving
+        results._eval = evalFlags;
+      } catch (e) {
+        console.warn('[Factory Testing] Failed to evaluate micro edge flags:', e && e.message);
+      }
+
       return { success: true, data: results };
     } catch (error) {
       console.error('[Factory Testing] Error running factory tests:', error);
@@ -583,7 +1113,8 @@ class FactoryTestingService {
       const factoryTestsRoot = path.join(userDataPath, 'factory-tests');
       const genPath = path.join(factoryTestsRoot, genFolder);
       const deviceTypePath = path.join(genPath, device.replace(/\s+/g, '-')); // Replace spaces with dashes
-      const deviceFolder = path.join(deviceTypePath, uniqueId);
+      const safeUnique = this._sanitizeFilename(uniqueId);
+      const deviceFolder = path.join(deviceTypePath, safeUnique);
       
       // Create all directories if they don't exist
       if (!fs.existsSync(deviceFolder)) {
@@ -603,12 +1134,12 @@ class FactoryTestingService {
         preTesting
       });
 
-      // CSV filename with timestamp
-      const csvFilename = `${uniqueId}_${timestamp}.csv`;
+      // CSV filename with timestamp (use sanitized unique id for filenames)
+      const csvFilename = `${safeUnique}_${timestamp}.csv`;
       const csvPath = path.join(deviceFolder, csvFilename);
       
       // Log filename with timestamp
-      const logFilename = `${uniqueId}_${timestamp}.txt`;
+      const logFilename = `${safeUnique}_${timestamp}.txt`;
       const logPath = path.join(deviceFolder, logFilename);
 
       // Generate CSV content
@@ -786,7 +1317,7 @@ class FactoryTestingService {
         } else if (device === 'Droplet') {
           header += 'Temperature,Humidity,Pressure,CO2,AIN 1 Voltage,AIN 2 Voltage,AIN 3 Voltage,LoRa Address,LoRa Detect,LoRa Raw Push,Test Result\n';
         } else {
-          header += 'Battery Voltage,Pulses Counter,DIP Switches,AIN 1 Voltage,AIN 2 Voltage,AIN 3 Voltage,LoRa Address,LoRa Detect,LoRa Raw Push,Test Result\n';
+          header += 'Battery Voltage,Pulses Counter,DIP Switches,AIN 1 Voltage,AIN 2 Voltage,AIN 3 Voltage,LoRa Address,LoRa Detect,LoRa Raw Push,Pass_Battery,Pass_AIN1,Pass_AIN2,Pass_AIN3,Pass_Pulses,Pass_LoRa,Test Result\n';
         }
         csvLine = header;
       }
@@ -837,6 +1368,12 @@ class FactoryTestingService {
                   `${escapeCSV(testResults.loraAddress)},` +
                   `${escapeCSV(testResults.loraDetect)},` +
                   `${escapeCSV(testResults.loraRawPush)},` +
+                  `${escapeCSV(testResults._eval?.pass_battery ? 'PASS' : 'FAIL')},` +
+                  `${escapeCSV(testResults._eval?.pass_ain1 ? 'PASS' : 'FAIL')},` +
+                  `${escapeCSV(testResults._eval?.pass_ain2 ? 'PASS' : 'FAIL')},` +
+                  `${escapeCSV(testResults._eval?.pass_ain3 ? 'PASS' : 'FAIL')},` +
+                  `${escapeCSV(testResults._eval?.pass_pulses ? 'PASS' : 'FAIL')},` +
+                  `${escapeCSV(testResults._eval?.pass_lora ? 'PASS' : 'FAIL')},` +
                   `${escapeCSV(testResult)}\n`;
       } else if (device === 'Droplet') {
         // For Droplet, use similar structure but with different test fields
@@ -939,10 +1476,9 @@ class FactoryTestingService {
   async acbWifiTest() {
     try {
       this.updateProgress('ACB-M: Running WiFi test...');
-      // Placeholder: check WiFi firmware/status
       try {
-        const r = await this.sendATCommand('AT+WIFISTATUS?', '+WIFISTATUS:');
-        return { success: true, data: r.replace('+WIFISTATUS:', '').trim() };
+        const r = await this.sendSerialCommand('test_wifi');
+        return { success: true, data: r };
       } catch (e) {
         return { success: false, error: e.message };
       }
@@ -955,8 +1491,8 @@ class FactoryTestingService {
     try {
       this.updateProgress('ACB-M: Running RS485 test...');
       try {
-        const r = await this.sendATCommand('AT+RS485TEST?', '+RS485TEST:');
-        return { success: true, data: r.replace('+RS485TEST:', '').trim() };
+        const r = await this.sendSerialCommand('test_rs485');
+        return { success: true, data: r };
       } catch (e) {
         return { success: false, error: e.message };
       }
@@ -969,8 +1505,8 @@ class FactoryTestingService {
     try {
       this.updateProgress('ACB-M: Running RS485-2 test...');
       try {
-        const r = await this.sendATCommand('AT+RS485TEST2?', '+RS485TEST2:');
-        return { success: true, data: r.replace('+RS485TEST2:', '').trim() };
+        const r = await this.sendSerialCommand('test_rs485_2');
+        return { success: true, data: r };
       } catch (e) {
         return { success: false, error: e.message };
       }
@@ -983,8 +1519,8 @@ class FactoryTestingService {
     try {
       this.updateProgress('ACB-M: Running ETH test...');
       try {
-        const r = await this.sendATCommand('AT+ETHTEST?', '+ETHTEST:');
-        return { success: true, data: r.replace('+ETHTEST:', '').trim() };
+        const r = await this.sendSerialCommand('test_eth');
+        return { success: true, data: r };
       } catch (e) {
         return { success: false, error: e.message };
       }
@@ -996,42 +1532,9 @@ class FactoryTestingService {
   async acbLoraTest() {
     try {
       this.updateProgress('ACB-M: Running LoRa test...');
-      // Reuse existing lora checks
       try {
-        const addr = await this.sendATCommand('AT+LRRADDRUNQ?', '+LRRADDRUNQ:');
-        const detect = await this.sendATCommand('AT+LORADETECT?', '+LORADETECT:');
-        // Attempt LoRa push
-        await new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => {
-            this.parser.removeAllListeners('data');
-            reject(new Error('Timeout waiting for LoRa push response'));
-          }, this.commandTimeout);
-
-          const onData = (data) => {
-            const line = data.toString().trim();
-            if (line === 'OK') {
-              clearTimeout(timeout);
-              this.parser.removeListener('data', onData);
-              resolve('OK');
-            } else if (line === 'ERROR') {
-              clearTimeout(timeout);
-              this.parser.removeListener('data', onData);
-              reject(new Error('LoRa push failed'));
-            }
-          };
-
-          this.parser.on('data', onData);
-          const command = 'AT+LORARAWPUSH\r\n';
-          this.port.write(command, (err) => {
-            if (err) {
-              clearTimeout(timeout);
-              this.parser.removeListener('data', onData);
-              reject(new Error(`Failed to send command: ${err.message}`));
-            }
-          });
-        });
-
-        return { success: true, data: { address: addr.replace('+LRRADDRUNQ:', '').trim(), detect: detect.replace('+LORADETECT:', '').trim(), push: 'OK' } };
+        const r = await this.sendSerialCommand('test_lora');
+        return { success: true, data: r };
       } catch (e) {
         return { success: false, error: e.message };
       }
@@ -1044,8 +1547,8 @@ class FactoryTestingService {
     try {
       this.updateProgress('ACB-M: Running RTC test...');
       try {
-        const r = await this.sendATCommand('AT+RTCTIME?', '+RTCTIME:');
-        return { success: true, data: r.replace('+RTCTIME:', '').trim() };
+        const r = await this.sendSerialCommand('test_rtc');
+        return { success: true, data: r };
       } catch (e) {
         return { success: false, error: e.message };
       }
@@ -1060,81 +1563,136 @@ class FactoryTestingService {
       const results = {};
       // Run sequence of subtests
       try {
-        const vcc = await this.sendATCommand('AT+VCCV?', '+VCCV:');
-        results.vccVoltage = vcc.replace('+VCCV:', '').trim() + ' V';
+        const v = await this.sendSerialCommand('test_vcc');
+        results.vccVoltage = v;
       } catch (e) { results.vccVoltage = 'ERROR'; }
 
       try {
-        const r1 = await this.sendATCommand('AT+RELAY1?', '+RELAY1:');
-        results.relay1Status = r1.replace('+RELAY1:', '').trim();
+        const r1 = await this.sendSerialCommand('test_relay1');
+        results.relay1Status = r1;
       } catch (e) { results.relay1Status = 'ERROR'; }
       try {
-        const r2 = await this.sendATCommand('AT+RELAY2?', '+RELAY2:');
-        results.relay2Status = r2.replace('+RELAY2:', '').trim();
+        const r2 = await this.sendSerialCommand('test_relay2');
+        results.relay2Status = r2;
       } catch (e) { results.relay2Status = 'ERROR'; }
 
       try {
-        const di = await this.sendATCommand('AT+DIGITALS?', '+DIGITALS:');
-        results.digitalInputs = di.replace('+DIGITALS:', '').trim();
+        const di = await this.sendSerialCommand('test_digitals');
+        results.digitalInputs = di;
       } catch (e) { results.digitalInputs = 'ERROR'; }
 
       try {
-        const a1 = await this.sendATCommand('AT+VALUE_UI1_RAW?', '+VALUE_UI1_RAW:');
-        results.ain1Voltage = a1.replace('+VALUE_UI1_RAW:', '').trim() + ' V';
+        const a1 = await this.sendSerialCommand('test_ain1');
+        results.ain1Voltage = a1;
       } catch (e) { results.ain1Voltage = 'ERROR'; }
 
       try {
-        const a2 = await this.sendATCommand('AT+VALUE_UI2_RAW?', '+VALUE_UI2_RAW:');
-        results.ain2Voltage = a2.replace('+VALUE_UI2_RAW:', '').trim() + ' V';
+        const a2 = await this.sendSerialCommand('test_ain2');
+        results.ain2Voltage = a2;
       } catch (e) { results.ain2Voltage = 'ERROR'; }
 
-      // LoRa
       try {
-        const addr = await this.sendATCommand('AT+LRRADDRUNQ?', '+LRRADDRUNQ:');
-        results.loraAddress = addr.replace('+LRRADDRUNQ:', '').trim();
-      } catch (e) { results.loraAddress = 'ERROR'; }
-      try {
-        const detect = await this.sendATCommand('AT+LORADETECT?', '+LORADETECT:');
-        results.loraDetect = detect.replace('+LORADETECT:', '').trim() === '1' ? 'Detected' : 'Not Detected';
-      } catch (e) { results.loraDetect = 'ERROR'; }
-
-      try {
-        await new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => {
-            this.parser.removeAllListeners('data');
-            reject(new Error('Timeout waiting for LoRa push response'));
-          }, this.commandTimeout);
-
-          const onData = (data) => {
-            const line = data.toString().trim();
-            if (line === 'OK') {
-              clearTimeout(timeout);
-              this.parser.removeListener('data', onData);
-              resolve('OK');
-            } else if (line === 'ERROR') {
-              clearTimeout(timeout);
-              this.parser.removeListener('data', onData);
-              reject(new Error('LoRa push failed'));
-            }
-          };
-
-          this.parser.on('data', onData);
-          const command = 'AT+LORARAWPUSH\r\n';
-          this.port.write(command, (err) => {
-            if (err) {
-              clearTimeout(timeout);
-              this.parser.removeListener('data', onData);
-              reject(new Error(`Failed to send command: ${err.message}`));
-            }
-          });
-        });
-        results.loraRawPush = 'OK';
+        const l = await this.sendSerialCommand('test_lora');
+        results.loraRawPush = l;
       } catch (e) { results.loraRawPush = 'ERROR'; }
 
       this.updateProgress('ACB-M FULL test completed');
       return { success: true, data: results };
     } catch (error) {
       console.error('[Factory Testing] ACB-M full test error:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // --- ZC-LCD specific test methods ---
+  async zcWifiTest() {
+    try {
+      this.updateProgress('ZC-LCD: Running WiFi test...');
+      // Ensure we have device unique id via esptool if possible
+      let uid = null;
+      try {
+        const mac = await this.readEsp32MAC(this.portPath);
+        if (mac) uid = mac;
+      } catch (e) {
+        // ignore
+      }
+
+      try {
+        const respObj = await this.awaitTestJSONResult('test_wifi', 10000);
+        const norm = this._normalizeWifiResult(respObj);
+        norm.uniqueId = uid;
+        return norm;
+      } catch (e) {
+        return { success: false, error: e.message, uniqueId: uid };
+      }
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  async zcRs485Test() {
+    try {
+      this.updateProgress('ZC-LCD: Running RS485 test...');
+      let uid = null;
+      try { const mac = await this.readEsp32MAC(this.portPath); if (mac) uid = mac; } catch (e) {}
+
+      try {
+        const respObj = await this.awaitTestJSONResult('test_rs485', 10000);
+        const norm = this._normalizeRs485Result(respObj);
+        norm.uniqueId = uid;
+        return norm;
+      } catch (e) {
+        return { success: false, error: e.message, uniqueId: uid };
+      }
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  async zcI2cTest() {
+    try {
+      this.updateProgress('ZC-LCD: Running I2C test...');
+      let uid = null;
+      try { const mac = await this.readEsp32MAC(this.portPath); if (mac) uid = mac; } catch (e) {}
+
+      try {
+        const respObj = await this.awaitTestJSONResult('test_i2c', 10000);
+        const norm = this._normalizeI2cResult(respObj);
+        norm.uniqueId = uid;
+        return norm;
+      } catch (e) {
+        return { success: false, error: e.message, uniqueId: uid };
+      }
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  // LCD test method removed (firmware unsupported)
+
+  async zcFullTest() {
+    try {
+      this.updateProgress('ZC-LCD: Running FULL test...');
+      const results = {};
+      try {
+        const w = await this.awaitTestJSONResult('test_wifi', 10000);
+        results.wifi = this._normalizeWifiResult(w);
+      } catch (e) { results.wifi = { success: false, error: e.message }; }
+
+      try {
+        const i = await this.awaitTestJSONResult('test_i2c', 10000);
+        results.i2c = this._normalizeI2cResult(i);
+      } catch (e) { results.i2c = { success: false, error: e.message }; }
+
+      try {
+        const r = await this.awaitTestJSONResult('test_rs485', 10000);
+        results.rs485 = this._normalizeRs485Result(r);
+      } catch (e) { results.rs485 = { success: false, error: e.message }; }
+
+      this.updateProgress('ZC-LCD FULL test completed');
+      return { success: true, data: results };
+    } catch (error) {
+      console.error('[Factory Testing] ZC-LCD full test error:', error);
       return { success: false, error: error.message };
     }
   }
