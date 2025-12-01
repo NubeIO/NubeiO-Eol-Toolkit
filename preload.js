@@ -115,6 +115,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectFile: (options) => ipcRenderer.invoke('dialog:openFile', options)
 });
 
+// Expose Printer API for Brother PT-P900W USB printing
+contextBridge.exposeInMainWorld('printerAPI', {
+  getPrinters: () => ipcRenderer.invoke('printer:getPrinters'),
+  printLabel: (payload) => ipcRenderer.invoke('printer:printLabel', payload)
+});
+
 // Expose provisioning service
 contextBridge.exposeInMainWorld('provisioningService', {
   getStatus: () => ipcRenderer.invoke('provisioning:getStatus'),

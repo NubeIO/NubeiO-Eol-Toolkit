@@ -330,6 +330,9 @@ function createWindow() {
   tcpConsole.on('messages-cleared', () => {
     mainWindow.webContents.send('tcp:messages-cleared');
   });
+
+  // Store reference for printer listing
+  global.__MAIN_WINDOW__ = mainWindow;
 }
 
 // App lifecycle
@@ -1071,6 +1074,100 @@ ipcMain.handle('dialog:openFile', async (event, options) => {
   }
 
   return await dialog.showOpenDialog(mainWindow, options);
+});
+
+// Printer IPC Handlers for Brother PT-P900W USB printing
+ipcMain.handle('printer:getPrinters', async () => {
+  try {
+    const { exec } = require('child_process');
+    const util = require('util');
+    const execPromise = util.promisify(exec);
+    
+    // Use PowerShell to get installed printers
+    const { stdout } = await execPromise('powershell -Command "Get-Printer | Select-Object -ExpandProperty Name"');
+    const printers = stdout.trim().split('\n').map(name => ({ name: name.trim() })).filter(p => p.name);
+    console.log('Found printers:', printers);
+    return printers;
+  } catch (e) {
+    console.error('Failed to get printers:', e);
+    return [];
+  }
+});
+
+ipcMain.handle('printer:printLabel', async (event, payload) => {
+  try {
+    if (!payload) {
+      return { success: false, error: 'No payload provided' };
+    }
+
+    const { spawn } = require('child_process');
+    const path = require('path');
+    
+    // Path to Python print script from embedded folder
+    const pythonScriptDir = path.join(__dirname, 'embedded', 'printer-scripts');
+    const pythonScript = path.join(pythonScriptDir, 'print_product_label.py');
+    
+    console.log('Printing label with Python script:', pythonScript);
+    console.log('Payload:', JSON.stringify(payload, null, 2));
+    
+    // Check if script exists
+    if (!require('fs').existsSync(pythonScript)) {
+      return { success: false, error: `Python script not found: ${pythonScript}` };
+    }
+    
+    return await new Promise((resolve) => {
+      // Call Python script with arguments
+      // Format: python print_product_label.py <barcode> <mn> <firmware> <batchId> <uid> <date>
+      // Barcode is used for barcode generation and traceability
+      const args = [
+        pythonScript,
+        payload.barcode || payload.uid || '',           // Barcode (UID)
+        payload.mn || '',                                // MN: Make+Model
+        payload.firmware || '',                          // FW: Firmware version
+        payload.batchId || '',                           // BA: Batch ID
+        payload.uid || '',                               // UID (for label display)
+        payload.date || new Date().toISOString().slice(0, 10).replace(/-/g, '/')  // Date
+      ];
+      
+      console.log('Calling Python with args:', args);
+      
+      const pythonProcess = spawn('python', args, { 
+        cwd: pythonScriptDir,
+        shell: true 
+      });
+      
+      let output = '';
+      let errorOutput = '';
+      
+      pythonProcess.stdout.on('data', (data) => {
+        output += data.toString();
+        console.log('Python stdout:', data.toString());
+      });
+      
+      pythonProcess.stderr.on('data', (data) => {
+        errorOutput += data.toString();
+        console.error('Python stderr:', data.toString());
+      });
+      
+      pythonProcess.on('close', (code) => {
+        if (code === 0) {
+          console.log('Print successful');
+          resolve({ success: true, output });
+        } else {
+          console.error('Print failed with code:', code);
+          resolve({ success: false, error: `Print failed (exit code ${code}): ${errorOutput}` });
+        }
+      });
+      
+      pythonProcess.on('error', (error) => {
+        console.error('Failed to start Python:', error);
+        resolve({ success: false, error: `Failed to start Python: ${error.message}` });
+      });
+    });
+  } catch (error) {
+    console.error('Print error:', error);
+    return { success: false, error: error.message };
+  }
 });
 
 // STM32 Device Type Management

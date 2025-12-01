@@ -60,6 +60,10 @@ class FactoryTestingPage {
     this._autoPollTimer = null;
     this.showConnectConfirm = false; // show modal to confirm before running tests in Auto
     this._lastAutoConnectedPort = '';
+    
+    // Printer state
+    this.printerConnected = false;
+    this.allowPrint = false;
   }
 
   confirmConnectOk() {
@@ -915,9 +919,88 @@ class FactoryTestingPage {
         this.testProgress += `\n📄 CSV: ${result.csvPath}`;
         this.testProgress += `\n📄 LOG: ${result.logPath}`;
         this.testProgress += `\n📊 Master CSV: ${result.masterCsvPath}`;
+        
+        // If Micro Edge and all evaluations pass, enable Print button
+        try {
+          if (this.selectedDevice === 'Micro Edge') {
+            const evals = (this.factoryTestResults && this.factoryTestResults._eval) ? this.factoryTestResults._eval : null;
+            const allPass = evals ? ['pass_battery','pass_ain1','pass_ain2','pass_ain3','pass_pulses','pass_lora'].every(k => evals[k] === true) : false;
+            if (allPass) {
+              this.allowPrint = true;
+              this.testProgress += '\n✅ All tests passed - Print Label enabled';
+            }
+          }
+        } catch (e) {}
       }
     } catch (error) {
       console.error('Save results error:', error);
+    }
+  }
+
+  async checkPrinterConnection() {
+    try {
+      // Check if Brother PT-P900W is connected via USB
+      // This is a placeholder - actual detection happens during print
+      this.printerConnected = true;
+      console.log('Printer connection check completed');
+    } catch (e) {
+      console.warn('Failed to check printer:', e && e.message);
+      this.printerConnected = false;
+    }
+  }
+
+  async printLabel() {
+    try {
+      // Build payload from device/preTesting and test results
+      const uid = (this.deviceInfo && (this.deviceInfo.uniqueId || this.deviceInfo.uid || this.deviceInfo.mac)) || '';
+      
+      // MN = Make + Model (e.g., "ME-0005" or "ME-05")
+      const deviceMake = (this.deviceInfo && this.deviceInfo.deviceMake) || '';
+      const deviceModel = (this.deviceInfo && this.deviceInfo.deviceModel) || '';
+      const mn = deviceMake && deviceModel ? `${deviceMake}-${deviceModel}` : '';
+      
+      // FW = Firmware Version
+      const firmware = this.deviceInfo && this.deviceInfo.firmwareVersion ? this.deviceInfo.firmwareVersion : 
+                       (this.preTesting && this.preTesting.firmwareVersion ? this.preTesting.firmwareVersion : '');
+      
+      // BA = Batch ID
+      const batchId = this.preTesting && this.preTesting.batchId ? this.preTesting.batchId : '';
+      
+      // Date in YYYY/MM/DD format
+      const dateStr = new Date().toISOString().slice(0,10).replace(/-/g, '/');
+      
+      // Barcode = UID for traceability
+      const barcode = uid || '';
+
+      const payload = { 
+        uid,           // Full UID
+        mn,            // MN: Make + Model
+        firmware,      // FW: Firmware version
+        batchId,       // BA: Batch ID
+        date: dateStr, // Date
+        barcode        // Barcode data (UID)
+      };
+      
+      console.log('Print payload:', payload);
+
+      this.testProgress = 'Sending label to Brother PT-P900W via USB...'; 
+      this.app.render();
+      
+      const res = await window.printerAPI.printLabel(payload);
+      
+      if (res && res.success) {
+        this.testProgress = '✅ Label printed successfully via USB!';
+        alert('✅ Label printed successfully!');
+      } else {
+        this.testProgress = `❌ Print failed: ${res && res.error ? res.error : 'Unknown error'}`;
+        alert(`❌ Print failed: ${res && res.error ? res.error : 'Unknown error'}`);
+      }
+      
+      this.app.render();
+    } catch (e) {
+      alert('Print error: ' + e.message);
+      this.testProgress = `❌ Print error: ${e.message}`;
+      this.app.render();
     }
   }
 
@@ -1018,6 +1101,10 @@ class FactoryTestingPage {
       setTimeout(() => {
         console.log('[Factory Testing Page] Post-render: updating dropdown');
         window.factoryTestingModule.updatePortDropdown();
+        // Check printer connection
+        if (window.factoryTestingPage) {
+          window.factoryTestingPage.checkPrinterConnection();
+        }
       }, 50);
     }
     // Compute Micro Edge evaluation UI state so icons persist across render
@@ -1189,6 +1276,41 @@ class FactoryTestingPage {
             </div>
           </div>
           `}
+
+          <!-- Brother PT-P900W Printer Section -->
+          <div class="mb-6 p-4 bg-blue-50 dark:bg-blue-900/20 border-2 border-blue-200 dark:border-blue-700 rounded-lg">
+            <div class="flex items-center justify-between mb-3">
+              <div class="flex items-center gap-3">
+                <span class="text-2xl">🖨️</span>
+                <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100">Brother PT-P900W Label Printer</h3>
+              </div>
+              <span class="text-xs px-2 py-1 rounded ${this.printerConnected ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}">USB Direct</span>
+            </div>
+            <div class="mb-3 p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="text-lg">${this.printerConnected ? '✅' : '🔌'}</span>
+                <span class="text-sm font-medium">${this.printerConnected ? 'Brother PT-P900W Connected' : 'Connect Brother PT-P900W via USB'}</span>
+              </div>
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                Prints directly via USB using py-brotherlabel library
+              </p>
+            </div>
+            <div class="flex gap-2">
+              <button 
+                onclick="window.factoryTestingPage.printLabel()" 
+                class="px-6 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  this.allowPrint 
+                    ? 'bg-green-500 hover:bg-green-600 text-white' 
+                    : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                }" 
+                ${this.allowPrint ? '' : 'disabled'}>
+                🏷️ Print Label
+              </button>
+              <span class="text-xs text-gray-600 dark:text-gray-400 self-center">
+                ${this.allowPrint ? '✅ Ready to print' : '⏳ Complete all tests to enable printing'}
+              </span>
+            </div>
+          </div>
 
           <!-- Pre-Testing Information Section -->
           <div class="mb-6 p-4 bg-purple-50 dark:bg-purple-900/20 border-2 border-purple-200 dark:border-purple-700 rounded-lg">

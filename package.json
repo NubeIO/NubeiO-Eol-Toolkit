@@ -118,6 +118,10 @@
         {
           "from": "embedded/nvs-binaries",
           "to": "embedded/nvs-binaries"
+        },
+        {
+          "from": "embedded/printer-scripts",
+          "to": "embedded/printer-scripts"
         }
       ]
     },
