@@ -55,6 +55,37 @@ class FactoryTestingPage {
     this.testProgress = '';
     this.showRawJson = false;
     this.showProfile = false; // toggles the small profile panel
+    this.mode = 'auto'; // 'auto' or 'manual' for Micro Edge workflow
+    this.preTestingCollapsed = true; // pre-testing section collapsed by default
+    this._autoPollTimer = null;
+    this.showConnectConfirm = false; // show modal to confirm before running tests in Auto
+    this._lastAutoConnectedPort = '';
+  }
+
+  confirmConnectOk() {
+    this.showConnectConfirm = false;
+    this.app.render();
+    // start tests after user confirms
+    try {
+      if (!this.isTesting) this.runFactoryTests();
+    } catch (e) { console.warn('Failed to start tests after confirm:', e && e.message); }
+  }
+
+  cancelConnectConfirm() {
+    this.showConnectConfirm = false;
+    this.app.render();
+  }
+
+  togglePreTesting() {
+    this.preTestingCollapsed = !this.preTestingCollapsed;
+    this.app.render();
+  }
+
+  stopAuto() {
+    // stop auto detection/connect loop
+    this.mode = 'manual';
+    if (this._autoPollTimer) { clearTimeout(this._autoPollTimer); this._autoPollTimer = null; }
+    this.app.render();
   }
 
   toggleRawJson() {
@@ -84,6 +115,11 @@ class FactoryTestingPage {
       }
     } catch (e) {
       console.warn('[Factory Testing] Failed to load defaults for device:', device, e && e.message);
+    }
+    // If Micro Edge and mode is auto, start auto workflow
+    if (this.selectedDevice === 'Micro Edge' && this.mode === 'auto') {
+      // small delay to let UI render port dropdown
+      setTimeout(() => this._startAutoWorkflow(), 200);
     }
     this.app.render();
     
@@ -308,6 +344,82 @@ class FactoryTestingPage {
     this.app.render();
   }
 
+  // Toggle Auto/Manual mode
+  toggleMode(newMode) {
+    if (newMode === this.mode) return;
+    this.mode = newMode;
+    if (this.mode === 'auto') {
+      // start auto if Micro Edge selected
+      if (this.selectedDevice === 'Micro Edge') this._startAutoWorkflow();
+    } else {
+      // stop auto polling
+      if (this._autoPollTimer) { clearTimeout(this._autoPollTimer); this._autoPollTimer = null; }
+    }
+    this.app.render();
+  }
+
+  _startAutoWorkflow() {
+    // Begin polling for ports and attempt auto-connect/run
+    if (this._autoPollTimer) { clearTimeout(this._autoPollTimer); this._autoPollTimer = null; }
+    const attempt = async () => {
+      if (!window.factoryTestingModule) return;
+      try {
+        await window.factoryTestingModule.loadSerialPorts();
+        window.factoryTestingModule.updatePortDropdown();
+        const ports = window.factoryTestingModule.serialPorts || [];
+        if (ports.length > 0) {
+          const portPath = ports[0].path || ports[0].comName || ports[0].path;
+          // set selected in module and dropdown
+          window.factoryTestingModule.selectedPort = portPath;
+          const sel = document.getElementById('factory-port-select');
+          if (sel) sel.value = portPath;
+          // If already connected, skip attempting to connect again
+          if (this.isConnected) {
+            // update status and schedule next poll
+            this.testProgress = `Already connected to ${portPath}`;
+            this.app.render();
+            if (this.mode === 'auto') {
+              this._autoPollTimer = setTimeout(attempt, 2000);
+            }
+            return;
+          }
+
+          // Attempt connect; connectDevice will trigger tests in Auto mode
+          await this.connectDevice();
+          // If connected, connectDevice already triggers runFactoryTests() in Auto mode
+          if (this.isConnected) return;
+        } else {
+          // No ports found - clear selection and connection state
+          try {
+            if (window.factoryTestingModule) {
+              window.factoryTestingModule.selectedPort = '';
+              window.factoryTestingModule.serialPorts = [];
+              window.factoryTestingModule.updatePortDropdown();
+            }
+          } catch (e) { /* ignore */ }
+          // If previously connected, mark disconnected
+          if (this.isConnected) {
+            this.isConnected = false;
+            this.testProgress = 'Device disconnected (port lost)';
+            this.app.render();
+          }
+          // schedule next attempt
+          if (this.mode === 'auto') {
+            this._autoPollTimer = setTimeout(attempt, 2000);
+          }
+          return;
+        }
+      } catch (e) {
+        console.warn('[Factory Testing] Auto workflow error:', e && e.message);
+      }
+      // schedule next attempt if still auto
+      if (this.mode === 'auto') {
+        this._autoPollTimer = setTimeout(attempt, 2000);
+      }
+    };
+    attempt();
+  }
+
   // Format AIN display: if value is normalized (0..1) convert to 0..3.3V, otherwise assume already volts
   _formatAIN(value) {
     if (value === null || typeof value === 'undefined' || value === '') return '—';
@@ -369,19 +481,19 @@ class FactoryTestingPage {
       return n;
     };
 
-    // 1. Battery Voltage: pass if 2.5..4.5
+    // 1. Battery Voltage: pass if 3.45..3.7 (user-specified)
     const batt = parseVolts(results.batteryVoltage);
-    setStatus('me-battery-icon', 'me-battery-label', 'me-battery-box', (batt >= 2.5 && batt <= 4.5));
-    // 2. AIN1: 1.4-1.7
+    setStatus('me-battery-icon', 'me-battery-label', 'me-battery-box', (batt >= 3.45 && batt <= 3.7));
+    // 2. AIN1: 1.55-1.75 (user-specified)
     const a1 = parseVolts(results.ain1Voltage);
-    setStatus('me-ain1-icon', 'me-ain1-label', 'me-ain1-box', (a1 >= 1.4 && a1 <= 1.7));
-    // 3. AIN2: 0.75-1.2
+    setStatus('me-ain1-icon', 'me-ain1-label', 'me-ain1-box', (a1 >= 1.55 && a1 <= 1.75));
+    // 3. AIN2: 0.95-1.15 (user-specified)
     const a2 = parseVolts(results.ain2Voltage);
-    setStatus('me-ain2-icon', 'me-ain2-label', 'me-ain2-box', (a2 >= 0.75 && a2 <= 1.2));
-    // 4. AIN3: 0.5-0.9
+    setStatus('me-ain2-icon', 'me-ain2-label', 'me-ain2-box', (a2 >= 0.95 && a2 <= 1.15));
+    // 4. AIN3: 0.75-0.95 (user-specified)
     const a3 = parseVolts(results.ain3Voltage);
-    setStatus('me-ain3-icon', 'me-ain3-label', 'me-ain3-box', (a3 >= 0.5 && a3 <= 0.9));
-    // 5. Pulse > 3
+    setStatus('me-ain3-icon', 'me-ain3-label', 'me-ain3-box', (a3 >= 0.75 && a3 <= 0.95));
+    // 5. Pulse > 3 (user-specified)
     const pulses = Number(results.pulsesCounter || 0);
     setStatus('me-pulses-icon', 'me-pulses-label', 'me-pulse-box', (pulses > 3));
     // 6. LoRa: detect + raw push OK
@@ -409,8 +521,14 @@ class FactoryTestingPage {
     if (!this.preTesting.workOrderSerial) missing.push('Work Order Serial');
     
     if (missing.length > 0) {
-      alert(`Please fill in the following required fields:\n- ${missing.join('\n- ')}`);
-      return false;
+        const msg = `Please fill in the following required fields:\n- ${missing.join('\n- ')}`;
+        if (this.mode === 'auto') {
+          this.testProgress = msg;
+          this.app.render();
+        } else {
+          alert(msg);
+        }
+        return false;
     }
     return true;
   }
@@ -424,18 +542,28 @@ class FactoryTestingPage {
     try {
       console.log('[Factory Testing Page] === START CONNECT WORKFLOW ===');
       
-      // Get selected port and baud rate
+      // Get selected port and baud rate (prefer module-selectedPort for Auto)
       const portSelect = document.getElementById('factory-port-select');
       const baudrateSelect = document.getElementById('factory-baudrate-select');
       
-      const selectedPort = portSelect ? portSelect.value : '';
+      const modulePort = (window.factoryTestingModule && window.factoryTestingModule.selectedPort) ? window.factoryTestingModule.selectedPort : '';
+      const domPort = portSelect ? portSelect.value : '';
+      const selectedPort = modulePort || domPort || '';
       const selectedBaud = baudrateSelect ? baudrateSelect.value : '115200';
       
       console.log('[Factory Testing Page] Selected port:', selectedPort);
       console.log('[Factory Testing Page] Selected baud:', selectedBaud);
       
       if (!selectedPort) {
-        alert('Please select a serial port');
+        // In auto mode, don't show blocking alert — just log and wait for detection
+        if (this.mode === 'auto') {
+          console.warn('[Factory Testing Page] No port selected (auto mode) - waiting for detection');
+          this.testProgress = 'Waiting for serial port...';
+          this.app.render();
+          return;
+        }
+        const msg = 'Please select a serial port';
+        alert(msg);
         return;
       }
       
@@ -445,7 +573,9 @@ class FactoryTestingPage {
       console.log('[Factory Testing Page] Calling module.connect()...');
       // Determine whether to use AT+UNLOCK - only Micro Edge requires it
       const useUnlock = this.selectedDevice === 'Micro Edge';
-      const result = await window.factoryTestingModule.connect(this.selectedPort, undefined, useUnlock);
+      // Prefer the resolved selectedPort when calling module.connect
+      const portToUse = selectedPort || this.selectedPort || (window.factoryTestingModule && window.factoryTestingModule.selectedPort);
+      const result = await window.factoryTestingModule.connect(portToUse, undefined, useUnlock);
       console.log('[Factory Testing Page] Connect result:', result);
       
       if (result.success) {
@@ -456,11 +586,27 @@ class FactoryTestingPage {
         if (result.deviceInfo) {
           this.deviceInfo = result.deviceInfo;
         }
-        alert(`Connected successfully to ${selectedPort}`);
+        // In Auto mode avoid blocking alerts; show a non-blocking progress message instead
+        const connectedMsg = `Connected successfully to ${selectedPort}. Please press the button 5 times.`;
+        if (this.mode === 'auto') {
+          // show non-blocking message and a confirmation modal so tester can press the button 5 times
+          this.testProgress = connectedMsg;
+          this._lastAutoConnectedPort = selectedPort;
+          this.showConnectConfirm = true;
+          // render modal for user OK before running tests
+          this.app.render();
+        } else {
+          alert(connectedMsg);
+        }
       } else {
         this.testProgress = `❌ Connection failed: ${result.error}`;
         console.error('[Factory Testing Page] Connection failed:', result.error);
-        alert(`Connection failed: ${result.error}`);
+        if (this.mode === 'auto') {
+          // Non-blocking update in auto mode
+          this.testProgress = `Connection failed: ${result.error}`;
+        } else {
+          alert(`Connection failed: ${result.error}`);
+        }
       }
       
       this.app.render();
@@ -469,7 +615,12 @@ class FactoryTestingPage {
       console.error('[Factory Testing Page] Connection error:', error);
       console.error('[Factory Testing Page] Error stack:', error.stack);
       this.testProgress = `❌ Error: ${error.message}`;
-      alert(`Connection error: ${error.message}`);
+      if (this.mode === 'auto') {
+        // avoid blocking in auto mode
+        this.testProgress = `Error: ${error.message}`;
+      } else {
+        alert(`Connection error: ${error.message}`);
+      }
       this.app.render();
     }
   }
@@ -483,6 +634,19 @@ class FactoryTestingPage {
       await window.factoryTestingModule.disconnect();
       this.isConnected = false;
       this.testProgress = 'Disconnected';
+      // Clear module selected port so auto-detect can pick a new device
+      try {
+        if (window.factoryTestingModule) {
+          window.factoryTestingModule.selectedPort = '';
+          window.factoryTestingModule.updatePortDropdown();
+        }
+      } catch (e) { /* ignore */ }
+
+      // If in auto mode, restart the auto workflow to detect new device
+      if (this.mode === 'auto') {
+        setTimeout(() => this._startAutoWorkflow(), 200);
+      }
+
       this.app.render();
     } catch (error) {
       console.error('Disconnect error:', error);
@@ -518,7 +682,7 @@ class FactoryTestingPage {
 
   // ZC-LCD individual test runners update UI fields
   async runZcWifiTest() {
-    if (!window.factoryTestingModule || !this.isConnected) { alert('Connect first'); return; }
+    if (!window.factoryTestingModule || !this.isConnected) { const msg = 'Connect first'; if (this.mode === 'auto') { this.testProgress = msg; this.app.render(); } else { alert(msg); } return; }
     this.testProgress = 'Running ZC WiFi test...'; this.app.render();
     try {
       const res = await window.factoryTestingModule.zcWifiTest();
@@ -538,7 +702,7 @@ class FactoryTestingPage {
   }
 
   async runZcI2cTest() {
-    if (!window.factoryTestingModule || !this.isConnected) { alert('Connect first'); return; }
+    if (!window.factoryTestingModule || !this.isConnected) { const msg = 'Connect first'; if (this.mode === 'auto') { this.testProgress = msg; this.app.render(); } else { alert(msg); } return; }
     this.testProgress = 'Running ZC I2C test...'; this.app.render();
     try {
       const res = await window.factoryTestingModule.zcI2cTest();
@@ -564,7 +728,7 @@ class FactoryTestingPage {
   }
 
   async runZcRs485Test() {
-    if (!window.factoryTestingModule || !this.isConnected) { alert('Connect first'); return; }
+    if (!window.factoryTestingModule || !this.isConnected) { const msg = 'Connect first'; if (this.mode === 'auto') { this.testProgress = msg; this.app.render(); } else { alert(msg); } return; }
     this.testProgress = 'Running ZC RS485 test...'; this.app.render();
     try {
       const res = await window.factoryTestingModule.zcRs485Test();
@@ -631,7 +795,12 @@ class FactoryTestingPage {
 
   async runFactoryTests() {
     if (!window.factoryTestingModule || !this.isConnected) {
-      alert('Please connect to device first');
+      const msg = 'Please connect to device first';
+      if (this.mode === 'auto') {
+        this.testProgress = msg; this.app.render();
+      } else {
+        alert(msg);
+      }
       return;
     }
 
@@ -932,9 +1101,10 @@ class FactoryTestingPage {
         ` : ''}
 
         ${isTestingEnabled ? `
-          <!-- Connection Section -->
+          <!-- Connection Section (hidden in Auto mode) -->
+          ${this.mode === 'manual' ? `
           <div class="mb-6 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
-            <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-3">Step 1: Connect to Device</h3>
+            <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-3">Connect to Device</h3>
             <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
               Connect to the device via UART to communicate using AT commands.
             </p>
@@ -1005,150 +1175,128 @@ class FactoryTestingPage {
               `}
             </div>
           </div>
+          ` : `
+          <div class="mb-6 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg flex items-center justify-between">
+            <div>
+              <strong class="text-sm">Auto-detect and connect active</strong>
+              <div class="text-xs text-gray-500">Ports: ${window.factoryTestingModule ? window.factoryTestingModule.serialPorts.length : '...'} • Selected: ${window.factoryTestingModule ? (window.factoryTestingModule.selectedPort || '—') : '—'}</div>
+            </div>
+            <div class="flex gap-2">
+              ${this.isConnected ? `
+                <button onclick="window.factoryTestingPage.disconnectDevice()" class="px-3 py-1 bg-red-500 text-white rounded">Disconnect</button>
+              ` : ''}
+              <button onclick="window.factoryTestingPage.stopAuto()" class="px-3 py-1 bg-red-500 text-white rounded">Stop Auto</button>
+            </div>
+          </div>
+          `}
 
           <!-- Pre-Testing Information Section -->
           <div class="mb-6 p-4 bg-purple-50 dark:bg-purple-900/20 border-2 border-purple-200 dark:border-purple-700 rounded-lg">
             <div class="flex items-center justify-between mb-3">
-              <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100">
-                📝 Step 1.5: Pre-Testing Information
-              </h3>
-              <div class="flex items-center gap-2">
-                <button
-                  onclick="window.factoryTestingPage.saveDefaultsForDevice()"
-                  class="px-3 py-1 bg-green-500 hover:bg-green-600 text-white rounded text-sm"
-                  title="Save these tester defaults for this device type"
-                >Save Defaults</button>
-                <button
-                  onclick="window.factoryTestingPage.resetDefaultsForDevice()"
-                  class="px-3 py-1 bg-red-500 hover:bg-red-600 text-white rounded text-sm"
-                  title="Reset saved defaults for this device type"
-                >Reset Defaults</button>
-                <button
-                  onclick="window.factoryTestingPage.toggleProfilePanel()"
-                  class="px-3 py-1 bg-gray-300 hover:bg-gray-350 rounded text-sm"
-                  title="Toggle profile panel"
-                >Profile</button>
+              <div class="flex items-center gap-3">
+                <h3 class="text-sm font-medium text-gray-800 dark:text-gray-100">📝 Pre-Testing</h3>
+                <button onclick="window.factoryTestingPage.togglePreTesting()" class="px-2 py-1 text-sm bg-gray-200 rounded">${this.preTestingCollapsed ? 'Show' : 'Hide'}</button>
               </div>
+              ${this.preTestingCollapsed ? '' : ('<div class="flex items-center gap-2"><button onclick="window.factoryTestingPage.saveDefaultsForDevice()" class="px-3 py-1 bg-green-500 hover:bg-green-600 text-white rounded text-sm">Save Defaults</button><button onclick="window.factoryTestingPage.resetDefaultsForDevice()" class="px-3 py-1 bg-red-500 hover:bg-red-600 text-white rounded text-sm">Reset Defaults</button></div>')}
             </div>
-            <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
-              Fill in the following information before proceeding with device testing.
-            </p>
-            
-            <div class="grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Tester Name <span class="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  id="tester-name"
-                  tabindex="1"
-                  value="${this.preTesting.testerName}"
-                  placeholder="Enter tester name"
-                  onkeyup="updateFactoryTestingField('testerName', this.value)"
-                  onchange="updateFactoryTestingField('testerName', this.value)"
-                  onfocus="console.log('Tester name focused')"
-                  class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-500 focus:outline-none"
-                />
-              </div>
-              
-              <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Hardware Version <span class="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  id="hardware-version"
-                  tabindex="2"
-                  value="${this.preTesting.hardwareVersion}"
-                  placeholder="e.g., v1.2, v2.0"
-                  onkeyup="updateFactoryTestingField('hardwareVersion', this.value)"
-                  onchange="updateFactoryTestingField('hardwareVersion', this.value)"
-                  class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-500 focus:outline-none"
-                />
-              </div>
-              
-              <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Batch ID <span class="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  id="batch-id"
-                  tabindex="3"
-                  value="${this.preTesting.batchId}"
-                  placeholder="Enter batch ID"
-                  onkeyup="updateFactoryTestingField('batchId', this.value)"
-                  onchange="updateFactoryTestingField('batchId', this.value)"
-                  class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-500 focus:outline-none"
-                />
-              </div>
-              
-              <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Work Order Serial <span class="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  id="work-order-serial"
-                  tabindex="4"
-                  value="${this.preTesting.workOrderSerial}"
-                  placeholder="Enter work order serial"
-                  onkeyup="updateFactoryTestingField('workOrderSerial', this.value)"
-                  onchange="updateFactoryTestingField('workOrderSerial', this.value)"
-                  class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-500 focus:outline-none"
-                />
-              </div>
-            </div>
-            
-            <div class="mt-3 p-3 bg-purple-100 dark:bg-purple-900/30 rounded border border-purple-300 dark:border-purple-600">
-              <p class="text-xs text-purple-800 dark:text-purple-200">
-                ℹ️ <strong>Note:</strong> All fields marked with <span class="text-red-500">*</span> are required before running factory tests. This information will be included in the test reports.
-              </p>
-            </div>
-            ${this.showProfile ? `
-              <div class="mt-3 p-3 bg-white rounded border text-sm">
-                <div class="flex items-center justify-between">
-                  <div>
-                    <div class="text-xs text-gray-600">Saved Profile for ${this.selectedDevice || 'Device'}</div>
-                    <div class="font-mono text-sm">${this.preTesting.testerName || '—'} · ${this.preTesting.hardwareVersion || '—'} · ${this.preTesting.batchId || '—'} · ${this.preTesting.workOrderSerial || '—'}</div>
-                  </div>
-                  <div class="text-xs text-gray-500">Defaults persist per device type</div>
+
+            ${this.preTestingCollapsed ? '' : (`
+              <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">Fill in the following information before proceeding with device testing.</p>
+
+              <div class="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Tester Name <span class="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    id="tester-name"
+                    tabindex="1"
+                    value="${this.preTesting.testerName}"
+                    placeholder="Enter tester name"
+                    onkeyup="updateFactoryTestingField('testerName', this.value)"
+                    onchange="updateFactoryTestingField('testerName', this.value)"
+                    onfocus="console.log('Tester name focused')"
+                    class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Hardware Version <span class="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    id="hardware-version"
+                    tabindex="2"
+                    value="${this.preTesting.hardwareVersion}"
+                    placeholder="e.g., v1.2, v2.0"
+                    onkeyup="updateFactoryTestingField('hardwareVersion', this.value)"
+                    onchange="updateFactoryTestingField('hardwareVersion', this.value)"
+                    class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Batch ID <span class="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    id="batch-id"
+                    tabindex="3"
+                    value="${this.preTesting.batchId}"
+                    placeholder="Enter batch ID"
+                    onkeyup="updateFactoryTestingField('batchId', this.value)"
+                    onchange="updateFactoryTestingField('batchId', this.value)"
+                    class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Work Order Serial <span class="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    id="work-order-serial"
+                    tabindex="4"
+                    value="${this.preTesting.workOrderSerial}"
+                    placeholder="Enter work order serial"
+                    onkeyup="updateFactoryTestingField('workOrderSerial', this.value)"
+                    onchange="updateFactoryTestingField('workOrderSerial', this.value)"
+                    class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                  />
                 </div>
               </div>
-            ` : ''}
-          </div>
 
-          <!-- Device Information Section -->
-          <div class="mb-6 p-4 ${this.selectedDevice === 'Micro Edge' ? 'bg-blue-50 dark:bg-blue-900/20 border-2 border-blue-200 dark:border-blue-700' : this.selectedDevice === 'Droplet' ? 'bg-green-50 dark:bg-green-900/20 border-2 border-green-200 dark:border-green-700' : 'bg-gray-50 dark:bg-gray-700'} rounded-lg">
-            <div class="flex items-center justify-between mb-3">
-              <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100">
-                ${this.selectedDevice === 'Micro Edge' ? '⚡' : this.selectedDevice === 'Droplet' ? '🌡️' : '📋'} Step 2: Read Device Information
-              </h3>
-              
-            </div>
-            
-            <div class="grid grid-cols-2 gap-4 text-sm">
-              <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-                <div class="text-gray-500 dark:text-gray-400 mb-1">Firmware Version</div>
-                <div class="font-mono text-gray-800 dark:text-gray-100">${this.deviceInfo.firmwareVersion || '—'}</div>
+              <div class="mt-3 p-3 bg-purple-100 dark:bg-purple-900/30 rounded border border-purple-300 dark:border-purple-600">
+                <p class="text-xs text-purple-800 dark:text-purple-200">
+                  ℹ️ <strong>Note:</strong> All fields marked with <span class="text-red-500">*</span> are required before running factory tests. This information will be included in the test reports.
+                </p>
               </div>
-              <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-                <div class="text-gray-500 dark:text-gray-400 mb-1">HW Version</div>
-                <div class="font-mono text-gray-800 dark:text-gray-100">${this.deviceInfo.hwVersion || '—'}</div>
-              </div>
-              <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-                <div class="text-gray-500 dark:text-gray-400 mb-1">Unique ID</div>
-                <div class="font-mono text-gray-800 dark:text-gray-100 text-xs">${this.deviceInfo.uniqueId || '—'}</div>
-              </div>
-              <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-                <div class="text-gray-500 dark:text-gray-400 mb-1">Device Make</div>
-                <div class="font-mono text-gray-800 dark:text-gray-100">${this.deviceInfo.deviceMake || '—'}</div>
-              </div>
-              <div class="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-                <div class="text-gray-500 dark:text-gray-400 mb-1">Device Model</div>
-                <div class="font-mono text-gray-800 dark:text-gray-100">${this.deviceInfo.deviceModel || '—'}</div>
-              </div>
+
+              ${this.showProfile ? (`
+                <div class="mt-3 p-3 bg-white rounded border text-sm">
+                  <div class="flex items-center justify-between">
+                    <div>
+                      <div class="text-xs text-gray-600">Saved Profile for ${this.selectedDevice || 'Device'}</div>
+                      <div class="font-mono text-sm">${this.preTesting.testerName || '—'} · ${this.preTesting.hardwareVersion || '—'} · ${this.preTesting.batchId || '—'} · ${this.preTesting.workOrderSerial || '—'}</div>
+                    </div>
+                    <div class="text-xs text-gray-500">Defaults persist per device type</div>
+                  </div>
+                </div>
+              `) : ''}
+            `)}
+          </div>
+          <!-- Device Information Section (compact single-row) -->
+          <div class="mb-6 p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-700 text-sm">
+            <div class="flex flex-wrap gap-4 items-center">
+              <div class="text-xs text-gray-500">FW</div><div class="font-mono text-sm text-gray-800 dark:text-gray-100">${this.deviceInfo.firmwareVersion || '—'}</div>
+              <div class="text-xs text-gray-500">HW</div><div class="font-mono text-sm text-gray-800 dark:text-gray-100">${this.deviceInfo.hwVersion || '—'}</div>
+              <div class="text-xs text-gray-500">UID</div><div class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.deviceInfo.uniqueId || '—').substring(0,24)}</div>
+              <div class="text-xs text-gray-500">Make</div><div class="font-mono text-sm text-gray-800 dark:text-gray-100">${this.deviceInfo.deviceMake || '—'}</div>
+              <div class="text-xs text-gray-500">Model</div><div class="font-mono text-sm text-gray-800 dark:text-gray-100">${this.deviceInfo.deviceModel || '—'}</div>
             </div>
           </div>
 
@@ -1158,20 +1306,34 @@ class FactoryTestingPage {
               <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100">
                 ${this.selectedDevice === 'Micro Edge' ? '⚡' : this.selectedDevice === 'Droplet' ? '🌡️' : '🧪'} Step 3: Run Factory Tests
               </h3>
-              <button
-                onclick="window.factoryTestingPage.runFactoryTests()"
-                class="px-6 py-3 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white rounded-lg font-bold transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                ${!this.isConnected || this.isTesting ? 'disabled' : ''}
-              >
-                ${this.isTesting ? `
-                  <svg class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  Testing...
-                ` : '▶️ Run All Tests'}
-              </button>
+              <div class="flex items-center gap-3">
+                ${this.selectedDevice === 'Micro Edge' ? `
+                  <button onclick="window.factoryTestingPage.toggleMode('auto')" class="px-3 py-1 rounded ${this.mode === 'auto' ? 'bg-green-500 text-white' : 'bg-gray-200'}">Auto</button>
+                  <button onclick="window.factoryTestingPage.toggleMode('manual')" class="px-3 py-1 rounded ${this.mode === 'manual' ? 'bg-blue-500 text-white' : 'bg-gray-200'}">Manual</button>
+                ` : ''}
+                <button
+                  onclick="window.factoryTestingPage.runFactoryTests()"
+                  class="px-6 py-3 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white rounded-lg font-bold transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  ${!this.isConnected || this.isTesting ? 'disabled' : ''}
+                >
+                  ${this.isTesting ? `
+                    <svg class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Testing...
+                  ` : '▶️ Run All Tests'}
+                </button>
+              </div>
             </div>
+            <!-- Pass/Fail Banner -->
+            ${this.factoryTestResults && this.factoryTestResults._eval && Object.keys(this.factoryTestResults._eval).length ? `
+              ${((this.factoryTestResults._eval.pass_battery && this.factoryTestResults._eval.pass_ain1 && this.factoryTestResults._eval.pass_ain2 && this.factoryTestResults._eval.pass_ain3 && this.factoryTestResults._eval.pass_pulses && this.factoryTestResults._eval.pass_lora)) ? `
+                <div class="mb-4 p-3 bg-green-500 text-white rounded">✅ Device Pass</div>
+              ` : `
+                <div class="mb-4 p-3 bg-red-500 text-white rounded">❌ Device Fail - see Test Results below</div>
+              `}
+            ` : ''}
             
             <!-- ACB-M Test Controls -->
             ${this.selectedDevice === 'ACB-M' ? `
@@ -1193,6 +1355,17 @@ class FactoryTestingPage {
             ${this.selectedDevice === 'Micro Edge' ? `
               <div class="mt-6 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
                 <h4 class="text-sm font-semibold mb-3">🧩 Micro Edge - Test Results</h4>
+                <div class="mb-3 p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700 text-sm">
+                  <div class="font-semibold mb-2">Test Conditions</div>
+                  <div class="grid grid-cols-3 gap-2">
+                    <div><span class="text-gray-600">Battery:</span> <span class="font-mono">3.45 — 3.70 V</span></div>
+                    <div><span class="text-gray-600">AIN1:</span> <span class="font-mono">1.55 — 1.75 V</span></div>
+                    <div><span class="text-gray-600">AIN2:</span> <span class="font-mono">0.95 — 1.15 V</span></div>
+                    <div><span class="text-gray-600">AIN3:</span> <span class="font-mono">0.75 — 0.95 V</span></div>
+                    <div><span class="text-gray-600">Pulses:</span> <span class="font-mono">&gt; 3</span></div>
+                    <div><span class="text-gray-600">LoRa:</span> <span class="font-mono">Detect + OK</span></div>
+                  </div>
+                </div>
                 <div class="grid grid-cols-4 gap-3 text-sm">
                   <div id="me-battery-box" class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700 flex items-center justify-between ${meBattery.boxClass}">
                     <div>
@@ -1358,6 +1531,19 @@ RS485: ${JSON.stringify(this.factoryTestResults.rs485?.parsed || this.factoryTes
           ${this.renderInstructionsByDevice()}
         </div>
       </div>
+      ${this.showConnectConfirm ? `
+        <div class="fixed inset-0 z-50 flex items-center justify-center">
+          <div class="absolute inset-0 bg-black opacity-40"></div>
+          <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl z-10 w-11/12 max-w-lg p-6">
+            <h3 class="text-lg font-semibold mb-3">Connected</h3>
+            <p class="text-sm text-gray-700 dark:text-gray-300 mb-4">Connected successfully to ${this._lastAutoConnectedPort}. Please press the device button 5 times, then press OK to begin the tests.</p>
+            <div class="flex justify-end gap-2">
+              <button onclick="window.factoryTestingPage.cancelConnectConfirm()" class="px-4 py-2 bg-gray-200 rounded">Cancel</button>
+              <button onclick="window.factoryTestingPage.confirmConnectOk()" class="px-4 py-2 bg-green-500 text-white rounded">OK</button>
+            </div>
+          </div>
+        </div>
+      ` : ''}
     `;
   }
 }

@@ -8,12 +8,11 @@
     "start:memory": "NODE_OPTIONS='--max-old-space-size=4096' electron . --no-sandbox",
     "dev": "electron . --no-sandbox --dev",
     "dev:memory": "NODE_OPTIONS='--max-old-space-size=4096' electron . --no-sandbox --dev",
-    "postinstall": "electron-builder install-app-deps",
     "rebuild": "electron-rebuild -f -w serialport",
-    "build": "npm run rebuild && electron-builder",
-    "build:all": "npm run rebuild && electron-builder --linux --win",
-    "build:linux": "npm run rebuild && electron-builder --linux appimage",
-    "build:win": "npm run rebuild && electron-builder --win portable",
+    "build": "electron-builder",
+    "build:all": "electron-builder --linux --win",
+    "build:linux": "electron-builder --linux appimage",
+    "build:win": "electron-builder --win portable",
     "build:mac": "npm run rebuild && electron-builder --mac",
     "build:docker": "./build.sh"
   },
@@ -48,6 +47,8 @@
     "directories": {
       "output": "dist"
     },
+    "npmRebuild": false,
+    "buildDependenciesFromSource": false,
     "files": [
       "main.js",
       "preload.js",
@@ -91,10 +92,12 @@
     "win": {
       "target": [
         {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
           "target": "portable",
-          "arch": [
-            "x64"
-          ]
+          "arch": ["x64"]
         }
       ],
       "icon": "build/icon.ico",
@@ -117,6 +120,15 @@
           "to": "embedded/nvs-binaries"
         }
       ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Nube iO Toolkit"
     },
     "portable": {
       "artifactName": "Nube_iO_Toolkit-${version}-Portable.exe"
