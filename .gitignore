@@ -1,5 +1,6 @@
 # Build
 /build/
+/dist/
 
 # Frontend
 /frontend/build/
@@ -30,3 +31,8 @@ Thumbs.db
 
 # Wails
 /app.syso
+node_modules/
+
+node_modules/
+electron/
+*.exe
