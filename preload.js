@@ -106,6 +106,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSTM32DeviceTypes: () => ipcRenderer.invoke('stm32:getDeviceTypes'),
   getCurrentSTM32DeviceType: () => ipcRenderer.invoke('stm32:getCurrentDeviceType'),
 
+  // Flash protection management
+  checkSTM32FlashProtection: () => ipcRenderer.invoke('stm32:checkFlashProtection'),
+  unlockSTM32Flash: () => ipcRenderer.invoke('stm32:unlockFlash'),
+
   selectFile: (options) => ipcRenderer.invoke('dialog:openFile', options)
 });
 

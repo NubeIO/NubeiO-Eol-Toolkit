@@ -6,6 +6,9 @@
 /frontend/dist/
 /frontend/node_modules/
 
+# Node.js
+node_modules/
+
 # Go
 *.exe~
 *.dll

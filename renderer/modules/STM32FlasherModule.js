@@ -22,6 +22,12 @@ class STM32FlasherModule {
     this.mcuMismatch = false;
     this.detectedType = null;
     this.selectedType = null;
+
+    // Flash protection status
+    this.flashProtected = false;
+    this.protectionInfo = null;
+    this.isUnlocking = false;
+    this.powerCycleRequired = false; // Flag to indicate power cycle is needed
   }
 
   async init() {
@@ -73,6 +79,9 @@ class STM32FlasherModule {
       this.mcuMismatch = false;
       this.detectedType = null;
       this.selectedType = null;
+      this.flashProtected = false;
+      this.protectionInfo = null;
+      this.powerCycleRequired = false;
 
       this.render();
 
@@ -138,6 +147,49 @@ class STM32FlasherModule {
         } else {
           // Device detected and matches selected type
           this.flashProgress = 'ST-Link detected successfully! Device type matches.';
+          
+          // Check flash protection status
+          console.log('[UI] Protection result:', result.protection);
+          if (result.protection) {
+            this.protectionInfo = result.protection;
+            
+            // Check if there's a mismatch (OPTR=0xAA but flash probe still shows RDP level 1)
+            // This indicates power cycle is required
+            if (result.protection.note && result.protection.note.includes('power cycle')) {
+              // OPTR shows 0xAA but flash probe still shows RDP level 1
+              this.powerCycleRequired = true;
+              this.flashProtected = true; // Keep protected until power cycle
+              this.flashProgress = '⚠️ POWER CYCLE REQUIRED\n\n' +
+                'OPTR has been unlocked (0xAA) but flash controller still shows RDP Level 1.\n\n' +
+                'Please:\n' +
+                '1. Power off STM32 (unplug USB or disconnect power)\n' +
+                '2. Wait 2-3 seconds\n' +
+                '3. Power on again\n' +
+                '4. Click "Detect ST-Link" again to verify';
+            } else {
+              // Normal protection check
+              this.flashProtected = result.protection.isProtected === true;
+              this.powerCycleRequired = false;
+              
+              console.log('[UI] Flash protected:', this.flashProtected);
+              console.log('[UI] RDP Level:', result.protection.rdpLevel);
+              
+              if (this.flashProtected) {
+                const rdpLevel = result.protection.rdpLevel || 0;
+                if (rdpLevel === 1) {
+                  this.flashProgress += '\n\n⚠️ Flash is PROTECTED (RDP Level 1). You need to unlock before flashing.';
+                } else if (rdpLevel === 2) {
+                  this.flashProgress += '\n\n❌ Flash is PERMANENTLY PROTECTED (RDP Level 2). Cannot unlock.';
+                } else {
+                  this.flashProgress += '\n\n⚠️ Flash is PROTECTED. You need to unlock before flashing.';
+                }
+              } else {
+                console.log('[UI] Flash is not protected (RDP Level 0)');
+              }
+            }
+          } else {
+            console.log('[UI] No protection info in result');
+          }
         }
       } else if (result.success && !result.detected) {
         // ST-Link found but chip not responding
@@ -172,6 +224,8 @@ class STM32FlasherModule {
         this.mcuMismatch = false;
         this.detectedType = null;
         this.selectedType = null;
+        this.flashProtected = false;
+        this.protectionInfo = null;
 
         this.flashProgress = `Switched to ${result.deviceType.name} (${result.deviceType.mcu}). Please detect again.`;
         this.render();
@@ -198,6 +252,8 @@ class STM32FlasherModule {
         this.mcuMismatch = false;
         this.detectedType = null;
         this.selectedType = null;
+        this.flashProtected = false;
+        this.protectionInfo = null;
 
         this.flashProgress = 'ST-Link disconnected. Please select device type and detect again.';
       } else {
@@ -209,6 +265,130 @@ class STM32FlasherModule {
       this.flashProgress = `Disconnect failed: ${error.message}`;
       this.render();
       // console.error('Disconnect error:', error);
+    }
+  }
+
+  async unlockFlash() {
+    if (this.isUnlocking) {
+      return;
+    }
+
+    if (!this.flashProtected) {
+      alert('Flash is not protected. No need to unlock.');
+      return;
+    }
+
+    if (this.protectionInfo && this.protectionInfo.rdpLevel === 2) {
+      alert('Flash is permanently protected (RDP Level 2). Cannot unlock.');
+      return;
+    }
+
+    // Confirm with user
+    const confirmed = confirm(
+      '⚠️ WARNING: Unlocking flash protection will ERASE ALL FLASH CONTENT!\n\n' +
+      'This includes:\n' +
+      '• All firmware\n' +
+      '• All user data\n' +
+      '• Everything stored in flash memory\n\n' +
+      'Are you sure you want to continue?'
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      this.isUnlocking = true;
+      this.powerCycleRequired = false;
+      this.flashProgress = 'Unlocking flash protection (this will erase all flash)...';
+      this.render();
+
+      const result = await electronAPI.unlockSTM32Flash();
+
+      if (result.success) {
+        // Verify unlock by checking both OPTR and flash probe
+        this.flashProgress = 'Verifying unlock status (checking OPTR and flash controller)...';
+        this.render();
+        
+        try {
+          const protectionCheck = await electronAPI.checkSTM32FlashProtection();
+          this.protectionInfo = protectionCheck;
+          
+          // Priority 1: Check if there's a mismatch (OPTR=0xAA but flash probe still shows RDP level 1)
+          // This means flash controller hasn't reloaded OPTR - needs power cycle
+          // Check note first, then check if isProtected=true with rdpLevel=1 (which indicates mismatch after unlock)
+          const hasPowerCycleNote = protectionCheck.note && protectionCheck.note.includes('power cycle');
+          const isMismatchAfterUnlock = protectionCheck.isProtected === true && 
+                                        protectionCheck.rdpLevel === 1 && 
+                                        !hasPowerCycleNote;
+          
+          if (hasPowerCycleNote || isMismatchAfterUnlock) {
+            // OPTR = 0xAA but flash probe still shows RDP level 1
+            this.powerCycleRequired = true;
+            this.flashProtected = true; // Keep protected until power cycle
+            this.flashProgress = '⚠️ POWER CYCLE REQUIRED\n\n' +
+              'OPTR has been unlocked (0xAA) but flash controller still shows RDP Level 1.\n\n' +
+              'Please:\n' +
+              '1. Power off STM32 (unplug USB or disconnect power)\n' +
+              '2. Wait 2-3 seconds\n' +
+              '3. Power on again\n' +
+              '4. Click "Detect ST-Link" again to verify';
+          } else if (protectionCheck.isProtected === false) {
+            // Both OPTR and flash probe confirm unlocked
+            this.flashProtected = false;
+            this.powerCycleRequired = false;
+            this.flashProgress = '✅ Flash protection unlocked successfully! Flash has been erased. You can now flash new firmware.';
+          } else {
+            // Still protected (but not due to power cycle mismatch)
+            // This should not happen after unlock, but handle it anyway
+            this.flashProtected = true;
+            this.powerCycleRequired = false;
+            this.flashProgress = `⚠️ Flash is still protected. RDP Level: ${protectionCheck.rdpLevel || 'unknown'}\n\n` +
+              'Please try unlocking again or use ST-Link Utility.';
+          }
+        } catch (checkError) {
+          // If check fails, check error message for power cycle requirement
+          if (checkError.message && checkError.message.includes('POWER CYCLE')) {
+            this.powerCycleRequired = true;
+            this.flashProtected = true;
+            this.flashProgress = '⚠️ CẦN POWER CYCLE\n\n' +
+              'OPTR đã được unlock (0xAA) nhưng flash controller vẫn cache RDP Level 1.\n\n' +
+              'Vui lòng:\n' +
+              '1. Rút nguồn STM32 (rút USB hoặc ngắt nguồn)\n' +
+              '2. Đợi 2-3 giây\n' +
+              '3. Cắm lại nguồn\n' +
+              '4. Nhấn "Detect ST-Link" lại để kiểm tra';
+          } else {
+            // Assume unlocked if check fails
+            this.flashProtected = false;
+            this.protectionInfo = null;
+            this.flashProgress = '✅ Flash protection unlocked successfully! Flash has been erased. You can now flash new firmware.';
+          }
+        }
+      } else {
+        this.flashProgress = `❌ Failed to unlock flash: ${result.error || 'Unknown error'}`;
+      }
+
+      this.render();
+    } catch (error) {
+      // Check if error message indicates power cycle requirement
+      if (error.message && error.message.includes('POWER CYCLE')) {
+        this.powerCycleRequired = true;
+        this.flashProtected = true;
+        this.flashProgress = '⚠️ CẦN POWER CYCLE\n\n' +
+          'OPTR đã được unlock (0xAA) nhưng flash controller vẫn cache RDP Level 1.\n\n' +
+          'Vui lòng:\n' +
+          '1. Rút nguồn STM32 (rút USB hoặc ngắt nguồn)\n' +
+          '2. Đợi 2-3 giây\n' +
+          '3. Cắm lại nguồn\n' +
+          '4. Nhấn "Detect ST-Link" lại để kiểm tra';
+      } else {
+        this.flashProgress = `❌ Unlock failed: ${error.message}`;
+      }
+      this.render();
+      // console.error('Unlock error:', error);
+    } finally {
+      this.isUnlocking = false;
     }
   }
 
@@ -241,6 +421,32 @@ class STM32FlasherModule {
 
     if (this.isFlashing) {
       return;
+    }
+
+    // Check if flash is protected
+    if (this.flashProtected) {
+      if (this.protectionInfo && this.protectionInfo.rdpLevel === 2) {
+        alert('❌ Flash is PERMANENTLY PROTECTED (RDP Level 2). Cannot unlock. Please use ST-Link Utility.');
+        return;
+      } else {
+        const confirmed = confirm(
+          '⚠️ Flash is PROTECTED!\n\n' +
+          'You need to unlock the flash before flashing firmware.\n\n' +
+          'Unlocking will ERASE ALL flash content.\n\n' +
+          'Do you want to unlock now?'
+        );
+        
+        if (confirmed) {
+          await this.unlockFlash();
+          // After unlock, check if still protected
+          if (this.flashProtected) {
+            alert('Unlock failed. Please try again or use ST-Link Utility.');
+            return;
+          }
+        } else {
+          return; // User cancelled
+        }
+      }
     }
 
     try {
@@ -388,11 +594,68 @@ class STM32FlasherModule {
                 <div><span class="text-gray-600">Chip:</span> <code class="ml-1 text-blue-600">${this.mcuInfo.chip || 'STM32WLE5'}</code></div>
                 <div><span class="text-gray-600">Flash Size:</span> <code class="ml-1 text-blue-600">${this.mcuInfo.flashSize || '256KB'}</code></div>
               </div>
+              
+              ${this.flashProtected ? `
+                <div class="mt-4 p-4 bg-red-50 border-2 border-red-300 rounded-lg">
+                  <div class="flex items-center justify-between mb-3">
+                    <div class="flex items-center">
+                      <i class="fas fa-lock text-red-600 mr-2 text-xl"></i>
+                      <div>
+                        <span class="font-bold text-red-800 text-lg">Flash is PROTECTED</span>
+                        ${this.protectionInfo && this.protectionInfo.rdpLevel ? `
+                          <div class="text-sm text-red-600 mt-1">RDP Level ${this.protectionInfo.rdpLevel}</div>
+                        ` : ''}
+                      </div>
+                    </div>
+                  </div>
+                  <div class="text-sm text-red-700 mb-3">
+                    ${this.protectionInfo && this.protectionInfo.rdpLevel === 2 ? `
+                      <p class="font-semibold">⚠️ PERMANENTLY PROTECTED (RDP Level 2)</p>
+                      <p>This device cannot be unlocked. Please use ST-Link Utility or contact support.</p>
+                    ` : `
+                      <p class="font-semibold">⚠️ Flash protection is enabled (RDP Level ${this.protectionInfo?.rdpLevel || 1})</p>
+                      <p>You must unlock the flash before flashing firmware. <strong>Unlocking will ERASE ALL flash content!</strong></p>
+                    `}
+                  </div>
+                  ${this.protectionInfo && this.protectionInfo.rdpLevel !== 2 ? `
+                    <button 
+                      onclick="window.stm32Flasher.unlockFlash()"
+                      class="w-full px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed font-semibold"
+                      ${this.isUnlocking || this.isFlashing ? 'disabled' : ''}
+                    >
+                      <i class="fas ${this.isUnlocking ? 'fa-spinner fa-spin' : 'fa-unlock'} mr-2"></i>
+                      ${this.isUnlocking ? 'Unlocking...' : 'Unlock Flash (Will Erase All Flash)'}
+                    </button>
+                  ` : ''}
+                  ${this.powerCycleRequired ? `
+                    <div class="mt-4 p-4 bg-yellow-50 border-2 border-yellow-400 rounded-lg">
+                      <div class="flex items-start">
+                        <i class="fas fa-exclamation-triangle text-yellow-600 mr-2 text-xl mt-1"></i>
+                        <div>
+                          <p class="font-bold text-yellow-800 mb-2">⚠️ POWER CYCLE REQUIRED</p>
+                          <p class="text-sm text-yellow-700 mb-2">
+                            OPTR has been unlocked (0xAA) but flash controller still shows RDP Level 1.
+                          </p>
+                          <p class="text-sm text-yellow-700 mb-2">
+                            <strong>Please:</strong>
+                          </p>
+                          <ol class="list-decimal ml-4 text-sm text-yellow-700">
+                            <li>Power off STM32 (unplug USB or disconnect power)</li>
+                            <li>Wait 2-3 seconds</li>
+                            <li>Power on again</li>
+                            <li>Click "Detect ST-Link" again to verify</li>
+                          </ol>
+                        </div>
+                      </div>
+                    </div>
+                  ` : ''}
+                </div>
+              ` : ''}
             </div>
           ` : ''}
         </div>
 
-        ${this.stlinkDetected && !this.mcuMismatch ? `
+        ${this.stlinkDetected && !this.mcuMismatch && !this.flashProtected ? `
         <!-- Step 2: Version Setting (Only for Droplet) -->
         ${this.currentDeviceType === 'DROPLET' ? `
         <div class="mb-6 p-4 bg-purple-50 border-l-4 border-purple-500 rounded-r-lg">
@@ -420,7 +683,7 @@ class STM32FlasherModule {
         <!-- Step ${this.currentDeviceType === 'DROPLET' ? '3' : '2'}: Firmware Selection -->
         <div class="mb-6 p-4 bg-orange-50 border-l-4 border-orange-500 rounded-r-lg">
           <h3 class="text-lg font-semibold mb-3 text-gray-800">
-            <span class="inline-flex items-center justify-center w-8 h-8 bg-orange-500 text-white rounded-full mr-2">3</span>
+            <span class="inline-flex items-center justify-center w-8 h-8 bg-orange-500 text-white rounded-full mr-2">${this.currentDeviceType === 'DROPLET' ? '3' : '2'}</span>
             Select Firmware
           </h3>
           <div class="flex gap-2">
