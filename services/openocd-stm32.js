@@ -1946,49 +1946,8 @@ class OpenOCDSTM32Service {
                         attemptCount++;
                         console.log(`[Flash] Attempt ${attemptCount}/${totalAttempts}: ${speed} kHz, ${strategy.name}`);
 
-                    let args;
-                    
-                    if (strategy.initSequence === null) {
-                        // Use flash write_image erase to ensure a full erase before writing
-                        args = [
-                            '-s', this.scriptsPath,
-                            '-f', 'interface/stlink.cfg',
-                            '-f', `target/${deviceConfig.target}`,
-                            '-c', `adapter speed ${speed}`,
-                            '-c', strategy.resetConfig,
-                            '-c', 'init',
-                            '-c', 'reset init',
-                            '-c', `flash write_image erase {${normalizedPath}} 0x08000000`,
-                            '-c', `verify_image {${normalizedPath}} 0x08000000`,
-                            '-c', 'reset run',
-                            '-c', 'shutdown'
-                        ];
-                    } else {
-                        // Manual flash sequence with custom init
-                        args = [
-                            '-s', this.scriptsPath,
-                            '-f', 'interface/stlink.cfg',
-                            '-f', `target/${deviceConfig.target}`,
-                            '-c', `adapter speed ${speed}`,
-                            '-c', strategy.resetConfig,
-                            '-c', strategy.initSequence[0],
-                            '-c', strategy.initSequence[1],
-                            '-c', `flash write_image erase {${normalizedPath}} 0x08000000`,
-                            '-c', `verify_image {${normalizedPath}} 0x08000000`,
-                            '-c', 'reset run',
-                            '-c', 'shutdown'
-                        ];
-                    }
-
-                    try {
-                        const result = await this.executeOpenOCD(args, progressCallback);
-
-                        if (progressCallback) {
-                            progressCallback({ stage: 'complete', message: 'Flash completed successfully' });
-                        }
-
                         let args;
-
+                    
                         if (strategy.initSequence === null) {
                             // Simple program command (one-shot)
                             args = [
@@ -2096,9 +2055,9 @@ class OpenOCDSTM32Service {
                                 await new Promise(resolve => setTimeout(resolve, 500));
                                 continue;
                             }
-                        }
-                    }
-                }
+                        } // End catch (error) block for flash attempt
+                    } // End for strategy
+                } // End flashLoop: for speed
             } // End of while (shouldRetry) loop
 
             // All attempts failed

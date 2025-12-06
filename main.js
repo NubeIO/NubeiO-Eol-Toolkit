@@ -1347,7 +1347,7 @@ ipcMain.handle('stm32:getCurrentDeviceType', () => {
   };
 });
 
-<<<<<<< HEAD
+
 ipcMain.handle('stm32:checkFlashProtection', async () => {
   try {
     return await OpenOCDSTM32Service.checkFlashProtection();
@@ -1374,7 +1374,13 @@ ipcMain.handle('stm32:unlockFlash', async (event) => {
     return result;
   } catch (error) {
     console.error('Failed to unlock flash:', error);
-=======
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+});
+
 // Factory Testing IPC Handlers
 ipcMain.handle('factoryTesting:connect', async (event, port, baudRate, useUnlock = true, deviceType = null) => {
   try {
@@ -1618,7 +1624,6 @@ ipcMain.handle('factoryTesting:zc:full', async (event) => {
     return await factoryTesting.zcFullTest();
   } catch (error) {
     console.error('ZC-LCD Full test failed:', error);
->>>>>>> origin/factory-testing-micro-edge
     throw error;
   }
 });
