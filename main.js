@@ -48,10 +48,7 @@ function resolvePythonExecutable() {
 
   if (process.platform === 'win32') {
     candidates.push(
-      { cmd: 'python', args: [] },
-      { cmd: 'py', args: ['-3'] },
-      { cmd: 'py', args: [] },
-      { cmd: 'python3', args: [] }
+      { cmd: 'py', args: [] }
     );
   } else {
     candidates.push(
@@ -1294,7 +1291,7 @@ ipcMain.handle('printer:printLabel', async (event, payload) => {
       };
       
       // Try python commands in order using recursive approach
-      const pythonCommands = ['python', 'python3', 'py'];
+      const pythonCommands = process.platform === 'win32' ? ['py'] : ['python3', 'python'];
       let currentIndex = 0;
       
       const tryNextCommand = () => {
