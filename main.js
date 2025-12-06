@@ -1,6 +1,8 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 const util = require('util');
+const fs = require('fs');
+const childProcess = require('child_process');
 
 // Configure console.log to show more details
 util.inspect.defaultOptions.maxArrayLength = null; // Show all array items
@@ -17,6 +19,82 @@ const SerialConsole = require('./services/serial-console');
 const FleetMonitoringService = require('./services/fleet-monitoring');
 const OpenOCDSTM32Service = require('./services/openocd-stm32');
 const FactoryTestingService = require('./services/factory-testing');
+
+let cachedPythonCommand = null;
+
+function resolvePythonExecutable() {
+  if (cachedPythonCommand) {
+    return cachedPythonCommand;
+  }
+
+  const candidates = [];
+  const envCandidates = [
+    process.env.NUBE_PYTHON_PATH,
+    process.env.PRINT_PYTHON_PATH,
+    process.env.PYTHON_PATH,
+    process.env.PYTHON
+  ];
+
+  envCandidates.filter(Boolean).forEach((candidatePath) => {
+    const trimmed = candidatePath.trim();
+    if (!trimmed) return;
+
+    if (fs.existsSync(trimmed)) {
+      candidates.push({ cmd: trimmed, args: [] });
+    } else {
+      candidates.push({ cmd: trimmed, args: [] });
+    }
+  });
+
+  if (process.platform === 'win32') {
+    candidates.push(
+      { cmd: 'python', args: [] },
+      { cmd: 'py', args: ['-3'] },
+      { cmd: 'py', args: [] },
+      { cmd: 'python3', args: [] }
+    );
+  } else {
+    candidates.push(
+      { cmd: 'python3', args: [] },
+      { cmd: 'python', args: [] }
+    );
+  }
+
+  for (const candidate of candidates) {
+    const { cmd, args } = candidate;
+    if (!cmd) continue;
+
+    try {
+      const checkResult = childProcess.spawnSync(cmd, [...args, '--version'], {
+        encoding: 'utf8',
+        windowsHide: true
+      });
+
+      if (checkResult.status === 0) {
+        cachedPythonCommand = { cmd, args };
+        console.log('[Printer] Using Python executable:', cmd, args.join(' '));
+        return cachedPythonCommand;
+      }
+    } catch (err) {
+      // Ignore and try next candidate
+    }
+  }
+
+  return null;
+}
+
+function spawnPython(pythonArgs, options = {}) {
+  const pythonCommand = resolvePythonExecutable();
+  if (!pythonCommand) {
+    throw new Error('Python executable not found. Install Python or set NUBE_PYTHON_PATH.');
+  }
+
+  const finalArgs = [...pythonCommand.args, ...pythonArgs];
+  return childProcess.spawn(pythonCommand.cmd, finalArgs, {
+    windowsHide: true,
+    ...options
+  });
+}
 
 // Disable hardware acceleration to avoid libva errors
 app.disableHardwareAcceleration();
@@ -1079,9 +1157,7 @@ ipcMain.handle('dialog:openFile', async (event, options) => {
 // Printer IPC Handlers for Brother PT-P900W USB printing
 ipcMain.handle('printer:getPrinters', async () => {
   try {
-    const { exec } = require('child_process');
-    const util = require('util');
-    const execPromise = util.promisify(exec);
+    const execPromise = util.promisify(childProcess.exec);
     
     // Use PowerShell to get installed printers
     const { stdout } = await execPromise('powershell -Command "Get-Printer | Select-Object -ExpandProperty Name"');
@@ -1091,6 +1167,54 @@ ipcMain.handle('printer:getPrinters', async () => {
   } catch (e) {
     console.error('Failed to get printers:', e);
     return [];
+  }
+});
+
+ipcMain.handle('printer:checkConnection', async () => {
+  try {
+    const path = require('path');
+    const pythonScriptDir = path.join(__dirname, 'embedded', 'printer-scripts');
+    const pythonScript = path.join(pythonScriptDir, 'print_product_label.py');
+
+    if (!require('fs').existsSync(pythonScript)) {
+      return { connected: false, error: `Python script not found: ${pythonScript}` };
+    }
+
+    return await new Promise((resolve) => {
+      let pythonProcess;
+      try {
+        pythonProcess = spawnPython([pythonScript, '--check'], {
+          cwd: pythonScriptDir
+        });
+      } catch (spawnError) {
+        resolve({ connected: false, error: spawnError.message });
+        return;
+      }
+
+      let output = '';
+      let errorOutput = '';
+
+      pythonProcess.stdout.on('data', (data) => {
+        output += data.toString();
+        console.log('[Printer check] stdout:', data.toString().trim());
+      });
+
+      pythonProcess.stderr.on('data', (data) => {
+        errorOutput += data.toString();
+        console.error('[Printer check] stderr:', data.toString().trim());
+      });
+
+      pythonProcess.on('close', (code) => {
+        const connected = code === 0;
+        if (!connected) {
+          console.warn('[Printer check] exit code', code, errorOutput || output);
+        }
+        resolve({ connected, output, error: connected ? null : (errorOutput || output).trim() });
+      });
+    });
+  } catch (e) {
+    console.error('Failed to check printer connection:', e);
+    return { connected: false, error: e.message };
   }
 });
 
@@ -1131,38 +1255,73 @@ ipcMain.handle('printer:printLabel', async (event, payload) => {
       
       console.log('Calling Python with args:', args);
       
-      const pythonProcess = spawn('python', args, { 
-        cwd: pythonScriptDir,
-        shell: true 
-      });
+      // Try multiple Python executables (python, python3, py)
+      const tryPythonCommand = (pythonCmd) => {
+        return new Promise((cmdResolve) => {
+          const pythonProcess = spawn(pythonCmd, args, { 
+            cwd: pythonScriptDir,
+            shell: true 
+          });
+          
+          let output = '';
+          let errorOutput = '';
+          
+          pythonProcess.stdout.on('data', (data) => {
+            output += data.toString();
+            console.log(`[${pythonCmd}] stdout:`, data.toString());
+          });
+          
+          pythonProcess.stderr.on('data', (data) => {
+            errorOutput += data.toString();
+            console.error(`[${pythonCmd}] stderr:`, data.toString());
+          });
+          
+          pythonProcess.on('error', (err) => {
+            console.error(`[${pythonCmd}] Process error:`, err.message);
+            cmdResolve({ success: false, error: err.message, cmd: pythonCmd });
+          });
+          
+          pythonProcess.on('close', (code) => {
+            if (code === 0) {
+              console.log(`[${pythonCmd}] Print successful`);
+              cmdResolve({ success: true, output, cmd: pythonCmd });
+            } else {
+              console.error(`[${pythonCmd}] Exit code ${code}`);
+              cmdResolve({ success: false, error: `Exit code ${code}: ${errorOutput}`, cmd: pythonCmd });
+            }
+          });
+        });
+      };
       
-      let output = '';
-      let errorOutput = '';
+      // Try python commands in order using recursive approach
+      const pythonCommands = ['python', 'python3', 'py'];
+      let currentIndex = 0;
       
-      pythonProcess.stdout.on('data', (data) => {
-        output += data.toString();
-        console.log('Python stdout:', data.toString());
-      });
-      
-      pythonProcess.stderr.on('data', (data) => {
-        errorOutput += data.toString();
-        console.error('Python stderr:', data.toString());
-      });
-      
-      pythonProcess.on('close', (code) => {
-        if (code === 0) {
-          console.log('Print successful');
-          resolve({ success: true, output });
-        } else {
-          console.error('Print failed with code:', code);
-          resolve({ success: false, error: `Print failed (exit code ${code}): ${errorOutput}` });
+      const tryNextCommand = () => {
+        if (currentIndex >= pythonCommands.length) {
+          // All attempts failed
+          resolve({ 
+            success: false, 
+            error: `Print failed: Python not found. Tried: ${pythonCommands.join(', ')}. Please install Python from python.org or Microsoft Store.`
+          });
+          return;
         }
-      });
+        
+        const cmd = pythonCommands[currentIndex];
+        console.log(`Trying Python command: ${cmd}`);
+        
+        tryPythonCommand(cmd).then((result) => {
+          if (result.success) {
+            resolve(result);
+          } else {
+            console.log(`${cmd} failed: ${result.error}, trying next...`);
+            currentIndex++;
+            tryNextCommand();
+          }
+        });
+      };
       
-      pythonProcess.on('error', (error) => {
-        console.error('Failed to start Python:', error);
-        resolve({ success: false, error: `Failed to start Python: ${error.message}` });
-      });
+      tryNextCommand();
     });
   } catch (error) {
     console.error('Print error:', error);
@@ -1192,9 +1351,9 @@ ipcMain.handle('stm32:getCurrentDeviceType', () => {
 });
 
 // Factory Testing IPC Handlers
-ipcMain.handle('factoryTesting:connect', async (event, port, baudRate, useUnlock = true) => {
+ipcMain.handle('factoryTesting:connect', async (event, port, baudRate, useUnlock = true, deviceType = null) => {
   try {
-    return await factoryTesting.connect(port, baudRate, useUnlock);
+    return await factoryTesting.connect(port, baudRate, useUnlock, deviceType);
   } catch (error) {
     console.error('Failed to connect factory testing:', error);
     throw error;
@@ -1210,9 +1369,9 @@ ipcMain.handle('factoryTesting:disconnect', async () => {
   }
 });
 
-ipcMain.handle('factoryTesting:readDeviceInfo', async () => {
+ipcMain.handle('factoryTesting:readDeviceInfo', async (event, deviceType = null) => {
   try {
-    return await factoryTesting.readDeviceInfo();
+    return await factoryTesting.readDeviceInfo(deviceType);
   } catch (error) {
     console.error('Failed to read device info:', error);
     throw error;

@@ -6,6 +6,7 @@ Called from Electron: python print_product_label.py <barcode> <mn> <firmware> <b
 """
 import sys
 import os
+import time
 from datetime import datetime
 
 # Ensure local py-brotherlabel is importable
@@ -51,6 +52,71 @@ def _patched_find(*args, **kwargs):
     return _original_find(*args, **kwargs)
 
 usb_module.usb.core.find = _patched_find
+
+def connect_printer():
+    """Return configured Brother PT-P900W printer instance."""
+    print("Connecting to printer via USB...")
+    backend = brotherlabel.USBBackend("usb://0x04f9:0x2085")
+    printer = brotherlabel.PTPrinter(backend)
+
+    # Configure printer defaults
+    printer.quality = brotherlabel.Quality.high_resolution
+    printer.tape = brotherlabel.Tape.TZe12mm
+    printer.margin = 3
+    printer.auto_cut = True
+    printer.half_cut = False
+
+    if hasattr(printer, 'end_feed'):
+        printer.end_feed = 64
+
+    return printer
+
+def _is_access_denied(exc):
+    message = str(exc).lower()
+    if 'access denied' in message or 'errno 13' in message:
+        return True
+    errno = getattr(exc, 'errno', None)
+    return errno == 13
+
+
+def _dispose_printer(printer):
+    if not printer:
+        return
+    try:
+        backend = getattr(printer, 'backend', None)
+        if backend and hasattr(backend, 'dispose'):
+            backend.dispose()
+    except Exception as dispose_error:
+        print(f"CHECK_DISPOSE_WARN: {dispose_error}")
+
+
+def check_printer_connection(max_attempts: int = 3, retry_delay: float = 0.6):
+    """Attempt to open the printer and fetch status; return True on success."""
+    last_error = None
+
+    for attempt in range(1, max_attempts + 1):
+        printer = None
+        try:
+            printer = connect_printer()
+            try:
+                printer.get_status()
+                print("CHECK_STATUS_OK")
+            except Exception as status_error:
+                print(f"CHECK_STATUS_WARN: {status_error}")
+            return True
+        except Exception as exc:
+            last_error = exc
+            print(f"CHECK_FAILED_ATTEMPT_{attempt}: {exc}")
+            if attempt < max_attempts and _is_access_denied(exc):
+                time.sleep(retry_delay)
+                continue
+            break
+        finally:
+            _dispose_printer(printer)
+
+    if last_error is not None:
+        print(f"CHECK_FAILED: {last_error}")
+    return False
 
 def create_product_label(barcode_data, mn_text, sw_text, ba_text, product_code, date_text):
     """
@@ -160,20 +226,8 @@ def print_label(barcode_data, mn_text, fw_text, ba_text, uid_text, date_text):
     print(f"Saved preview: {preview_path}")
     
     # Connect to printer
-    print("Connecting to printer via USB...")
     try:
-        backend = brotherlabel.USBBackend("usb://0x04f9:0x2085")
-        printer = brotherlabel.PTPrinter(backend)
-        
-        # Configure printer
-        printer.quality = brotherlabel.Quality.high_resolution
-        printer.tape = brotherlabel.Tape.TZe12mm
-        printer.margin = 3
-        printer.auto_cut = True
-        printer.half_cut = False
-        
-        if hasattr(printer, 'end_feed'):
-            printer.end_feed = 64
+        printer = connect_printer()
         
         # Get status
         print("Fetching printer status...")
@@ -198,9 +252,16 @@ def print_label(barcode_data, mn_text, fw_text, ba_text, uid_text, date_text):
 
 def main():
     """Main entry point - parse command line arguments and print."""
+    if len(sys.argv) >= 2 and sys.argv[1] == '--check':
+        print("Checking printer connection...")
+        if check_printer_connection():
+            sys.exit(0)
+        sys.exit(1)
+
     # Parse arguments: <script> <barcode> <mn> <firmware> <batchId> <uid> <date>
     if len(sys.argv) < 2:
         print("Usage: python print_product_label.py <barcode> <mn> <firmware> <batchId> <uid> <date>")
+        print("Or:   python print_product_label.py --check")
         sys.exit(1)
     
     barcode_data = sys.argv[1] if len(sys.argv) > 1 else ""

@@ -15,6 +15,7 @@ class FactoryTestingService {
     this.port = null;
     this.parser = null;
     this.isConnected = false;
+    this.isConnecting = false; // Flag to prevent concurrent connections
     this.portPath = '';
     this.baudRate = 115200;
     this.commandTimeout = 5000; // 5 seconds timeout for AT commands
@@ -154,25 +155,40 @@ class FactoryTestingService {
   /**
    * Connect to serial port
    */
-  async connect(portPath, baudRate = 115200, useUnlock = true) {
+  async connect(portPath, baudRate = 115200, useUnlock = true, deviceType = null) {
     console.log('[Factory Testing Service] === START CONNECT ===');
     console.log('[Factory Testing Service] Port path:', portPath);
     console.log('[Factory Testing Service] Baud rate:', baudRate);
+    console.log('[Factory Testing Service] Device type:', deviceType);
     console.log('[Factory Testing Service] Current isConnected:', this.isConnected);
+    console.log('[Factory Testing Service] Current isConnecting:', this.isConnecting);
     
     if (this.isConnected) {
       const error = 'Already connected to a serial port';
       console.error('[Factory Testing Service]', error);
       return { success: false, error: error };
     }
+    
+    if (this.isConnecting) {
+      const error = 'Connection already in progress';
+      console.error('[Factory Testing Service]', error);
+      return { success: false, error: error };
+    }
+    
+    this.isConnecting = true;
+    console.log('[Factory Testing Service] Set isConnecting = true');
 
     try {
       this.portPath = portPath;
       this.baudRate = baudRate;
+      this.deviceType = deviceType; // Store device type for later use
 
-      // If device is non-AT, attempt to read MAC via esptool BEFORE opening the serial port
+      // Skip esptool for ACB-M and other STM32-based devices (not ESP32)
+      const isEsp32Device = deviceType && (deviceType.includes('ZC-') || deviceType === 'Droplet');
+      
+      // If device is non-AT and is ESP32, attempt to read MAC via esptool BEFORE opening the serial port
       let preDeviceInfo = null;
-      if (!useUnlock) {
+      if (!useUnlock && isEsp32Device) {
         try {
           console.log('[Factory Testing Service] Attempting to read MAC via esptool before opening port...');
           console.log('[Factory Testing Service] Platform:', process.platform);
@@ -184,6 +200,8 @@ class FactoryTestingService {
           console.warn('[Factory Testing Service] esptool read before open failed:', e.message);
           // continue, we'll try fallback later
         }
+      } else {
+        console.log('[Factory Testing Service] Skipping esptool (device type:', deviceType, ', useUnlock:', useUnlock, ')');
       }
 
       console.log(`[Factory Testing Service] Creating SerialPort instance...`);
@@ -193,6 +211,8 @@ class FactoryTestingService {
         baudRate: baudRate,
         autoOpen: false
       });
+      
+      console.log('[Factory Testing Service] SerialPort instance created:', typeof this.port, this.port ? 'EXISTS' : 'NULL');
 
       console.log('[Factory Testing Service] SerialPort created, creating parser...');
       
@@ -210,6 +230,8 @@ class FactoryTestingService {
             reject(new Error(`Failed to open port: ${err.message}`));
           } else {
             console.log('[Factory Testing Service] Port opened successfully!');
+            console.log('[Factory Testing Service] Port after open:', typeof this.port, this.port ? 'EXISTS' : 'NULL');
+            console.log('[Factory Testing Service] Port isOpen:', this.port && this.port.isOpen);
             this.isConnected = true;
             resolve();
           }
@@ -280,13 +302,13 @@ class FactoryTestingService {
           // Micro Edge / AT-based devices: do NOT attempt esptool (it will conflict with the open port).
           // Simply read device info via AT commands.
           try {
-            const infoRes = await this.readDeviceInfo();
+            const infoRes = await this.readDeviceInfo(this.deviceType);
             if (infoRes.success) deviceInfo = infoRes.data;
           } catch (err) {
             console.warn('[Factory Testing Service] readDeviceInfo failed for AT device:', err.message);
           }
-        } else {
-          // Non-AT devices: Prefer reading MAC using bundled esptool if available (will try with port open)
+        } else if (isEsp32Device) {
+          // Non-AT ESP32 devices: Try reading MAC using bundled esptool if available (will try with port open)
           try {
             const espMac = await this.readEsp32MAC(this.portPath);
             if (espMac) {
@@ -296,24 +318,33 @@ class FactoryTestingService {
             console.warn('[Factory Testing Service] esptool read after open failed:', e.message);
             // fallback to AT-based readDeviceInfo
             try {
-              const infoRes = await this.readDeviceInfo();
+              const infoRes = await this.readDeviceInfo(this.deviceType);
               if (infoRes.success) deviceInfo = infoRes.data;
             } catch (err) {
               console.warn('[Factory Testing Service] readDeviceInfo fallback failed:', err.message);
             }
           }
+        } else {
+          // Non-ESP32 devices (like ACB-M STM32): Skip esptool entirely
+          console.log('[Factory Testing Service] Non-ESP32 device detected, skipping MAC read');
         }
       } catch (e) {
         console.warn('[Factory Testing Service] Failed to read device info after connect:', e.message);
       }
 
       console.log('[Factory Testing Service] === END CONNECT (SUCCESS) ===');
+      console.log('[Factory Testing Service] Final isConnected:', this.isConnected);
+      console.log('[Factory Testing Service] Final port:', this.port ? 'SET' : 'NULL');
+      console.log('[Factory Testing Service] Final parser:', this.parser ? 'SET' : 'NULL');
+      this.isConnecting = false;
+      console.log('[Factory Testing Service] Set isConnecting = false (success)');
       return { success: true, port: portPath, baudRate: baudRate, deviceInfo };
     } catch (error) {
       console.error('[Factory Testing Service] Failed to connect:', error);
       console.error('[Factory Testing Service] Error message:', error.message);
       console.error('[Factory Testing Service] Error stack:', error.stack);
       this.cleanup();
+      this.isConnecting = false; // Clear connecting flag
       console.log('[Factory Testing Service] === END CONNECT (FAILED) ===');
       return { success: false, error: error.message };
     }
@@ -349,34 +380,114 @@ class FactoryTestingService {
 
   /**
    * Send AT command and wait for response
+   * @param {string} command - AT command to send
+   * @param {string} expectedPrefix - Expected response prefix
+   * @param {number} customTimeout - Optional custom timeout in ms (default: this.commandTimeout)
+   * @param {boolean} requireOK - Whether to require OK after data (default: true for ACB-M, false for Micro Edge)
    */
-  async sendATCommand(command, expectedPrefix) {
+  async sendATCommand(command, expectedPrefix, customTimeout = null, requireOK = true) {
+    console.log('[Factory Testing Service] sendATCommand called');
+    console.log('[Factory Testing Service] Current isConnected:', this.isConnected);
+    console.log('[Factory Testing Service] Current port:', this.port ? 'SET' : 'NULL');
+    
     if (!this.isConnected || !this.port) {
       throw new Error('Not connected to a serial port');
     }
+
+    // Small delay to ensure previous command response is fully consumed
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    const timeoutDuration = customTimeout || this.commandTimeout;
+    console.log(`[Factory Testing] Command timeout: ${timeoutDuration}ms, requireOK: ${requireOK}`);
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.parser.removeListener('data', onData);
         console.error(`[Factory Testing] TIMEOUT: No response for ${command} with prefix ${expectedPrefix}`);
-        reject(new Error(`Timeout waiting for response to: ${command}`));
-      }, this.commandTimeout);
+        console.error(`[Factory Testing] State: responseData=${!!responseData}, gotOK=${gotOK}`);
+        
+        // If we have responseData but no OK, accept it (some devices don't send OK)
+        if (responseData) {
+          console.log(`[Factory Testing] Accepting response without OK: ${responseData}`);
+          resolve(responseData);
+        } else {
+          reject(new Error(`Timeout waiting for response to: ${command}`));
+        }
+      }, timeoutDuration);
 
       let responseData = '';
+      let gotOK = false;
+      let commandSent = false;
+      let dataReceivedTimer = null;
 
       const onData = (data) => {
         const line = data.toString().trim();
         console.log(`[Factory Testing] RX: ${line}`);
         
-        if (line.startsWith(expectedPrefix)) {
-          responseData = line;
-          clearTimeout(timeout);
-          this.parser.removeListener('data', onData);
-          resolve(responseData);
-        } else if (line === 'ERROR') {
+        if (!line) return; // Skip empty lines
+        
+        // Check for error response (only after we've sent the command)
+        if (commandSent && (line === 'ERROR' || line.startsWith('+CME ERROR:'))) {
           clearTimeout(timeout);
           this.parser.removeListener('data', onData);
           reject(new Error(`Command failed: ${command}`));
+          return;
+        }
+        
+        // Collect data line with expected prefix
+        if (line.startsWith(expectedPrefix)) {
+          responseData = line;
+          console.log(`[Factory Testing] Got data line: ${line}`);
+          
+          // Clear any existing data timer
+          if (dataReceivedTimer) {
+            clearTimeout(dataReceivedTimer);
+          }
+          
+          // If requireOK is false (Micro Edge), resolve immediately with data
+          if (!requireOK) {
+            console.log(`[Factory Testing] Got data without requiring OK, resolving immediately`);
+            clearTimeout(timeout);
+            this.parser.removeListener('data', onData);
+            resolve(responseData);
+            return;
+          }
+          
+          // If we already got OK, resolve now
+          if (gotOK) {
+            clearTimeout(timeout);
+            this.parser.removeListener('data', onData);
+            resolve(responseData);
+          } else {
+            // For devices that require OK: Set a short timer - if no OK comes within 500ms, accept the data anyway
+            dataReceivedTimer = setTimeout(() => {
+              if (responseData && !gotOK) {
+                console.log(`[Factory Testing] No OK received within 500ms, accepting data anyway: ${responseData}`);
+                clearTimeout(timeout);
+                this.parser.removeListener('data', onData);
+                resolve(responseData);
+              }
+            }, 500);
+          }
+        }
+        
+        // Check for OK
+        if (line === 'OK') {
+          console.log(`[Factory Testing] Got OK, responseData=${!!responseData}`);
+          gotOK = true;
+          
+          // Clear data received timer if exists
+          if (dataReceivedTimer) {
+            clearTimeout(dataReceivedTimer);
+          }
+          
+          // If we already have data, resolve now
+          if (responseData) {
+            clearTimeout(timeout);
+            this.parser.removeListener('data', onData);
+            resolve(responseData);
+          }
+          // Otherwise keep waiting for data line (within timeout)
         }
       };
 
@@ -391,6 +502,8 @@ class FactoryTestingService {
           clearTimeout(timeout);
           this.parser.removeListener('data', onData);
           reject(new Error(`Failed to send command: ${err.message}`));
+        } else {
+          commandSent = true;
         }
       });
     });
@@ -710,51 +823,49 @@ class FactoryTestingService {
   /**
    * Read device information
    */
-  async readDeviceInfo() {
+  async readDeviceInfo(deviceType = null) {
     try {
       console.log('[Factory Testing] Reading device information...');
+      
+      // Determine if this is Micro Edge (doesn't require OK)
+      const isMicroEdge = deviceType === 'Micro Edge';
+      const requireOK = !isMicroEdge; // Micro Edge: false, others: true
 
       const deviceInfo = {};
 
-      // 1. Firmware Version
-      try {
-        const fwResponse = await this.sendATCommand('AT+FWVERSION?', '+FWVERSION:');
-        deviceInfo.firmwareVersion = fwResponse.replace('+FWVERSION:', '').trim();
-      } catch (error) {
-        console.error('[Factory Testing] Failed to read firmware version:', error);
-        deviceInfo.firmwareVersion = 'ERROR';
-      }
+      // ACB-M doesn't have firmware version command, don't include it
+      // deviceInfo.firmwareVersion = 'N/A'; // Removed
 
-      // 2. HW Version
+      // 1. HW Version
       try {
-        const hwResponse = await this.sendATCommand('AT+HWVERSION?', '+HWVERSION:');
+        const hwResponse = await this.sendATCommand('AT+HWVERSION?', '+HWVERSION:', null, requireOK);
         deviceInfo.hwVersion = hwResponse.replace('+HWVERSION:', '').trim();
       } catch (error) {
         console.error('[Factory Testing] Failed to read HW version:', error);
         deviceInfo.hwVersion = 'ERROR';
       }
 
-      // 3. Unique ID
+      // 2. Unique ID
       try {
-        const uidResponse = await this.sendATCommand('AT+UNIQUEID?', '+UNIQUEID:');
+        const uidResponse = await this.sendATCommand('AT+UNIQUEID?', '+UNIQUEID:', null, requireOK);
         deviceInfo.uniqueId = uidResponse.replace('+UNIQUEID:', '').trim();
       } catch (error) {
         console.error('[Factory Testing] Failed to read Unique ID:', error);
         deviceInfo.uniqueId = 'ERROR';
       }
 
-      // 4. Device Make
+      // 3. Device Make
       try {
-        const makeResponse = await this.sendATCommand('AT+DEVICEMAKE?', '+DEVICEMAKE:');
+        const makeResponse = await this.sendATCommand('AT+DEVICEMAKE?', '+DEVICEMAKE:', null, requireOK);
         deviceInfo.deviceMake = makeResponse.replace('+DEVICEMAKE:', '').trim();
       } catch (error) {
         console.error('[Factory Testing] Failed to read Device Make:', error);
         deviceInfo.deviceMake = 'ERROR';
       }
 
-      // 5. Device Model
+      // 4. Device Model
       try {
-        const modelResponse = await this.sendATCommand('AT+DEVICEMODEL?', '+DEVICEMODEL:');
+        const modelResponse = await this.sendATCommand('AT+DEVICEMODEL?', '+DEVICEMODEL:', null, requireOK);
         deviceInfo.deviceModel = modelResponse.replace('+DEVICEMODEL:', '').trim();
       } catch (error) {
         console.error('[Factory Testing] Failed to read Device Model:', error);
@@ -826,113 +937,203 @@ class FactoryTestingService {
 
       // ACB-M device specific tests
       if (device === 'ACB-M') {
-        const resultsACB = {};
+        const resultsACB = {
+          info: {},
+          tests: {},
+          _eval: {}
+        };
 
-        // 1. VCC / main voltage
-        this.updateProgress('Checking VCC voltage...');
+        const ensureString = (value) => {
+          if (value === null || typeof value === 'undefined') return '';
+          return String(value);
+        };
+
+        const parseRtcTimestamp = (raw) => {
+          if (!raw) return null;
+          const match = raw.trim().match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
+          if (!match) return null;
+          const [_, y, m, d, hh, mm, ss] = match;
+          const ts = Date.UTC(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm), Number(ss));
+          return {
+            iso: new Date(ts).toISOString(),
+            utc: ts,
+            display: `${y}-${m}-${d} ${hh}:${mm}:${ss}`
+          };
+        };
+
+        const withinRtcWindow = (ts) => {
+          if (!ts && ts !== 0) return false;
+          const start = Date.UTC(2001, 0, 1, 0, 0, 30);
+          const end = Date.UTC(2001, 0, 2, 0, 0, 0);
+          return ts >= start && ts <= end;
+        };
+
+        const setEval = (key, state) => {
+          resultsACB._eval[key] = state === true;
+        };
+
+        // Device info already read after connection, just use it
+        // No need to read again
+        this.updateProgress('ACB-M: Starting tests...');
+
+        // UART loopback test (with 30 second timeout)
+        this.updateProgress('ACB-M: Running UART test...');
         try {
-          const vccResp = await this.sendATCommand('AT+VCCV?', '+VCCV:');
-          resultsACB.vccVoltage = vccResp.replace('+VCCV:', '').trim() + ' V';
-        } catch (e) {
-          resultsACB.vccVoltage = 'ERROR';
+          const resp = await this.sendATCommand('AT+TEST=uart', '+VALUE_UART:', 30000);
+          const value = resp.replace('+VALUE_UART:', '').trim();
+          const pass = value.toUpperCase() === 'EE';
+          resultsACB.tests.uart = {
+            pass,
+            value,
+            raw: resp,
+            message: pass ? 'Loopback value EE received' : `Expected EE, received ${ensureString(value) || 'N/A'}`
+          };
+          setEval('pass_uart', pass);
+        } catch (err) {
+          resultsACB.tests.uart = {
+            pass: false,
+            value: null,
+            raw: null,
+            message: err.message || 'UART test failed'
+          };
+          setEval('pass_uart', false);
         }
 
-        // 2. Relay statuses
-        this.updateProgress('Checking relay statuses...');
+        // RTC test (with 30 second timeout)
+        this.updateProgress('ACB-M: Running RTC test...');
         try {
-          const r1 = await this.sendATCommand('AT+RELAY1?', '+RELAY1:');
-          resultsACB.relay1Status = r1.replace('+RELAY1:', '').trim();
-        } catch (e) {
-          resultsACB.relay1Status = 'ERROR';
-        }
-        try {
-          const r2 = await this.sendATCommand('AT+RELAY2?', '+RELAY2:');
-          resultsACB.relay2Status = r2.replace('+RELAY2:', '').trim();
-        } catch (e) {
-          resultsACB.relay2Status = 'ERROR';
-        }
-
-        // 3. Digital inputs
-        this.updateProgress('Reading digital inputs...');
-        try {
-          const di = await this.sendATCommand('AT+DIGITALS?', '+DIGITALS:');
-          resultsACB.digitalInputs = di.replace('+DIGITALS:', '').trim();
-        } catch (e) {
-          resultsACB.digitalInputs = 'ERROR';
-        }
-
-        // 4. Analog inputs (reuse general commands)
-        this.updateProgress('Testing AIN 1 voltage...');
-        try {
-          const ain1Response = await this.sendATCommand('AT+VALUE_UI1_RAW?', '+VALUE_UI1_RAW:');
-          resultsACB.ain1Voltage = ain1Response.replace('+VALUE_UI1_RAW:', '').trim() + ' V';
-        } catch (error) {
-          resultsACB.ain1Voltage = 'ERROR';
+          const resp = await this.sendATCommand('AT+TEST=rtc', '+RTC:', 30000);
+          const timeStr = resp.replace('+RTC:', '').trim();
+          const parsed = parseRtcTimestamp(timeStr);
+          const pass = parsed ? withinRtcWindow(parsed.utc) : false;
+          resultsACB.tests.rtc = {
+            pass,
+            time: parsed ? parsed.display : timeStr,
+            raw: resp,
+            message: pass ? 'RTC within expected window' : 'RTC value outside expected window'
+          };
+          setEval('pass_rtc', pass);
+        } catch (err) {
+          resultsACB.tests.rtc = {
+            pass: false,
+            time: null,
+            raw: null,
+            message: err.message || 'RTC test failed'
+          };
+          setEval('pass_rtc', false);
         }
 
-        this.updateProgress('Testing AIN 2 voltage...');
+        // WiFi test (with 30 second timeout)
+        this.updateProgress('ACB-M: Running WiFi test...');
         try {
-          const ain2Response = await this.sendATCommand('AT+VALUE_UI2_RAW?', '+VALUE_UI2_RAW:');
-          resultsACB.ain2Voltage = ain2Response.replace('+VALUE_UI2_RAW:', '').trim() + ' V';
-        } catch (error) {
-          resultsACB.ain2Voltage = 'ERROR';
+          const resp = await this.sendATCommand('AT+TEST=wifi', '+WIFI:', 30000);
+          const payload = resp.replace('+WIFI:', '').trim();
+          const parts = payload.split(',');
+          const networkCount = Number(parts[0] || '0');
+          const connected = Number(parts[1] || '0');
+          const pass = Number.isFinite(networkCount) && networkCount > 1 && connected === 1;
+          resultsACB.tests.wifi = {
+            pass,
+            networks: networkCount,
+            connected,
+            raw: resp,
+            message: pass ? `Networks: ${networkCount}, connected` : `Networks=${networkCount}, connected=${connected}`
+          };
+          setEval('pass_wifi', pass);
+        } catch (err) {
+          resultsACB.tests.wifi = {
+            pass: false,
+            networks: null,
+            connected: null,
+            raw: null,
+            message: err.message || 'WiFi test failed'
+          };
+          setEval('pass_wifi', false);
         }
 
-        // 5. LoRa checks (address/detect/push)
-        this.updateProgress('Reading LoRa address...');
+        // Ethernet test (with 30 second timeout)
+        this.updateProgress('ACB-M: Running Ethernet test...');
         try {
-          const loraAddrResponse = await this.sendATCommand('AT+LRRADDRUNQ?', '+LRRADDRUNQ:');
-          resultsACB.loraAddress = loraAddrResponse.replace('+LRRADDRUNQ:', '').trim();
-        } catch (error) {
-          resultsACB.loraAddress = 'ERROR';
+          const resp = await this.sendATCommand('AT+TEST=eth', '+ETH:', 30000);
+          const payload = resp.replace('+ETH:', '').trim();
+          
+          let mac = '';
+          let ip = '';
+          let linkStatus = '';
+          
+          // Handle two formats:
+          // Format 1: MAC=84:1F:E8:10:9E:3B,IP=192.168.0.100
+          // Format 2: 841FE8109E38,0.0.0.0,4/4
+          if (payload.includes('MAC=') || payload.includes('IP=')) {
+            // Format 1: MAC=xxx,IP=yyy
+            const macMatch = payload.match(/MAC\s*=\s*([^,]+)/i);
+            const ipMatch = payload.match(/IP\s*=\s*([^,\s]+)/i);
+            mac = macMatch ? macMatch[1].trim() : '';
+            ip = ipMatch ? ipMatch[1].trim() : '';
+          } else {
+            // Format 2: MAC,IP,link_status
+            const parts = payload.split(',');
+            mac = parts[0] ? parts[0].trim() : '';
+            ip = parts[1] ? parts[1].trim() : '';
+            linkStatus = parts[2] ? parts[2].trim() : '';
+          }
+          
+          const macInvalid = !mac || mac.length < 12;
+          const ipInvalid = !ip || ip === '0.0.0.0';
+          const pass = !macInvalid && !ipInvalid;
+          resultsACB.tests.eth = {
+            pass,
+            mac,
+            ip,
+            linkStatus,
+            raw: resp,
+            message: pass ? `${mac} · ${ip}${linkStatus ? ' · ' + linkStatus : ''}` : 'Invalid MAC or IP'
+          };
+          setEval('pass_eth', pass);
+        } catch (err) {
+          resultsACB.tests.eth = {
+            pass: false,
+            mac: null,
+            ip: null,
+            linkStatus: null,
+            raw: null,
+            message: err.message || 'Ethernet test failed'
+          };
+          setEval('pass_eth', false);
         }
 
-        this.updateProgress('Detecting LoRa module...');
+        // RS485-2 test (with 30 second timeout)
+        this.updateProgress('ACB-M: Running RS485-2 test...');
         try {
-          const loraDetectResponse = await this.sendATCommand('AT+LORADETECT?', '+LORADETECT:');
-          const detectValue = loraDetectResponse.replace('+LORADETECT:', '').trim();
-          resultsACB.loraDetect = detectValue === '1' ? 'Detected' : 'Not Detected';
-        } catch (error) {
-          resultsACB.loraDetect = 'ERROR';
+          const resp = await this.sendATCommand('AT+TEST=rs4852', '+RS485:', 30000);
+          const payload = resp.replace('+RS485:', '').trim();
+          // Parse format: "30,0" where first number is count, second is status
+          const parts = payload.split(',');
+          const count = Number(parts[0] || '0');
+          const status = Number(parts[1] || '0');
+          const pass = status === 0; // 0 means success for RS485 test
+          resultsACB.tests.rs4852 = {
+            pass,
+            count,
+            status,
+            raw: resp,
+            message: pass ? `RS485-2 test passed (count=${count})` : `RS485-2 test failed (status=${status})`
+          };
+          setEval('pass_rs4852', pass);
+        } catch (err) {
+          resultsACB.tests.rs4852 = {
+            pass: false,
+            status: null,
+            raw: null,
+            message: err.message || 'RS485-2 test failed'
+          };
+          setEval('pass_rs4852', false);
         }
 
-        this.updateProgress('Testing LoRa transmission...');
-        try {
-          await new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => {
-              this.parser.removeAllListeners('data');
-              reject(new Error('Timeout waiting for LoRa push response'));
-            }, this.commandTimeout);
-
-            const onData = (data) => {
-              const line = data.toString().trim();
-              console.log(`[Factory Testing] RX: ${line}`);
-              if (line === 'OK') {
-                clearTimeout(timeout);
-                this.parser.removeListener('data', onData);
-                resolve('OK');
-              } else if (line === 'ERROR') {
-                clearTimeout(timeout);
-                this.parser.removeListener('data', onData);
-                reject(new Error('LoRa push failed'));
-              }
-            };
-
-            this.parser.on('data', onData);
-            const command = 'AT+LORARAWPUSH\r\n';
-            console.log(`[Factory Testing] TX: AT+LORARAWPUSH`);
-            this.port.write(command, (err) => {
-              if (err) {
-                clearTimeout(timeout);
-                this.parser.removeListener('data', onData);
-                reject(new Error(`Failed to send command: ${err.message}`));
-              }
-            });
-          });
-          resultsACB.loraRawPush = 'OK';
-        } catch (error) {
-          resultsACB.loraRawPush = 'ERROR';
-        }
+        const allPass = Object.keys(resultsACB._eval).length > 0 && Object.values(resultsACB._eval).every(Boolean);
+        resultsACB.summary = {
+          passAll: allPass
+        };
 
         this.updateProgress('ACB-M tests completed');
         return { success: true, data: resultsACB };
@@ -1190,15 +1391,25 @@ class FactoryTestingService {
 
       // ACB-M CSV entries
       if (device === 'ACB-M') {
-        csvContent += `Test Results,VCC Voltage,${testResults.vccVoltage || 'N/A'}\n`;
-        csvContent += `Test Results,Relay 1,${testResults.relay1Status || 'N/A'}\n`;
-        csvContent += `Test Results,Relay 2,${testResults.relay2Status || 'N/A'}\n`;
-        csvContent += `Test Results,Digital Inputs,${testResults.digitalInputs || 'N/A'}\n`;
-        csvContent += `Test Results,AIN 1 Voltage,${testResults.ain1Voltage || 'N/A'}\n`;
-        csvContent += `Test Results,AIN 2 Voltage,${testResults.ain2Voltage || 'N/A'}\n`;
-        csvContent += `Test Results,LoRa Address,${testResults.loraAddress || 'N/A'}\n`;
-        csvContent += `Test Results,LoRa Detect,${testResults.loraDetect || 'N/A'}\n`;
-        csvContent += `Test Results,LoRa Raw Push,${testResults.loraRawPush || 'N/A'}\n`;
+        const acbTests = testResults.tests || {};
+        const formatStatus = (res) => {
+          if (!res) return 'N/A';
+          const state = res.pass === true ? 'PASS' : res.pass === false ? 'FAIL' : 'N/A';
+          const detail = res.message || res.raw || '';
+          return detail ? `${state} (${detail})` : state;
+        };
+        csvContent += `Test Results,UART Loopback,${formatStatus(acbTests.uart)}\n`;
+        csvContent += `Test Results,RTC Time,${acbTests.rtc ? (acbTests.rtc.time || formatStatus(acbTests.rtc)) : 'N/A'}\n`;
+        csvContent += `Test Results,RTC Status,${formatStatus(acbTests.rtc)}\n`;
+        csvContent += `Test Results,WiFi Networks,${acbTests.wifi && typeof acbTests.wifi.networks !== 'undefined' ? acbTests.wifi.networks : 'N/A'}\n`;
+        csvContent += `Test Results,WiFi Connected,${acbTests.wifi && typeof acbTests.wifi.connected !== 'undefined' ? acbTests.wifi.connected : 'N/A'}\n`;
+        csvContent += `Test Results,WiFi Status,${formatStatus(acbTests.wifi)}\n`;
+        csvContent += `Test Results,ETH MAC,${acbTests.eth ? (acbTests.eth.mac || 'N/A') : 'N/A'}\n`;
+        csvContent += `Test Results,ETH IP,${acbTests.eth ? (acbTests.eth.ip || 'N/A') : 'N/A'}\n`;
+        csvContent += `Test Results,ETH Status,${formatStatus(acbTests.eth)}\n`;
+        csvContent += `Test Results,RS485 Cycles,${acbTests.rs4852 && typeof acbTests.rs4852.cycles !== 'undefined' ? acbTests.rs4852.cycles : 'N/A'}\n`;
+        csvContent += `Test Results,RS485 Failures,${acbTests.rs4852 && typeof acbTests.rs4852.failures !== 'undefined' ? acbTests.rs4852.failures : 'N/A'}\n`;
+        csvContent += `Test Results,RS485 Status,${formatStatus(acbTests.rs4852)}\n`;
       }
 
       // Write CSV file
@@ -1259,15 +1470,24 @@ class FactoryTestingService {
       }
       // ACB-M log entries
       if (device === 'ACB-M') {
-        logContent += `VCC Voltage:       ${testResults.vccVoltage || 'N/A'}\n`;
-        logContent += `Relay 1:           ${testResults.relay1Status || 'N/A'}\n`;
-        logContent += `Relay 2:           ${testResults.relay2Status || 'N/A'}\n`;
-        logContent += `Digital Inputs:    ${testResults.digitalInputs || 'N/A'}\n`;
-        logContent += `AIN 1 Voltage:     ${testResults.ain1Voltage || 'N/A'}\n`;
-        logContent += `AIN 2 Voltage:     ${testResults.ain2Voltage || 'N/A'}\n`;
-        logContent += `LoRa Address:      ${testResults.loraAddress || 'N/A'}\n`;
-        logContent += `LoRa Detect:       ${testResults.loraDetect || 'N/A'}\n`;
-        logContent += `LoRa Raw Push:     ${testResults.loraRawPush || 'N/A'}\n`;
+        const acbTests = testResults.tests || {};
+        const statusToString = (res) => {
+          if (!res) return 'N/A';
+          const state = res.pass === true ? 'PASS' : res.pass === false ? 'FAIL' : 'N/A';
+          return res.message ? `${state} - ${res.message}` : state;
+        };
+        logContent += `UART Loopback:     ${statusToString(acbTests.uart)}\n`;
+        logContent += `RTC Time:          ${acbTests.rtc ? (acbTests.rtc.time || 'N/A') : 'N/A'}\n`;
+        logContent += `RTC Status:        ${statusToString(acbTests.rtc)}\n`;
+        logContent += `WiFi Networks:     ${acbTests.wifi && typeof acbTests.wifi.networks !== 'undefined' ? acbTests.wifi.networks : 'N/A'}\n`;
+        logContent += `WiFi Connected:    ${acbTests.wifi && typeof acbTests.wifi.connected !== 'undefined' ? acbTests.wifi.connected : 'N/A'}\n`;
+        logContent += `WiFi Status:       ${statusToString(acbTests.wifi)}\n`;
+        logContent += `ETH MAC:           ${acbTests.eth ? (acbTests.eth.mac || 'N/A') : 'N/A'}\n`;
+        logContent += `ETH IP:            ${acbTests.eth ? (acbTests.eth.ip || 'N/A') : 'N/A'}\n`;
+        logContent += `ETH Status:        ${statusToString(acbTests.eth)}\n`;
+        logContent += `RS485 Cycles:      ${acbTests.rs4852 && typeof acbTests.rs4852.cycles !== 'undefined' ? acbTests.rs4852.cycles : 'N/A'}\n`;
+        logContent += `RS485 Failures:    ${acbTests.rs4852 && typeof acbTests.rs4852.failures !== 'undefined' ? acbTests.rs4852.failures : 'N/A'}\n`;
+        logContent += `RS485 Status:      ${statusToString(acbTests.rs4852)}\n`;
       }
       
       logContent += '\n';
@@ -1313,7 +1533,7 @@ class FactoryTestingService {
         let header = 'Test Date,Tester Name,Hardware Version,Batch ID,Work Order Serial,' +
                      'Version,Device Type,Firmware Version,HW Version,Unique ID,Device Make,Device Model,';
         if (device === 'ACB-M') {
-          header += 'VCC Voltage,Relay 1,Relay 2,Digital Inputs,AIN 1 Voltage,AIN 2 Voltage,LoRa Address,LoRa Detect,LoRa Raw Push,Test Result\n';
+          header += 'UART Loopback,RTC Time,RTC Status,WiFi Networks,WiFi Connected,WiFi Status,ETH MAC,ETH IP,ETH Status,RS485 Cycles,RS485 Failures,RS485 Status,Test Result\n';
         } else if (device === 'Droplet') {
           header += 'Temperature,Humidity,Pressure,CO2,AIN 1 Voltage,AIN 2 Voltage,AIN 3 Voltage,LoRa Address,LoRa Detect,LoRa Raw Push,Test Result\n';
         } else {
@@ -1332,6 +1552,11 @@ class FactoryTestingService {
           testResults.loraRawPush
         ];
         if (criticalTests.some(test => test === 'ERROR' || test === 'Not Detected')) {
+          testResult = 'FAIL';
+        }
+      } else if (device === 'ACB-M') {
+        const evalFlags = testResults && testResults._eval ? Object.values(testResults._eval) : [];
+        if (!evalFlags.length || evalFlags.some(flag => flag !== true)) {
           testResult = 'FAIL';
         }
       }
@@ -1400,6 +1625,11 @@ class FactoryTestingService {
                   `${escapeCSV(testResult)}\n`;
       }
       else if (device === 'ACB-M') {
+        const acbTests = testResults.tests || {};
+        const statusValue = (res) => {
+          if (!res) return 'N/A';
+          return res.pass === true ? 'PASS' : res.pass === false ? 'FAIL' : 'N/A';
+        };
         csvLine += `${escapeCSV(timestamp)},` +
                   `${escapeCSV(preTesting?.testerName || 'N/A')},` +
                   `${escapeCSV(preTesting?.hardwareVersion || 'N/A')},` +
@@ -1412,15 +1642,18 @@ class FactoryTestingService {
                   `${escapeCSV(deviceInfo.uniqueId)},` +
                   `${escapeCSV(deviceInfo.deviceMake)},` +
                   `${escapeCSV(deviceInfo.deviceModel)},` +
-                  `${escapeCSV(testResults.vccVoltage || 'N/A')},` +
-                  `${escapeCSV(testResults.relay1Status || 'N/A')},` +
-                  `${escapeCSV(testResults.relay2Status || 'N/A')},` +
-                  `${escapeCSV(testResults.digitalInputs || 'N/A')},` +
-                  `${escapeCSV(testResults.ain1Voltage || 'N/A')},` +
-                  `${escapeCSV(testResults.ain2Voltage || 'N/A')},` +
-                  `${escapeCSV(testResults.loraAddress)},` +
-                  `${escapeCSV(testResults.loraDetect)},` +
-                  `${escapeCSV(testResults.loraRawPush)},` +
+                  `${escapeCSV(statusValue(acbTests.uart))},` +
+                  `${escapeCSV(acbTests.rtc ? (acbTests.rtc.time || 'N/A') : 'N/A')},` +
+                  `${escapeCSV(statusValue(acbTests.rtc))},` +
+                  `${escapeCSV(typeof acbTests.wifi?.networks !== 'undefined' ? acbTests.wifi.networks : 'N/A')},` +
+                  `${escapeCSV(typeof acbTests.wifi?.connected !== 'undefined' ? acbTests.wifi.connected : 'N/A')},` +
+                  `${escapeCSV(statusValue(acbTests.wifi))},` +
+                  `${escapeCSV(acbTests.eth ? (acbTests.eth.mac || 'N/A') : 'N/A')},` +
+                  `${escapeCSV(acbTests.eth ? (acbTests.eth.ip || 'N/A') : 'N/A')},` +
+                  `${escapeCSV(statusValue(acbTests.eth))},` +
+                  `${escapeCSV(typeof acbTests.rs4852?.cycles !== 'undefined' ? acbTests.rs4852.cycles : 'N/A')},` +
+                  `${escapeCSV(typeof acbTests.rs4852?.failures !== 'undefined' ? acbTests.rs4852.failures : 'N/A')},` +
+                  `${escapeCSV(statusValue(acbTests.rs4852))},` +
                   `${escapeCSV(testResult)}\n`;
       }
       
@@ -1558,50 +1791,7 @@ class FactoryTestingService {
   }
 
   async acbFullTest() {
-    try {
-      this.updateProgress('ACB-M: Running FULL test...');
-      const results = {};
-      // Run sequence of subtests
-      try {
-        const v = await this.sendSerialCommand('test_vcc');
-        results.vccVoltage = v;
-      } catch (e) { results.vccVoltage = 'ERROR'; }
-
-      try {
-        const r1 = await this.sendSerialCommand('test_relay1');
-        results.relay1Status = r1;
-      } catch (e) { results.relay1Status = 'ERROR'; }
-      try {
-        const r2 = await this.sendSerialCommand('test_relay2');
-        results.relay2Status = r2;
-      } catch (e) { results.relay2Status = 'ERROR'; }
-
-      try {
-        const di = await this.sendSerialCommand('test_digitals');
-        results.digitalInputs = di;
-      } catch (e) { results.digitalInputs = 'ERROR'; }
-
-      try {
-        const a1 = await this.sendSerialCommand('test_ain1');
-        results.ain1Voltage = a1;
-      } catch (e) { results.ain1Voltage = 'ERROR'; }
-
-      try {
-        const a2 = await this.sendSerialCommand('test_ain2');
-        results.ain2Voltage = a2;
-      } catch (e) { results.ain2Voltage = 'ERROR'; }
-
-      try {
-        const l = await this.sendSerialCommand('test_lora');
-        results.loraRawPush = l;
-      } catch (e) { results.loraRawPush = 'ERROR'; }
-
-      this.updateProgress('ACB-M FULL test completed');
-      return { success: true, data: results };
-    } catch (error) {
-      console.error('[Factory Testing] ACB-M full test error:', error);
-      return { success: false, error: error.message };
-    }
+    return this.runFactoryTests('ACB-M');
   }
 
   // --- ZC-LCD specific test methods ---

@@ -118,6 +118,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 // Expose Printer API for Brother PT-P900W USB printing
 contextBridge.exposeInMainWorld('printerAPI', {
   getPrinters: () => ipcRenderer.invoke('printer:getPrinters'),
+  checkConnection: () => ipcRenderer.invoke('printer:checkConnection'),
   printLabel: (payload) => ipcRenderer.invoke('printer:printLabel', payload)
 });
 
@@ -156,9 +157,9 @@ contextBridge.exposeInMainWorld('fleetMonitoringAPI', {
 
 // Expose Factory Testing service
 contextBridge.exposeInMainWorld('factoryTestingAPI', {
-  connect: (port, baudRate, useUnlock = true) => ipcRenderer.invoke('factoryTesting:connect', port, baudRate, useUnlock),
+  connect: (port, baudRate, useUnlock = true, deviceType = null) => ipcRenderer.invoke('factoryTesting:connect', port, baudRate, useUnlock, deviceType),
   disconnect: () => ipcRenderer.invoke('factoryTesting:disconnect'),
-  readDeviceInfo: () => ipcRenderer.invoke('factoryTesting:readDeviceInfo'),
+  readDeviceInfo: (deviceType = null) => ipcRenderer.invoke('factoryTesting:readDeviceInfo', deviceType),
   runFactoryTests: (device) => ipcRenderer.invoke('factoryTesting:runFactoryTests', device),
   saveResults: (version, device, deviceInfo, testResults, preTesting) => 
     ipcRenderer.invoke('factoryTesting:saveResults', version, device, deviceInfo, testResults, preTesting),

@@ -47,6 +47,23 @@ class FactoryTestingModule {
       
       // Update UI dropdown if it exists
       this.updatePortDropdown();
+
+      if (
+        this.selectedPort &&
+        typeof window !== 'undefined' &&
+        window.factoryTestingPage &&
+        typeof window.factoryTestingPage.handleAutoPortDetected === 'function' &&
+        typeof window.factoryTestingPage.shouldAutoConnectForContext === 'function' &&
+        window.factoryTestingPage.shouldAutoConnectForContext()
+      ) {
+        setTimeout(() => {
+          try {
+            window.factoryTestingPage.handleAutoPortDetected(this.selectedPort);
+          } catch (err) {
+            console.warn('[Factory Testing] Auto-connect handler failed:', err && err.message);
+          }
+        }, 0);
+      }
       
       return { success: true, count: this.serialPorts.length };
     } catch (error) {
@@ -96,45 +113,58 @@ class FactoryTestingModule {
     console.log('[Factory Testing] Dropdown updated, selected port:', this.selectedPort);
   }
 
-  async connect(portArg, baudArg, useUnlock = true) {
+  async connect(portArg, baudArg, useUnlock = true, deviceType = null) {
     console.log('[Factory Testing Module] === START CONNECT ===');
+    console.log('[Factory Testing Module] Arguments:', { portArg, baudArg, useUnlock, deviceType });
     console.log('[Factory Testing Module] Current selectedPort:', this.selectedPort);
     console.log('[Factory Testing Module] Current baudRate:', this.baudRate);
     
+    // Use provided arguments first, fallback to stored values or dropdown
     const portSelect = document.getElementById('factory-port-select');
     const baudrateSelect = document.getElementById('factory-baudrate-select');
     
-    console.log('[Factory Testing Module] Port dropdown:', portSelect);
-    console.log('[Factory Testing Module] Baud dropdown:', baudrateSelect);
+    // Determine port: use argument if provided, otherwise use stored or dropdown
+    let portToUse = portArg || this.selectedPort;
+    if (!portToUse && portSelect && portSelect.value) {
+      portToUse = portSelect.value;
+    }
     
-    // Only update from dropdown if not already set
-    if (portSelect && portSelect.value && !this.selectedPort) {
-      this.selectedPort = portSelect.value;
-      console.log('[Factory Testing Module] Port from dropdown:', this.selectedPort);
+    // Determine baudrate: use argument if provided, otherwise use dropdown or stored
+    let baudToUse = baudArg ? parseInt(baudArg) : null;
+    if (!baudToUse && baudrateSelect) {
+      baudToUse = parseInt(baudrateSelect.value);
     }
-    if (baudrateSelect) {
-      this.baudRate = parseInt(baudrateSelect.value);
-      console.log('[Factory Testing Module] Baud rate from dropdown:', this.baudRate);
+    if (!baudToUse) {
+      baudToUse = this.baudRate;
     }
+    
+    console.log('[Factory Testing Module] Final port:', portToUse);
+    console.log('[Factory Testing Module] Final baud:', baudToUse);
+    console.log('[Factory Testing Module] Final useUnlock:', useUnlock);
+    console.log('[Factory Testing Module] Final deviceType:', deviceType);
 
-    if (!this.selectedPort) {
+    if (!portToUse) {
       console.error('[Factory Testing Module] No port selected!');
-      console.error('[Factory Testing Module] selectedPort is:', this.selectedPort);
-      console.error('[Factory Testing Module] dropdown value is:', portSelect?.value);
       return { success: false, error: 'Please select a serial port' };
     }
 
     try {
       console.log('[Factory Testing Module] Calling factoryTestingAPI.connect...');
-      console.log('[Factory Testing Module] Parameters:', this.selectedPort, this.baudRate, useUnlock);
 
-      const result = await window.factoryTestingAPI.connect(this.selectedPort, this.baudRate, useUnlock);
+      const result = await window.factoryTestingAPI.connect(portToUse, baudToUse, useUnlock, deviceType);
       
       console.log('[Factory Testing Module] API returned:', result);
       // If backend returned deviceInfo (e.g., Unique ID / MAC), attach to module for the page
       if (result && result.deviceInfo) {
         this.deviceInfo = result.deviceInfo;
       }
+      
+      // Update stored values on successful connection
+      if (result && result.success) {
+        this.selectedPort = portToUse;
+        this.baudRate = baudToUse;
+      }
+      
       console.log('[Factory Testing Module] === END CONNECT ===');
       return result;
     } catch (error) {
@@ -155,9 +185,9 @@ class FactoryTestingModule {
     }
   }
 
-  async readDeviceInfo() {
+  async readDeviceInfo(deviceType = null) {
     try {
-      const result = await window.factoryTestingAPI.readDeviceInfo();
+      const result = await window.factoryTestingAPI.readDeviceInfo(deviceType);
       return result;
     } catch (error) {
       console.error('Read device info error:', error);

@@ -33,22 +33,7 @@ class FactoryTestingPage {
     };
     
     // Factory test results
-    this.factoryTestResults = {
-      batteryVoltage: '',
-      pulsesCounter: '',
-      dipSwitches: '',
-      ain1Voltage: '',
-      ain2Voltage: '',
-      ain3Voltage: '',
-      // ACB-M specific
-      relay1Status: '',
-      relay2Status: '',
-      vccVoltage: '',
-      digitalInputs: '',
-      loraAddress: '',
-      loraDetect: '',
-      loraRawPush: ''
-    };
+    this.factoryTestResults = this._createEmptyFactoryResults();
     
     this.isConnected = false;
     this.isTesting = false;
@@ -60,10 +45,43 @@ class FactoryTestingPage {
     this._autoPollTimer = null;
     this.showConnectConfirm = false; // show modal to confirm before running tests in Auto
     this._lastAutoConnectedPort = '';
+    this._autoConnectInProgress = false;
+    this._autoConnectLastPort = '';
+    this._autoConnectLastAttempt = 0;
+    this._autoConnectManualSuppressUntil = 0;
+    // Step flow: 'pre' (pre-test form) -> 'main' (tests) for both ACB-M and Micro Edge
+    this.acbStep = 'main';
+    this.microEdgeStep = 'main';
     
     // Printer state
     this.printerConnected = false;
     this.allowPrint = false;
+    this._printerCheckPromise = null;
+    this._lastPrinterCheck = 0;
+    this._postRenderTicket = false;
+    this._printerPollTimer = null;
+  }
+
+  _createEmptyFactoryResults() {
+    return {
+      batteryVoltage: '',
+      pulsesCounter: '',
+      dipSwitches: '',
+      ain1Voltage: '',
+      ain2Voltage: '',
+      ain3Voltage: '',
+      relay1Status: '',
+      relay2Status: '',
+      vccVoltage: '',
+      digitalInputs: '',
+      loraAddress: '',
+      loraDetect: '',
+      loraRawPush: '',
+      tests: {},
+      _eval: {},
+      summary: null,
+      info: {}
+    };
   }
 
   confirmConnectOk() {
@@ -100,12 +118,16 @@ class FactoryTestingPage {
   selectVersion(version) {
     this.selectedVersion = version;
     this.selectedDevice = null;
+    // Stop any auto detection when backing out of a device
+    if (this._autoPollTimer) { clearTimeout(this._autoPollTimer); this._autoPollTimer = null; }
     this.resetData();
     this.app.render();
   }
 
   selectDevice(device) {
     this.selectedDevice = device;
+    // Stop any ongoing auto detection when switching devices
+    if (this._autoPollTimer) { clearTimeout(this._autoPollTimer); this._autoPollTimer = null; }
     this.resetData();
     // Load saved defaults for this device type (if any)
     try {
@@ -120,10 +142,15 @@ class FactoryTestingPage {
     } catch (e) {
       console.warn('[Factory Testing] Failed to load defaults for device:', device, e && e.message);
     }
-    // If Micro Edge and mode is auto, start auto workflow
-    if (this.selectedDevice === 'Micro Edge' && this.mode === 'auto') {
-      // small delay to let UI render port dropdown
-      setTimeout(() => this._startAutoWorkflow(), 200);
+    // Default tabs: both ACB-M and Micro Edge start at Auto tab and pre-step
+    if (this.selectedDevice === 'ACB-M') {
+      this.mode = 'auto';
+      this.acbStep = 'pre';
+      console.log('[Factory Testing Page] ACB-M selected, waiting for Proceed to Testing...');
+    } else if (this.selectedDevice === 'Micro Edge') {
+      this.mode = 'auto';
+      this.microEdgeStep = 'pre';
+      console.log('[Factory Testing Page] Micro Edge selected, waiting for Proceed to Testing...');
     }
     this.app.render();
     
@@ -151,6 +178,44 @@ class FactoryTestingPage {
     }
   }
 
+  goToAcbMain() {
+    // Validate required pre-testing info and printer state (optional)
+    if (!this.validatePreTestingInfo()) {
+      return;
+    }
+    // Stop printer polling when entering main testing page
+    if (this._printerPollTimer) {
+      clearTimeout(this._printerPollTimer);
+      this._printerPollTimer = null;
+    }
+    this.acbStep = 'main';
+    this.app.render();
+    // If auto mode, kick off detection and connection
+    if (this.selectedDevice === 'ACB-M' && this.mode === 'auto') {
+      console.log('[Factory Testing Page] ACB-M Auto mode: starting auto workflow...');
+      setTimeout(() => this._startAutoWorkflow(), 150);
+    }
+  }
+
+  goToMicroEdgeMain() {
+    // Validate required pre-testing info
+    if (!this.validatePreTestingInfo()) {
+      return;
+    }
+    // Stop printer polling when entering main testing page
+    if (this._printerPollTimer) {
+      clearTimeout(this._printerPollTimer);
+      this._printerPollTimer = null;
+    }
+    this.microEdgeStep = 'main';
+    this.app.render();
+    // If auto mode, kick off detection and connection
+    if (this.selectedDevice === 'Micro Edge' && this.mode === 'auto') {
+      console.log('[Factory Testing Page] Micro Edge Auto mode: starting auto workflow...');
+      setTimeout(() => this._startAutoWorkflow(), 150);
+    }
+  }
+
   resetData() {
     this.isConnected = false;
     this.preTesting = {
@@ -166,22 +231,7 @@ class FactoryTestingPage {
       deviceMake: '',
       deviceModel: ''
     };
-    this.factoryTestResults = {
-      batteryVoltage: '',
-      pulsesCounter: '',
-      dipSwitches: '',
-      ain1Voltage: '',
-      ain2Voltage: '',
-      ain3Voltage: '',
-      // ACB-M specific
-      relay1Status: '',
-      relay2Status: '',
-      vccVoltage: '',
-      digitalInputs: '',
-      loraAddress: '',
-      loraDetect: '',
-      loraRawPush: ''
-    };
+    this.factoryTestResults = this._createEmptyFactoryResults();
     this.testProgress = '';
   }
 
@@ -253,6 +303,59 @@ class FactoryTestingPage {
     }
     
     console.log('=== DEBUG PORTS END ===');
+  }
+
+  shouldAutoConnectForContext() {
+    if (!this.selectedDevice) {
+      return false;
+    }
+    // ACB-M: only auto-connect when in main step (after clicking Proceed to Testing) and auto mode
+    if (this.selectedDevice === 'ACB-M') {
+      return this.acbStep === 'main' && this.mode === 'auto';
+    }
+    // Micro Edge: only auto-connect when in main step (after clicking Proceed to Testing) and auto mode
+    if (this.selectedDevice === 'Micro Edge') {
+      return this.microEdgeStep === 'main' && this.mode === 'auto';
+    }
+    return false;
+  }
+
+  async handleAutoPortDetected(portPath) {
+    if (!portPath) return;
+    if (!this.shouldAutoConnectForContext()) return;
+    if (this.isConnected || this._autoConnectInProgress) return;
+
+    const now = Date.now();
+    if (this._autoConnectManualSuppressUntil && now < this._autoConnectManualSuppressUntil) {
+      return;
+    }
+    if (this._autoConnectLastPort === portPath && (now - this._autoConnectLastAttempt) < 4000) {
+      return;
+    }
+
+    this._autoConnectInProgress = true;
+    this._autoConnectLastPort = portPath;
+    this._autoConnectLastAttempt = now;
+
+    if (window.factoryTestingModule) {
+      window.factoryTestingModule.selectedPort = portPath;
+    }
+
+    const dropdown = document.getElementById('factory-port-select');
+    if (dropdown) {
+      dropdown.value = portPath;
+    }
+
+    this.testProgress = `Auto-connecting to ${portPath}...`;
+    this.app.render();
+
+    try {
+      await this.connectDevice({ silent: true, triggeredByAutoPort: true });
+    } catch (error) {
+      console.warn('[Factory Testing] Auto connect failed:', error && error.message);
+    } finally {
+      this._autoConnectInProgress = false;
+    }
   }
 
   
@@ -353,8 +456,15 @@ class FactoryTestingPage {
     if (newMode === this.mode) return;
     this.mode = newMode;
     if (this.mode === 'auto') {
-      // start auto if Micro Edge selected
-      if (this.selectedDevice === 'Micro Edge') this._startAutoWorkflow();
+      // Only start auto workflow if we're in the main testing step
+      // For ACB-M: must be in 'main' step (after Proceed to Testing)
+      // For Micro Edge: must be in 'main' step (after Proceed to Testing)
+      if (this.selectedDevice === 'ACB-M' && this.acbStep === 'main') {
+        this._startAutoWorkflow();
+      } else if (this.selectedDevice === 'Micro Edge' && this.microEdgeStep === 'main') {
+        this._startAutoWorkflow();
+      }
+      // If still in 'pre' step, don't start workflow yet
     } else {
       // stop auto polling
       if (this._autoPollTimer) { clearTimeout(this._autoPollTimer); this._autoPollTimer = null; }
@@ -389,7 +499,7 @@ class FactoryTestingPage {
           }
 
           // Attempt connect; connectDevice will trigger tests in Auto mode
-          await this.connectDevice();
+          await this.connectDevice({ triggeredByAuto: true, silent: true });
           // If connected, connectDevice already triggers runFactoryTests() in Auto mode
           if (this.isConnected) return;
         } else {
@@ -521,8 +631,14 @@ class FactoryTestingPage {
     const missing = [];
     if (!this.preTesting.testerName) missing.push('Tester Name');
     if (!this.preTesting.hardwareVersion) missing.push('Hardware Version');
-    if (!this.preTesting.batchId) missing.push('Batch ID');
-    if (!this.preTesting.workOrderSerial) missing.push('Work Order Serial');
+    
+    // For ACB-M, only Tester Name and Hardware Version are required
+    // For other devices (Micro Edge), all fields are required
+    if (this.selectedDevice !== 'ACB-M') {
+      if (!this.preTesting.firmwareVersion) missing.push('Firmware Version');
+      if (!this.preTesting.batchId) missing.push('Batch ID');
+      if (!this.preTesting.workOrderSerial) missing.push('Work Order Serial');
+    }
     
     if (missing.length > 0) {
         const msg = `Please fill in the following required fields:\n- ${missing.join('\n- ')}`;
@@ -537,11 +653,15 @@ class FactoryTestingPage {
     return true;
   }
 
-  async connectDevice() {
+  async connectDevice(options = {}) {
     if (!window.factoryTestingModule) {
       alert('Factory Testing Module not initialized');
       return;
     }
+
+    const silent = options.silent === true;
+    const triggeredByAuto = options.triggeredByAuto === true;
+    const triggeredByAutoPort = options.triggeredByAutoPort === true;
 
     try {
       console.log('[Factory Testing Page] === START CONNECT WORKFLOW ===');
@@ -553,22 +673,32 @@ class FactoryTestingPage {
       const modulePort = (window.factoryTestingModule && window.factoryTestingModule.selectedPort) ? window.factoryTestingModule.selectedPort : '';
       const domPort = portSelect ? portSelect.value : '';
       const selectedPort = modulePort || domPort || '';
-      const selectedBaud = baudrateSelect ? baudrateSelect.value : '115200';
+      
+      console.log('[Factory Testing Page] Current selectedDevice:', this.selectedDevice);
+      
+      // ACB-M always uses 9600 baud, others use dropdown value or 115200
+      let selectedBaud;
+      if (this.selectedDevice === 'ACB-M') {
+        selectedBaud = '9600';
+        console.log('[Factory Testing Page] ACB-M detected, forcing baud to 9600');
+      } else {
+        selectedBaud = baudrateSelect ? baudrateSelect.value : '115200';
+        console.log('[Factory Testing Page] Non-ACB-M device, using baud:', selectedBaud);
+      }
       
       console.log('[Factory Testing Page] Selected port:', selectedPort);
       console.log('[Factory Testing Page] Selected baud:', selectedBaud);
       
       if (!selectedPort) {
-        // In auto mode, don't show blocking alert — just log and wait for detection
-        if (this.mode === 'auto') {
-          console.warn('[Factory Testing Page] No port selected (auto mode) - waiting for detection');
+        if (this.mode === 'auto' || silent) {
+          console.warn('[Factory Testing Page] No port selected - waiting for detection');
           this.testProgress = 'Waiting for serial port...';
           this.app.render();
-          return;
+          return { success: false, error: 'No serial port selected' };
         }
         const msg = 'Please select a serial port';
         alert(msg);
-        return;
+        return { success: false, error: msg };
       }
       
       this.testProgress = `Connecting to ${selectedPort} @ ${selectedBaud} baud...`;
@@ -579,53 +709,133 @@ class FactoryTestingPage {
       const useUnlock = this.selectedDevice === 'Micro Edge';
       // Prefer the resolved selectedPort when calling module.connect
       const portToUse = selectedPort || this.selectedPort || (window.factoryTestingModule && window.factoryTestingModule.selectedPort);
-      const result = await window.factoryTestingModule.connect(portToUse, undefined, useUnlock);
+      const result = await window.factoryTestingModule.connect(portToUse, parseInt(selectedBaud), useUnlock, this.selectedDevice);
       console.log('[Factory Testing Page] Connect result:', result);
       
       if (result.success) {
         this.isConnected = true;
+        this._autoConnectManualSuppressUntil = 0;
         this.testProgress = `✅ Connected to ${selectedPort}`;
         console.log('[Factory Testing Page] Connection successful');
         // If backend returned device info (unique ID / MAC), set it in page state
         if (result.deviceInfo) {
           this.deviceInfo = result.deviceInfo;
         }
-        // In Auto mode avoid blocking alerts; show a non-blocking progress message instead
-        const connectedMsg = `Connected successfully to ${selectedPort}. Please press the button 5 times.`;
-        if (this.mode === 'auto') {
-          // show non-blocking message and a confirmation modal so tester can press the button 5 times
-          this.testProgress = connectedMsg;
-          this._lastAutoConnectedPort = selectedPort;
-          this.showConnectConfirm = true;
-          // render modal for user OK before running tests
+        
+        // ACB-M: Device info already read during connect, just show popup
+        if (this.selectedDevice === 'ACB-M') {
+          // Use device info returned from connect
+          if (result.deviceInfo) {
+            this.deviceInfo = result.deviceInfo;
+            console.log('[Factory Testing Page] Device info from connect:', this.deviceInfo);
+          }
+          this.testProgress = `✅ Connected - Device info retrieved`;
+          
+          // Show connection success popup
+          if (!silent) {
+            const infoMsg = [
+              `Connected successfully to ${selectedPort} @ ${selectedBaud} baud`,
+              ``,
+              `Device Information:`,
+              `  HW Version: ${this.deviceInfo.hwVersion || 'N/A'}`,
+              `  UID: ${this.deviceInfo.uniqueId || 'N/A'}`,
+              `  Make: ${this.deviceInfo.deviceMake || 'N/A'}`,
+              `  Model: ${this.deviceInfo.deviceModel || 'N/A'}`
+            ].join('\n');
+            alert(infoMsg);
+          }
+          
           this.app.render();
-        } else {
+          
+          // Auto mode: show popup then run full tests automatically
+          if (this.mode === 'auto') {
+            if (!silent) {
+              this._lastAutoConnectedPort = selectedPort;
+              this.showConnectConfirm = true;
+              this.app.render();
+            }
+            try {
+              this.testProgress = 'Starting auto tests...';
+              this.app.render();
+              
+              const fullRes = await window.factoryTestingModule.acbFullTest();
+              if (fullRes && fullRes.success) {
+                this.factoryTestResults = fullRes.data || this.factoryTestResults;
+                this.testProgress = '✅ ACB-M auto tests completed';
+                // Save results to enable Print Label if all tests pass
+                await this.saveResultsToFile();
+              } else {
+                this.testProgress = `❌ ACB-M auto tests failed: ${fullRes && fullRes.error ? fullRes.error : 'Unknown error'}`;
+              }
+            } catch (e) {
+              console.warn('[Factory Testing] ACB-M auto test error:', e && e.message);
+              this.testProgress = `❌ Auto test error: ${e && e.message}`;
+            }
+            this.app.render();
+          }
+        } else if (this.selectedDevice === 'Micro Edge') {
+          // Micro Edge: Device info already read during connect, just show popup
+          if (result.deviceInfo) {
+            this.deviceInfo = result.deviceInfo;
+            console.log('[Factory Testing Page] Device info from connect:', this.deviceInfo);
+          }
+          this.testProgress = `✅ Connected - Device info retrieved`;
+          this.app.render();
+          
+          // Show popup: "Connected successfully, please press button 5 times"
+          // Always show for Micro Edge, even in auto mode
+          const connectedMsg = `Connected successfully to ${selectedPort}.\n\nPlease press the button 5 times to proceed with testing.`;
           alert(connectedMsg);
+          
+          // After user closes popup, run tests in auto mode
+          if (this.mode === 'auto') {
+            try {
+              this.testProgress = 'Starting auto tests...';
+              this.app.render();
+              
+              const fullRes = await window.factoryTestingModule.runFactoryTests('Micro Edge');
+              if (fullRes && fullRes.success) {
+                this.factoryTestResults = fullRes.data || this.factoryTestResults;
+                this.testProgress = '✅ Micro Edge auto tests completed';
+                // Save results to enable Print Label if all tests pass
+                await this.saveResultsToFile();
+              } else {
+                this.testProgress = `❌ Micro Edge auto tests failed: ${fullRes && fullRes.error ? fullRes.error : 'Unknown error'}`;
+              }
+            } catch (e) {
+              console.warn('[Factory Testing] Micro Edge auto test error:', e && e.message);
+              this.testProgress = `❌ Auto test error: ${e && e.message}`;
+            }
+            this.app.render();
+          }
+          
+        } else {
+          // Default connect message for other devices
+          if (!silent) {
+            const connectedMsg = `Connected successfully to ${selectedPort}. Please press the button 5 times.`;
+            alert(connectedMsg);
+          }
         }
       } else {
         this.testProgress = `❌ Connection failed: ${result.error}`;
         console.error('[Factory Testing Page] Connection failed:', result.error);
-        if (this.mode === 'auto') {
-          // Non-blocking update in auto mode
-          this.testProgress = `Connection failed: ${result.error}`;
-        } else {
+        if (this.mode !== 'auto' && !silent) {
           alert(`Connection failed: ${result.error}`);
         }
       }
       
       this.app.render();
       console.log('[Factory Testing Page] === END CONNECT WORKFLOW ===');
+      return result;
     } catch (error) {
       console.error('[Factory Testing Page] Connection error:', error);
       console.error('[Factory Testing Page] Error stack:', error.stack);
       this.testProgress = `❌ Error: ${error.message}`;
-      if (this.mode === 'auto') {
-        // avoid blocking in auto mode
-        this.testProgress = `Error: ${error.message}`;
-      } else {
+      if (this.mode !== 'auto' && !silent) {
         alert(`Connection error: ${error.message}`);
       }
       this.app.render();
+      return { success: false, error: error.message, triggeredByAuto, triggeredByAutoPort };
     }
   }
 
@@ -638,6 +848,7 @@ class FactoryTestingPage {
       await window.factoryTestingModule.disconnect();
       this.isConnected = false;
       this.testProgress = 'Disconnected';
+      this._autoConnectManualSuppressUntil = Date.now() + 10000; // avoid instant reconnect after manual disconnect
       // Clear module selected port so auto-detect can pick a new device
       try {
         if (window.factoryTestingModule) {
@@ -667,7 +878,7 @@ class FactoryTestingPage {
       this.testProgress = 'Reading device information...';
       this.app.render();
       
-      const result = await window.factoryTestingModule.readDeviceInfo();
+      const result = await window.factoryTestingModule.readDeviceInfo(this.selectedDevice);
       
       if (result.success) {
         this.deviceInfo = result.data;
@@ -824,8 +1035,22 @@ class FactoryTestingPage {
       });
       
       if (result.success) {
-        this.factoryTestResults = result.data;
-        this.testProgress = 'Factory tests completed successfully';
+        const mergedResults = Object.assign(this._createEmptyFactoryResults(), result.data || {});
+        this.factoryTestResults = mergedResults;
+        if (!this.factoryTestResults.tests) this.factoryTestResults.tests = {};
+        if (!this.factoryTestResults._eval) this.factoryTestResults._eval = {};
+        if (!this.factoryTestResults.summary) this.factoryTestResults.summary = null;
+
+        if (this.selectedDevice === 'ACB-M' && this.factoryTestResults.info) {
+          this.deviceInfo = Object.assign({}, this.deviceInfo, this.factoryTestResults.info);
+        }
+
+        if (this.selectedDevice === 'ACB-M') {
+          const success = !!(this.factoryTestResults.summary && this.factoryTestResults.summary.passAll);
+          this.testProgress = success ? 'ACB-M factory tests passed' : 'ACB-M factory tests reported failures';
+        } else {
+          this.testProgress = 'Factory tests completed successfully';
+        }
         
         // Auto-save results to file
         await this.saveResultsToFile();
@@ -920,11 +1145,18 @@ class FactoryTestingPage {
         this.testProgress += `\n📄 LOG: ${result.logPath}`;
         this.testProgress += `\n📊 Master CSV: ${result.masterCsvPath}`;
         
-        // If Micro Edge and all evaluations pass, enable Print button
+        // If tests pass, enable Print button
         try {
           if (this.selectedDevice === 'Micro Edge') {
             const evals = (this.factoryTestResults && this.factoryTestResults._eval) ? this.factoryTestResults._eval : null;
             const allPass = evals ? ['pass_battery','pass_ain1','pass_ain2','pass_ain3','pass_pulses','pass_lora'].every(k => evals[k] === true) : false;
+            if (allPass) {
+              this.allowPrint = true;
+              this.testProgress += '\n✅ All tests passed - Print Label enabled';
+            }
+          } else if (this.selectedDevice === 'ACB-M') {
+            const evals = (this.factoryTestResults && this.factoryTestResults._eval) ? this.factoryTestResults._eval : null;
+            const allPass = evals ? ['pass_uart','pass_rtc','pass_wifi','pass_eth','pass_rs4852'].every(k => evals[k] === true) : false;
             if (allPass) {
               this.allowPrint = true;
               this.testProgress += '\n✅ All tests passed - Print Label enabled';
@@ -937,20 +1169,72 @@ class FactoryTestingPage {
     }
   }
 
-  async checkPrinterConnection() {
-    try {
-      // Check if Brother PT-P900W is connected via USB
-      // This is a placeholder - actual detection happens during print
-      this.printerConnected = true;
-      console.log('Printer connection check completed');
-    } catch (e) {
-      console.warn('Failed to check printer:', e && e.message);
-      this.printerConnected = false;
+  async checkPrinterConnection(options = {}) {
+    const force = options.force === true;
+    const now = Date.now();
+    
+    // Don't auto-check printer - only check when force=true (user clicks button)
+    if (!force) {
+      return this.printerConnected;
+    }
+
+    if (this._printerCheckPromise) {
+      return this._printerCheckPromise;
+    }
+
+    const checkTask = async () => {
+      try {
+        if (!window.printerAPI || !window.printerAPI.checkConnection) {
+          console.warn('printerAPI.checkConnection not available');
+          this._updatePrinterState(false);
+          return this.printerConnected;
+        }
+
+        const result = await window.printerAPI.checkConnection();
+        const isConnected = !!(result && result.connected);
+        if (!isConnected) {
+          const reason = result && result.error ? ` - ${result.error}` : '';
+          console.warn(`Printer not detected${reason}`);
+        }
+        this._updatePrinterState(isConnected);
+        return this.printerConnected;
+      } catch (e) {
+        console.warn('Failed to check printer:', e && e.message);
+        this._updatePrinterState(false);
+        return this.printerConnected;
+      } finally {
+        this._lastPrinterCheck = Date.now();
+        this._printerCheckPromise = null;
+      }
+    };
+
+    this._printerCheckPromise = checkTask();
+    return this._printerCheckPromise;
+  }
+
+  _schedulePrinterPoll(delayMs) {
+    // Printer polling is disabled - only manual checks via "Check Printer" button
+    return;
+  }
+
+  _updatePrinterState(isConnected) {
+    const prev = this.printerConnected;
+    this.printerConnected = !!isConnected;
+    if (prev !== this.printerConnected) {
+      this.app.render();
     }
   }
 
   async printLabel() {
     try {
+      if (!this.printerConnected) {
+        await this.checkPrinterConnection({ force: true });
+        if (!this.printerConnected) {
+          alert('Brother PT-P900W printer not detected. Please connect via USB and try again.');
+          return;
+        }
+      }
+
       // Build payload from device/preTesting and test results
       const uid = (this.deviceInfo && (this.deviceInfo.uniqueId || this.deviceInfo.uid || this.deviceInfo.mac)) || '';
       
@@ -1008,26 +1292,26 @@ class FactoryTestingPage {
     // Version selection screen
     if (!this.selectedVersion) {
       return `
-        <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-8">
-          <h2 class="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-6">Factory Testing - Select Version</h2>
+        <div class="rounded-xl border border-gray-200 bg-white px-8 py-8 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <h2 class="mb-6 text-2xl font-bold text-gray-800 dark:text-gray-100">Factory Testing - Select Version</h2>
           
           <div class="grid grid-cols-2 gap-6">
             <button
               onclick="window.factoryTestingPage.selectVersion('v1')"
-              class="p-8 bg-gradient-to-br from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-xl shadow-lg transition-all transform hover:scale-105"
+              class="group rounded-xl border-2 border-gray-300 bg-gray-50 p-8 transition-all hover:border-gray-400 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-900/40 dark:hover:border-gray-500 dark:hover:bg-gray-800"
             >
-              <div class="text-4xl mb-4">📟</div>
-              <div class="text-2xl font-bold mb-2">Gen 1</div>
-              <div class="text-sm opacity-90">Micro Edge & Droplet</div>
+              <div class="mb-4 text-4xl text-gray-600 group-hover:text-gray-800 dark:text-gray-400 dark:group-hover:text-gray-200">📟</div>
+              <div class="mb-2 text-2xl font-bold text-gray-800 dark:text-gray-100">Gen 1</div>
+              <div class="text-sm text-gray-600 dark:text-gray-400">Micro Edge & Droplet</div>
             </button>
             
             <button
               onclick="window.factoryTestingPage.selectVersion('v2')"
-              class="p-8 bg-gradient-to-br from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white rounded-xl shadow-lg transition-all transform hover:scale-105"
+              class="group rounded-xl border-2 border-gray-300 bg-gray-50 p-8 transition-all hover:border-gray-400 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-900/40 dark:hover:border-gray-500 dark:hover:bg-gray-800"
             >
-              <div class="text-4xl mb-4">📱</div>
-              <div class="text-2xl font-bold mb-2">Gen 2</div>
-              <div class="text-sm opacity-90">ZC-LCD, ACB-M, Droplet, ZC-Controller</div>
+              <div class="mb-4 text-4xl text-gray-600 group-hover:text-gray-800 dark:text-gray-400 dark:group-hover:text-gray-200">📱</div>
+              <div class="mb-2 text-2xl font-bold text-gray-800 dark:text-gray-100">Gen 2</div>
+              <div class="text-sm text-gray-600 dark:text-gray-400">ZC-LCD, ACB-M, Droplet, ZC-Controller</div>
             </button>
           </div>
         </div>
@@ -1037,53 +1321,49 @@ class FactoryTestingPage {
     // Device selection screen
     if (!this.selectedDevice) {
       const devices = this.selectedVersion === 'v1' ? this.v1Devices : this.v2Devices;
-      
+
       return `
-        <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-8">
-          <div class="flex items-center justify-between mb-6">
+        <div class="rounded-xl border border-gray-200 bg-white px-8 py-8 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-6 flex items-center justify-between">
             <h2 class="text-2xl font-bold text-gray-800 dark:text-gray-100">
               Factory Testing - ${this.selectedVersion === 'v1' ? 'Gen 1' : 'Gen 2'}
             </h2>
             <button
               onclick="window.factoryTestingPage.selectVersion(null)"
-              class="px-4 py-2 bg-gray-500 hover:bg-gray-600 text-white rounded-lg text-sm transition-colors"
+              class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
             >
               ← Back to Version Selection
             </button>
           </div>
-          
-          <p class="text-gray-600 dark:text-gray-400 mb-6">Select a device to test:</p>
-          
+
+          <p class="mb-6 text-gray-600 dark:text-gray-400">Select a device to test:</p>
+
           <div class="grid grid-cols-2 gap-6">
             ${devices.map(device => {
-              // Device-specific styling
               const isMicroEdge = device === 'Micro Edge';
               const isDroplet = device === 'Droplet';
-              
-              let gradient, icon, description;
-              
+
+              let icon, description;
+
               if (isMicroEdge) {
-                gradient = 'from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700';
                 icon = '⚡';
                 description = 'Digital, Analog, Pulse & LoRa';
               } else if (isDroplet) {
-                gradient = 'from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700';
                 icon = '🌡️';
                 description = 'Environmental Sensors & LoRa';
               } else {
-                gradient = 'from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700';
                 icon = '🔧';
                 description = 'Factory Testing';
               }
-              
+
               return `
                 <button
                   onclick="window.factoryTestingPage.selectDevice('${device}')"
-                  class="p-8 bg-gradient-to-br ${gradient} text-white rounded-xl shadow-lg transition-all transform hover:scale-105 hover:shadow-2xl"
+                  class="group rounded-xl border-2 border-gray-300 bg-gray-50 p-8 transition-all hover:border-gray-400 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-900/40 dark:hover:border-gray-500 dark:hover:bg-gray-800"
                 >
-                  <div class="text-6xl mb-4">${icon}</div>
-                  <div class="text-2xl font-bold mb-2">${device}</div>
-                  <div class="text-sm opacity-90">${description}</div>
+                  <div class="mb-4 text-6xl text-gray-600 group-hover:text-gray-800 dark:text-gray-400 dark:group-hover:text-gray-200">${icon}</div>
+                  <div class="mb-2 text-2xl font-bold text-gray-800 dark:text-gray-100">${device}</div>
+                  <div class="text-sm text-gray-600 dark:text-gray-400">${description}</div>
                 </button>
               `;
             }).join('')}
@@ -1097,13 +1377,17 @@ class FactoryTestingPage {
                  (this.selectedVersion === 'v2' && (this.selectedDevice === 'ZC-LCD' || this.selectedDevice === 'ACB-M'));
     
     // Schedule port dropdown update after render
-    if (isTestingEnabled && window.factoryTestingModule) {
+    if (isTestingEnabled && window.factoryTestingModule && !this._postRenderTicket) {
+      this._postRenderTicket = true;
       setTimeout(() => {
-        console.log('[Factory Testing Page] Post-render: updating dropdown');
-        window.factoryTestingModule.updatePortDropdown();
-        // Check printer connection
-        if (window.factoryTestingPage) {
-          window.factoryTestingPage.checkPrinterConnection();
+        try {
+          console.log('[Factory Testing Page] Post-render: updating dropdown');
+          window.factoryTestingModule.updatePortDropdown();
+          if (window.factoryTestingPage) {
+            window.factoryTestingPage.checkPrinterConnection();
+          }
+        } finally {
+          this._postRenderTicket = false;
         }
       }, 50);
     }
@@ -1132,23 +1416,30 @@ class FactoryTestingPage {
     const _loraPush = this.factoryTestResults.loraRawPush || '';
     const _loraPassText = (typeof _meEval.pass_lora === 'boolean') ? (_meEval.pass_lora ? 'DONE' : 'FAIL') : '';
 
+    const acbTests = this.factoryTestResults.tests || {};
+    const acbEval = this.factoryTestResults._eval || {};
+    const acbSummary = this.factoryTestResults.summary || {};
+    const acbStatusBadge = (flag) => {
+      if (flag === true) return { text: 'PASS', className: 'bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-200 dark:border-green-700' };
+      if (flag === false) return { text: 'FAIL', className: 'bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-200 dark:border-red-700' };
+      return { text: 'N/A', className: 'bg-gray-100 text-gray-600 border-gray-200 dark:bg-gray-900/40 dark:text-gray-300 dark:border-gray-700' };
+    };
+    const acbBadges = {
+      uart: acbStatusBadge(acbEval.pass_uart),
+      rtc: acbStatusBadge(acbEval.pass_rtc),
+      wifi: acbStatusBadge(acbEval.pass_wifi),
+      eth: acbStatusBadge(acbEval.pass_eth),
+      rs4852: acbStatusBadge(acbEval.pass_rs4852)
+    };
+    const acbSummaryBadge = acbStatusBadge(typeof acbSummary.passAll === 'boolean' ? acbSummary.passAll : undefined);
+
     return `
       <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6">
         <div class="flex items-center justify-between mb-6">
           <div class="flex items-center gap-4">
-            ${this.selectedDevice === 'Micro Edge' ? `
-              <div class="w-16 h-16 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-600 flex items-center justify-center text-3xl shadow-lg">
-                ⚡
-              </div>
-            ` : this.selectedDevice === 'Droplet' ? `
-              <div class="w-16 h-16 rounded-xl bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center text-3xl shadow-lg">
-                🌡️
-              </div>
-            ` : `
-              <div class="w-16 h-16 rounded-xl bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center text-3xl shadow-lg">
-                🔧
-              </div>
-            `}
+            <div class="flex h-14 w-14 items-center justify-center rounded-xl bg-gray-100 text-2xl text-gray-700 dark:bg-gray-700 dark:text-gray-200">
+              ${this.selectedDevice === 'Micro Edge' ? '⚡' : this.selectedDevice === 'Droplet' ? '🌡️' : '🔧'}
+            </div>
             <div>
               <h2 class="text-2xl font-bold text-gray-800 dark:text-gray-100">
                 ${this.selectedDevice}
@@ -1161,15 +1452,13 @@ class FactoryTestingPage {
             </div>
           </div>
           <div class="flex gap-2">
-            <div class="flex items-center gap-2 px-3 py-2 rounded-lg ${this.isConnected ? 'bg-green-50 dark:bg-green-900/20' : 'bg-red-50 dark:bg-red-900/20'}">
-              <div class="w-3 h-3 rounded-full ${this.isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}"></div>
-              <span class="text-sm font-medium ${this.isConnected ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'}">
-                ${this.isConnected ? 'Connected' : 'Disconnected'}
-              </span>
+            <div class="inline-flex items-center gap-2 rounded-full border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-600 dark:border-gray-600 dark:text-gray-300">
+              <span class="h-2 w-2 rounded-full ${this.isConnected ? 'bg-green-500' : 'bg-gray-400'}"></span>
+              ${this.isConnected ? 'Connected' : 'Disconnected'}
             </div>
             <button
               onclick="window.factoryTestingPage.selectDevice(null)"
-              class="px-4 py-2 bg-gray-500 hover:bg-gray-600 text-white rounded-lg text-sm transition-colors"
+              class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
             >
               ← Back to Device Selection
             </button>
@@ -1187,7 +1476,169 @@ class FactoryTestingPage {
           </div>
         ` : ''}
 
-        ${isTestingEnabled ? `
+        <!-- Micro Edge Pre Page (Mode + Pre-Testing + Printer) -->
+        ${this.selectedDevice === 'Micro Edge' && this.microEdgeStep === 'pre' ? `
+          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">🧭</div>
+                <div>
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 1 · Select Mode</h3>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">Auto will detect COM and run tests</p>
+                </div>
+              </div>
+              <div class="inline-flex items-center rounded-lg border border-gray-300 bg-gray-50 p-0.5 dark:border-gray-600 dark:bg-gray-900/40">
+                <button onclick="window.factoryTestingPage.toggleMode('auto')" class="px-4 py-2 text-sm font-medium ${this.mode === 'auto' ? 'bg-gray-900 text-white dark:bg-gray-200 dark:text-gray-900' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'} rounded-md">Auto</button>
+                <button onclick="window.factoryTestingPage.toggleMode('manual')" class="px-4 py-2 text-sm font-medium ${this.mode === 'manual' ? 'bg-gray-900 text-white dark:bg-gray-200 dark:text-gray-900' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'} rounded-md">Manual</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">📝</div>
+                <div>
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 2 · Pre-Testing Information</h3>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">Complete before running tests</p>
+                </div>
+              </div>
+            </div>
+            <div class="mt-4 flex items-center gap-2">
+              <button 
+                onclick="window.factoryTestingPage.saveDefaultsForDevice()" 
+                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                Save defaults
+              </button>
+              <button 
+                onclick="window.factoryTestingPage.resetDefaultsForDevice()" 
+                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                Reset
+              </button>
+            </div>
+            <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Tester Name *</label>
+                <input id="tester-name" onkeyup="window.FactoryTestingPage.updateField('testerName', this.value)" value="${this.preTesting.testerName || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Hardware Version *</label>
+                <input onkeyup="window.FactoryTestingPage.updateField('hardwareVersion', this.value)" value="${this.preTesting.hardwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Firmware Version *</label>
+                <input onkeyup="window.FactoryTestingPage.updateField('firmwareVersion', this.value)" value="${this.preTesting.firmwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Batch ID *</label>
+                <input onkeyup="window.FactoryTestingPage.updateField('batchId', this.value)" value="${this.preTesting.batchId || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Work Order Serial *</label>
+                <input onkeyup="window.FactoryTestingPage.updateField('workOrderSerial', this.value)" value="${this.preTesting.workOrderSerial || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+              </div>
+            </div>
+          </div>
+
+          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">🖨️</div>
+                <div>
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 3 · Connect Brother PT-P900W</h3>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">Ensure USB printer is connected</p>
+                </div>
+              </div>
+              <div>
+                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${this.printerConnected ? 'text-green-600 border-green-300' : 'text-red-600 border-red-300'}">${this.printerConnected ? 'Connected' : 'Not Connected'}</span>
+              </div>
+            </div>
+            <div class="mt-3 flex items-center gap-2">
+              <button onclick="window.factoryTestingPage.checkPrinterConnection({ force: true })" class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">Check Printer</button>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-end">
+            <button onclick="window.factoryTestingPage.goToMicroEdgeMain()" class="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-gray-700 disabled:cursor-not-allowed disabled:bg-gray-400 dark:bg-gray-200 dark:text-gray-900 dark:hover:bg-gray-100">
+              Proceed to Testing
+            </button>
+          </div>
+        ` : ''}
+
+        <!-- ACB-M Pre Page (Mode + Pre-Testing + Printer) -->
+        ${this.selectedDevice === 'ACB-M' && this.acbStep === 'pre' ? `
+          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">🧭</div>
+                <div>
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 1 · Select Mode</h3>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">Auto will detect COM and run tests</p>
+                </div>
+              </div>
+              <div class="inline-flex items-center rounded-lg border border-gray-300 bg-gray-50 p-0.5 dark:border-gray-600 dark:bg-gray-900/40">
+                <button onclick="window.factoryTestingPage.toggleMode('auto')" class="px-4 py-2 text-sm font-medium ${this.mode === 'auto' ? 'bg-gray-900 text-white dark:bg-gray-200 dark:text-gray-900' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'} rounded-md">Auto</button>
+                <button onclick="window.factoryTestingPage.toggleMode('manual')" class="px-4 py-2 text-sm font-medium ${this.mode === 'manual' ? 'bg-gray-900 text-white dark:bg-gray-200 dark:text-gray-900' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'} rounded-md">Manual</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">📝</div>
+                <div>
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 2 · Pre-Testing Information</h3>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">Complete before running tests</p>
+                </div>
+              </div>
+            </div>
+            <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Tester Name *</label>
+                <input id="tester-name" onkeyup="window.FactoryTestingPage.updateField('testerName', this.value)" value="${this.preTesting.testerName || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Hardware Version *</label>
+                <input onkeyup="window.FactoryTestingPage.updateField('hardwareVersion', this.value)" value="${this.preTesting.hardwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Batch ID</label>
+                <input onkeyup="window.FactoryTestingPage.updateField('batchId', this.value)" value="${this.preTesting.batchId || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Work Order Serial</label>
+                <input onkeyup="window.FactoryTestingPage.updateField('workOrderSerial', this.value)" value="${this.preTesting.workOrderSerial || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+              </div>
+            </div>
+          </div>
+
+          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">🖨️</div>
+                <div>
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 3 · Connect Brother PT-P900W</h3>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">Ensure USB printer is connected</p>
+                </div>
+              </div>
+              <div>
+                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${this.printerConnected ? 'text-green-600 border-green-300' : 'text-red-600 border-red-300'}">${this.printerConnected ? 'Connected' : 'Not Connected'}</span>
+              </div>
+            </div>
+            <div class="mt-3 flex items-center gap-2">
+              <button onclick="window.factoryTestingPage.checkPrinterConnection({ force: true })" class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">Check Printer</button>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-end">
+            <button onclick="window.factoryTestingPage.goToAcbMain()" class="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-gray-700 disabled:cursor-not-allowed disabled:bg-gray-400 dark:bg-gray-200 dark:text-gray-900 dark:hover:bg-gray-100">
+              Proceed to Testing
+            </button>
+          </div>
+        ` : ''}
+
+        ${isTestingEnabled && ((this.selectedDevice === 'ACB-M' && this.acbStep === 'main') || (this.selectedDevice === 'Micro Edge' && this.microEdgeStep === 'main') || (this.selectedDevice !== 'ACB-M' && this.selectedDevice !== 'Micro Edge')) ? `
           <!-- Connection Section (hidden in Auto mode) -->
           ${this.mode === 'manual' ? `
           <div class="mb-6 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
@@ -1235,11 +1686,11 @@ class FactoryTestingPage {
                   class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
                   ${this.isConnected ? 'disabled' : ''}
                 >
-                  <option value="9600">9600</option>
+                  <option value="9600" ${this.selectedDevice === 'ACB-M' ? 'selected' : ''}>9600</option>
                   <option value="19200">19200</option>
                   <option value="38400">38400</option>
                   <option value="57600">57600</option>
-                  <option value="115200" selected>115200</option>
+                  <option value="115200" ${this.selectedDevice !== 'ACB-M' ? 'selected' : ''}>115200</option>
                 </select>
               </div>
             </div>
@@ -1278,56 +1729,81 @@ class FactoryTestingPage {
           `}
 
           <!-- Brother PT-P900W Printer Section -->
-          <div class="mb-6 p-4 bg-blue-50 dark:bg-blue-900/20 border-2 border-blue-200 dark:border-blue-700 rounded-lg">
-            <div class="flex items-center justify-between mb-3">
+          <div class="mb-6 rounded-xl border border-gray-200 bg-white dark:bg-gray-800 px-6 py-5 shadow-sm">
+            <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
-                <span class="text-2xl">🖨️</span>
-                <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100">Brother PT-P900W Label Printer</h3>
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">
+                  🖨️
+                </div>
+                <div>
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Brother PT-P900W</h3>
+                  <p class="text-sm text-gray-500 dark:text-gray-400">Direct USB printing via py-brotherlabel</p>
+                </div>
               </div>
-              <span class="text-xs px-2 py-1 rounded ${this.printerConnected ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}">USB Direct</span>
+              <span class="inline-flex items-center gap-2 rounded-full border border-gray-300 px-3 py-1 text-xs font-medium text-gray-600 dark:border-gray-600 dark:text-gray-300">
+                <span class="h-2 w-2 rounded-full ${this.printerConnected ? 'bg-green-500' : 'bg-gray-400'}"></span>
+                ${this.printerConnected ? 'Connected' : 'USB Direct'}
+              </span>
             </div>
-            <div class="mb-3 p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
-              <div class="flex items-center gap-2 mb-2">
-                <span class="text-lg">${this.printerConnected ? '✅' : '🔌'}</span>
-                <span class="text-sm font-medium">${this.printerConnected ? 'Brother PT-P900W Connected' : 'Connect Brother PT-P900W via USB'}</span>
-              </div>
-              <p class="text-xs text-gray-500 dark:text-gray-400">
-                Prints directly via USB using py-brotherlabel library
-              </p>
+            <div class="mt-4 rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600 dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-300">
+              ${this.printerConnected ? 'Printer ready for label printing.' : 'Connect the printer via USB before printing.'}
             </div>
-            <div class="flex gap-2">
+            <div class="mt-4 flex items-center gap-3">
               <button 
                 onclick="window.factoryTestingPage.printLabel()" 
-                class="px-6 py-2 rounded-lg text-sm font-medium transition-colors ${
+                class="flex-1 rounded-lg px-5 py-2.5 text-sm font-medium transition-colors ${
                   this.allowPrint 
-                    ? 'bg-green-500 hover:bg-green-600 text-white' 
-                    : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                    ? 'bg-gray-900 text-white hover:bg-gray-700 dark:bg-gray-200 dark:text-gray-900 dark:hover:bg-gray-100' 
+                    : 'cursor-not-allowed border border-gray-200 bg-gray-100 text-gray-500 dark:border-gray-700 dark:bg-gray-700 dark:text-gray-400'
                 }" 
                 ${this.allowPrint ? '' : 'disabled'}>
-                🏷️ Print Label
+                <span class="flex items-center justify-center gap-2">
+                  <span class="text-base">🏷️</span>
+                  <span>Print Label</span>
+                </span>
               </button>
-              <span class="text-xs text-gray-600 dark:text-gray-400 self-center">
-                ${this.allowPrint ? '✅ Ready to print' : '⏳ Complete all tests to enable printing'}
-              </span>
+              <div class="rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium text-gray-600 dark:border-gray-700 dark:text-gray-300">
+                ${this.allowPrint ? 'Ready to print' : 'Waiting for tests'}
+              </div>
             </div>
           </div>
 
           <!-- Pre-Testing Information Section -->
-          <div class="mb-6 p-4 bg-purple-50 dark:bg-purple-900/20 border-2 border-purple-200 dark:border-purple-700 rounded-lg">
-            <div class="flex items-center justify-between mb-3">
+          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
-                <h3 class="text-sm font-medium text-gray-800 dark:text-gray-100">📝 Pre-Testing</h3>
-                <button onclick="window.factoryTestingPage.togglePreTesting()" class="px-2 py-1 text-sm bg-gray-200 rounded">${this.preTestingCollapsed ? 'Show' : 'Hide'}</button>
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">
+                  📝
+                </div>
+                <div>
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Pre-Testing Information</h3>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">Complete before running tests</p>
+                </div>
               </div>
-              ${this.preTestingCollapsed ? '' : ('<div class="flex items-center gap-2"><button onclick="window.factoryTestingPage.saveDefaultsForDevice()" class="px-3 py-1 bg-green-500 hover:bg-green-600 text-white rounded text-sm">Save Defaults</button><button onclick="window.factoryTestingPage.resetDefaultsForDevice()" class="px-3 py-1 bg-red-500 hover:bg-red-600 text-white rounded text-sm">Reset Defaults</button></div>')}
+              <button 
+                onclick="window.factoryTestingPage.togglePreTesting()" 
+                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
+                ${this.preTestingCollapsed ? 'Show' : 'Hide'}
+              </button>
             </div>
 
             ${this.preTestingCollapsed ? '' : (`
-              <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">Fill in the following information before proceeding with device testing.</p>
+              <div class="mt-4 flex items-center gap-2">
+                <button 
+                  onclick="window.factoryTestingPage.saveDefaultsForDevice()" 
+                  class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                  Save defaults
+                </button>
+                <button 
+                  onclick="window.factoryTestingPage.resetDefaultsForDevice()" 
+                  class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                  Reset
+                </button>
+              </div>
 
-              <div class="grid grid-cols-2 gap-4 text-sm">
+              <div class="mt-4 grid grid-cols-2 gap-4 text-sm">
                 <div>
-                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label class="mb-2 block text-sm font-semibold text-gray-800 dark:text-gray-200">
                     Tester Name <span class="text-red-500">*</span>
                   </label>
                   <input
@@ -1338,13 +1814,12 @@ class FactoryTestingPage {
                     placeholder="Enter tester name"
                     onkeyup="updateFactoryTestingField('testerName', this.value)"
                     onchange="updateFactoryTestingField('testerName', this.value)"
-                    onfocus="console.log('Tester name focused')"
-                    class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                    class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900 focus:border-gray-500 focus:ring-0 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
                   />
                 </div>
 
                 <div>
-                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label class="mb-2 block text-sm font-semibold text-gray-800 dark:text-gray-200">
                     Hardware Version <span class="text-red-500">*</span>
                   </label>
                   <input
@@ -1355,12 +1830,12 @@ class FactoryTestingPage {
                     placeholder="e.g., v1.2, v2.0"
                     onkeyup="updateFactoryTestingField('hardwareVersion', this.value)"
                     onchange="updateFactoryTestingField('hardwareVersion', this.value)"
-                    class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                    class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900 focus:border-gray-500 focus:ring-0 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
                   />
                 </div>
 
                 <div>
-                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label class="mb-2 block text-sm font-semibold text-gray-800 dark:text-gray-200">
                     Batch ID <span class="text-red-500">*</span>
                   </label>
                   <input
@@ -1371,12 +1846,12 @@ class FactoryTestingPage {
                     placeholder="Enter batch ID"
                     onkeyup="updateFactoryTestingField('batchId', this.value)"
                     onchange="updateFactoryTestingField('batchId', this.value)"
-                    class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                    class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900 focus:border-gray-500 focus:ring-0 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
                   />
                 </div>
 
                 <div>
-                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label class="mb-2 block text-sm font-semibold text-gray-800 dark:text-gray-200">
                     Work Order Serial <span class="text-red-500">*</span>
                   </label>
                   <input
@@ -1387,89 +1862,188 @@ class FactoryTestingPage {
                     placeholder="Enter work order serial"
                     onkeyup="updateFactoryTestingField('workOrderSerial', this.value)"
                     onchange="updateFactoryTestingField('workOrderSerial', this.value)"
-                    class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                    class="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900 focus:border-gray-500 focus:ring-0 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
                   />
                 </div>
               </div>
 
-              <div class="mt-3 p-3 bg-purple-100 dark:bg-purple-900/30 rounded border border-purple-300 dark:border-purple-600">
-                <p class="text-xs text-purple-800 dark:text-purple-200">
-                  ℹ️ <strong>Note:</strong> All fields marked with <span class="text-red-500">*</span> are required before running factory tests. This information will be included in the test reports.
-                </p>
+              <div class="mt-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600 dark:border-gray-600 dark:bg-gray-900/30 dark:text-gray-300">
+                <strong class="text-gray-700 dark:text-gray-200">Note:</strong> fields marked with <span class="text-red-500">*</span> are required and will be stored in the report.
               </div>
 
               ${this.showProfile ? (`
-                <div class="mt-3 p-3 bg-white rounded border text-sm">
+                <div class="mt-4 rounded-lg border border-gray-200 px-4 py-3 text-sm text-gray-600 dark:border-gray-600 dark:text-gray-300">
                   <div class="flex items-center justify-between">
                     <div>
-                      <div class="text-xs text-gray-600">Saved Profile for ${this.selectedDevice || 'Device'}</div>
-                      <div class="font-mono text-sm">${this.preTesting.testerName || '—'} · ${this.preTesting.hardwareVersion || '—'} · ${this.preTesting.batchId || '—'} · ${this.preTesting.workOrderSerial || '—'}</div>
+                      <div class="text-xs uppercase tracking-wide text-gray-500">Saved profile</div>
+                      <div class="font-mono text-sm text-gray-800 dark:text-gray-100">${this.preTesting.testerName || '—'} · ${this.preTesting.hardwareVersion || '—'} · ${this.preTesting.batchId || '—'} · ${this.preTesting.workOrderSerial || '—'}</div>
                     </div>
-                    <div class="text-xs text-gray-500">Defaults persist per device type</div>
+                    <div class="text-xs text-gray-500">Per-device defaults</div>
                   </div>
                 </div>
               `) : ''}
             `)}
           </div>
           <!-- Device Information Section (compact single-row) -->
-          <div class="mb-6 p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-700 text-sm">
-            <div class="flex flex-wrap gap-4 items-center">
-              <div class="text-xs text-gray-500">FW</div><div class="font-mono text-sm text-gray-800 dark:text-gray-100">${this.deviceInfo.firmwareVersion || '—'}</div>
-              <div class="text-xs text-gray-500">HW</div><div class="font-mono text-sm text-gray-800 dark:text-gray-100">${this.deviceInfo.hwVersion || '—'}</div>
-              <div class="text-xs text-gray-500">UID</div><div class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.deviceInfo.uniqueId || '—').substring(0,24)}</div>
-              <div class="text-xs text-gray-500">Make</div><div class="font-mono text-sm text-gray-800 dark:text-gray-100">${this.deviceInfo.deviceMake || '—'}</div>
-              <div class="text-xs text-gray-500">Model</div><div class="font-mono text-sm text-gray-800 dark:text-gray-100">${this.deviceInfo.deviceModel || '—'}</div>
+          ${this.acbStep === 'main' ? `
+          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div class="flex items-center gap-3">
+              <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">
+                📟
+              </div>
+              <h4 class="text-sm font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-300">Device information</h4>
+            </div>
+            <div class="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+              <div class="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-200">
+                <span class="text-xs uppercase tracking-wide text-gray-500">HW</span>
+                <span>${this.deviceInfo.hwVersion || '—'}</span>
+              </div>
+              <div class="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-xs text-gray-700 dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-200">
+                <span class="text-xs uppercase tracking-wide text-gray-500">UID</span>
+                <span>${(this.deviceInfo.uniqueId || '—').substring(0,24)}</span>
+              </div>
+              <div class="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-200">
+                <span class="text-xs uppercase tracking-wide text-gray-500">Make</span>
+                <span>${this.deviceInfo.deviceMake || '—'}</span>
+              </div>
+              <div class="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-200">
+                <span class="text-xs uppercase tracking-wide text-gray-500">Model</span>
+                <span>${this.deviceInfo.deviceModel || '—'}</span>
+              </div>
             </div>
           </div>
+          ` : ''}
 
           <!-- Factory Testing Section -->
-          <div class="mb-6 p-4 ${this.selectedDevice === 'Micro Edge' ? 'bg-blue-50 dark:bg-blue-900/20 border-2 border-blue-200 dark:border-blue-700' : this.selectedDevice === 'Droplet' ? 'bg-green-50 dark:bg-green-900/20 border-2 border-green-200 dark:border-green-700' : 'bg-gray-50 dark:bg-gray-700'} rounded-lg">
-            <div class="flex items-center justify-between mb-3">
-              <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100">
-                ${this.selectedDevice === 'Micro Edge' ? '⚡' : this.selectedDevice === 'Droplet' ? '🌡️' : '🧪'} Step 3: Run Factory Tests
-              </h3>
+          ${this.acbStep === 'main' ? `
+          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
-                ${this.selectedDevice === 'Micro Edge' ? `
-                  <button onclick="window.factoryTestingPage.toggleMode('auto')" class="px-3 py-1 rounded ${this.mode === 'auto' ? 'bg-green-500 text-white' : 'bg-gray-200'}">Auto</button>
-                  <button onclick="window.factoryTestingPage.toggleMode('manual')" class="px-3 py-1 rounded ${this.mode === 'manual' ? 'bg-blue-500 text-white' : 'bg-gray-200'}">Manual</button>
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">
+                  ${this.selectedDevice === 'Micro Edge' ? '⚡' : this.selectedDevice === 'Droplet' ? '🌡️' : '🧪'}
+                </div>
+                <div>
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 3 · Run Factory Tests</h3>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">${this.selectedDevice || 'Select device'} workflow</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-3">
+                ${this.selectedDevice === 'Micro Edge' || this.selectedDevice === 'ACB-M' ? `
+                  <div class="inline-flex items-center rounded-lg border border-gray-300 bg-gray-50 p-0.5 dark:border-gray-600 dark:bg-gray-900/40">
+                    <button onclick="window.factoryTestingPage.toggleMode('auto')" class="px-4 py-2 text-sm font-medium ${this.mode === 'auto' ? 'bg-gray-900 text-white dark:bg-gray-200 dark:text-gray-900' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'} rounded-md">Auto</button>
+                    <button onclick="window.factoryTestingPage.toggleMode('manual')" class="px-4 py-2 text-sm font-medium ${this.mode === 'manual' ? 'bg-gray-900 text-white dark:bg-gray-200 dark:text-gray-900' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'} rounded-md">Manual</button>
+                  </div>
                 ` : ''}
                 <button
                   onclick="window.factoryTestingPage.runFactoryTests()"
-                  class="px-6 py-3 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white rounded-lg font-bold transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                  ${!this.isConnected || this.isTesting ? 'disabled' : ''}
+                  class="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-gray-700 disabled:cursor-not-allowed disabled:bg-gray-400 dark:bg-gray-200 dark:text-gray-900 dark:hover:bg-gray-100"
+                  ${(!this.isConnected || this.isTesting || (this.selectedDevice === 'ACB-M' && this.mode === 'auto')) ? 'disabled' : ''}
                 >
                   ${this.isTesting ? `
-                    <svg class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+                    <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
                       <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                       <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
-                    Testing...
-                  ` : '▶️ Run All Tests'}
+                    <span>Running...</span>
+                  ` : '<span>Run all tests</span>'}
                 </button>
               </div>
             </div>
             <!-- Pass/Fail Banner -->
             ${this.factoryTestResults && this.factoryTestResults._eval && Object.keys(this.factoryTestResults._eval).length ? `
-              ${((this.factoryTestResults._eval.pass_battery && this.factoryTestResults._eval.pass_ain1 && this.factoryTestResults._eval.pass_ain2 && this.factoryTestResults._eval.pass_ain3 && this.factoryTestResults._eval.pass_pulses && this.factoryTestResults._eval.pass_lora)) ? `
-                <div class="mb-4 p-3 bg-green-500 text-white rounded">✅ Device Pass</div>
-              ` : `
-                <div class="mb-4 p-3 bg-red-500 text-white rounded">❌ Device Fail - see Test Results below</div>
-              `}
+              ${(() => {
+                // For ACB-M: check ACB-M specific tests
+                if (this.selectedDevice === 'ACB-M') {
+                  const allPass = this.factoryTestResults._eval.pass_uart && 
+                                  this.factoryTestResults._eval.pass_rtc && 
+                                  this.factoryTestResults._eval.pass_wifi && 
+                                  this.factoryTestResults._eval.pass_eth && 
+                                  this.factoryTestResults._eval.pass_rs4852;
+                  return allPass ? `
+                    <div class="mt-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700 dark:border-green-800 dark:bg-green-900/20 dark:text-green-200">
+                      Device passed all checks.
+                    </div>
+                  ` : `
+                    <div class="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+                      Device failed one or more checks. Review the results below.
+                    </div>
+                  `;
+                }
+                // For Micro Edge: check Micro Edge specific tests
+                const allPass = this.factoryTestResults._eval.pass_battery && 
+                                this.factoryTestResults._eval.pass_ain1 && 
+                                this.factoryTestResults._eval.pass_ain2 && 
+                                this.factoryTestResults._eval.pass_ain3 && 
+                                this.factoryTestResults._eval.pass_pulses && 
+                                this.factoryTestResults._eval.pass_lora;
+                return allPass ? `
+                  <div class="mt-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700 dark:border-green-800 dark:bg-green-900/20 dark:text-green-200">
+                    Device passed all checks.
+                  </div>
+                ` : `
+                  <div class="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+                    Device failed one or more checks. Review the results below.
+                  </div>
+                `;
+              })()}
             ` : ''}
             
             <!-- ACB-M Test Controls -->
             ${this.selectedDevice === 'ACB-M' ? `
               <div class="mt-6 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                <h4 class="text-sm font-semibold mb-3">🎮 Test Controls - ACB-M</h4>
-                <div class="grid grid-cols-1 gap-2">
-                  <button onclick="window.factoryTestingModule.acbWifiTest()" class="px-4 py-3 bg-gray-300 hover:bg-gray-350 rounded-lg text-sm">📶 WiFi Test</button>
-                  <button onclick="window.factoryTestingModule.acbRs485Test()" class="px-4 py-3 bg-gray-300 hover:bg-gray-350 rounded-lg text-sm">🧭 RS485 Test</button>
-                  <button onclick="window.factoryTestingModule.acbRs485_2Test()" class="px-4 py-3 bg-gray-300 hover:bg-gray-350 rounded-lg text-sm">🔁 RS485-2 Test</button>
-                  <button onclick="window.factoryTestingModule.acbEthTest()" class="px-4 py-3 bg-gray-300 hover:bg-gray-350 rounded-lg text-sm">🌐 ETH Test</button>
-                  <button onclick="window.factoryTestingModule.acbLoraTest()" class="px-4 py-3 bg-gray-300 hover:bg-gray-350 rounded-lg text-sm">📡 LoRa Test</button>
-                  <button onclick="window.factoryTestingModule.acbRtcTest()" class="px-4 py-3 bg-gray-300 hover:bg-gray-350 rounded-lg text-sm">⏱️ RTC Test</button>
-                  <button onclick="window.factoryTestingModule.acbFullTest()" class="px-4 py-3 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-semibold">✳️ Run FULL TEST (ACB-M)</button>
+                <div class="grid grid-cols-2 gap-2">
+                  <button onclick="window.factoryTestingModule.acbFullTest()" class="px-4 py-3 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-semibold" ${this.mode === 'auto' ? 'disabled' : ''}>✳️ Run FULL TEST (ACB-M)</button>
                   <button onclick="window.factoryTestingModule.acbClearOutput()" class="px-4 py-3 bg-orange-500 hover:bg-orange-600 text-white rounded-lg text-sm font-semibold">🧹 Clear Output</button>
+                </div>
+                <div class="mt-6 rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800/60">
+                  <div class="flex items-center justify-between">
+                    <div class="text-sm font-semibold text-gray-700 dark:text-gray-200">📊 Test Results</div>
+                    <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${acbSummaryBadge.className}">${acbSummaryBadge.text}</span>
+                  </div>
+                  <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div class="rounded-lg border border-gray-200 bg-white p-4 text-sm shadow-sm dark:border-gray-700 dark:bg-gray-900/60">
+                      <div class="flex items-center justify-between">
+                        <div class="font-semibold text-gray-800 dark:text-gray-100">UART Loopback</div>
+                        <span class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold ${acbBadges.uart.className}">${acbBadges.uart.text}</span>
+                      </div>
+                      <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">Response: ${acbTests.uart && acbTests.uart.value ? acbTests.uart.value : '—'}</div>
+                      <div class="text-xs text-gray-500 dark:text-gray-400">${acbTests.uart && acbTests.uart.message ? acbTests.uart.message : 'Awaiting test...'}</div>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 bg-white p-4 text-sm shadow-sm dark:border-gray-700 dark:bg-gray-900/60">
+                      <div class="flex items-center justify-between">
+                        <div class="font-semibold text-gray-800 dark:text-gray-100">RTC</div>
+                        <span class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold ${acbBadges.rtc.className}">${acbBadges.rtc.text}</span>
+                      </div>
+                      <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">Time: ${acbTests.rtc && acbTests.rtc.time ? acbTests.rtc.time : '—'}</div>
+                      <div class="text-xs text-gray-500 dark:text-gray-400">${acbTests.rtc && acbTests.rtc.message ? acbTests.rtc.message : 'Awaiting test...'}</div>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 bg-white p-4 text-sm shadow-sm dark:border-gray-700 dark:bg-gray-900/60">
+                      <div class="flex items-center justify-between">
+                        <div class="font-semibold text-gray-800 dark:text-gray-100">Ethernet</div>
+                        <span class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold ${acbBadges.eth.className}">${acbBadges.eth.text}</span>
+                      </div>
+                      <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">MAC: ${acbTests.eth && acbTests.eth.mac ? acbTests.eth.mac : '—'}</div>
+                      <div class="text-xs text-gray-500 dark:text-gray-400">IP: ${acbTests.eth && acbTests.eth.ip ? acbTests.eth.ip : '—'}</div>
+                      <div class="text-xs text-gray-500 dark:text-gray-400">${acbTests.eth && acbTests.eth.message ? acbTests.eth.message : 'Awaiting test...'}</div>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 bg-white p-4 text-sm shadow-sm dark:border-gray-700 dark:bg-gray-900/60">
+                      <div class="flex items-center justify-between">
+                        <div class="font-semibold text-gray-800 dark:text-gray-100">WiFi</div>
+                        <span class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold ${acbBadges.wifi.className}">${acbBadges.wifi.text}</span>
+                      </div>
+                      <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">Networks: ${acbTests.wifi && typeof acbTests.wifi.networks !== 'undefined' ? acbTests.wifi.networks : '—'}</div>
+                      <div class="text-xs text-gray-500 dark:text-gray-400">Connected: ${acbTests.wifi && typeof acbTests.wifi.connected !== 'undefined' ? acbTests.wifi.connected : '—'}</div>
+                      <div class="text-xs text-gray-500 dark:text-gray-400">${acbTests.wifi && acbTests.wifi.message ? acbTests.wifi.message : 'Awaiting test...'}</div>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 bg-white p-4 text-sm shadow-sm dark:border-gray-700 dark:bg-gray-900/60 md:col-span-2">
+                      <div class="flex items-center justify-between">
+                        <div class="font-semibold text-gray-800 dark:text-gray-100">RS485-2</div>
+                        <span class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold ${acbBadges.rs4852.className}">${acbBadges.rs4852.text}</span>
+                      </div>
+                      <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">Status: ${(acbTests.rs4852 && typeof acbTests.rs4852.status !== 'undefined') ? acbTests.rs4852.status : '—'}</div>
+                      <div class="text-xs text-gray-500 dark:text-gray-400">${acbTests.rs4852 && acbTests.rs4852.message ? acbTests.rs4852.message : 'Awaiting test...'}</div>
+                    </div>
+                  </div>
                 </div>
               </div>
             ` : ''}
@@ -1585,30 +2159,30 @@ class FactoryTestingPage {
                     <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
                       <div class="text-sm text-gray-500 mb-1">WiFi Test</div>
                       <div class="text-sm text-gray-800 dark:text-gray-100 space-y-1">
-                        <div><span class="text-gray-600">Status:</span> <span id="zc-wifi-status-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${this.factoryTestResults.wifi?.status || (this.factoryTestResults.wifi?.success ? 'done' : '—')}</span></div>
-                        <div><span class="text-gray-600">RSSI:</span> <span id="zc-wifi-rssi-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${this.factoryTestResults.wifi?.rssi ?? '—'}</span></div>
-                        <div><span class="text-gray-600">Networks:</span> <span id="zc-wifi-networks-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.wifi?.networks && this.factoryTestResults.wifi.networks.length) ? this.factoryTestResults.wifi.networks.join(', ') : '—'}</span></div>
+                        <div><span class="text-gray-600">Status:</span> <span id="zc-wifi-status-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.wifi && this.factoryTestResults.wifi.status) || (this.factoryTestResults.wifi && this.factoryTestResults.wifi.success ? 'done' : '—')}</span></div>
+                        <div><span class="text-gray-600">RSSI:</span> <span id="zc-wifi-rssi-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.wifi && this.factoryTestResults.wifi.rssi) || '—'}</span></div>
+                        <div><span class="text-gray-600">Networks:</span> <span id="zc-wifi-networks-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.wifi && this.factoryTestResults.wifi.networks && this.factoryTestResults.wifi.networks.length) ? this.factoryTestResults.wifi.networks.join(', ') : '—'}</span></div>
                       </div>
                     </div>
                     <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
                       <div class="text-sm text-gray-500 mb-1">I2C Test</div>
                       <div class="text-sm text-gray-800 dark:text-gray-100 space-y-1">
-                        <div><span class="text-gray-600">Status:</span> <span id="zc-i2c-status-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${this.factoryTestResults.i2c?.status || (this.factoryTestResults.i2c?.success ? 'done' : '—')}</span></div>
-                        <div><span class="text-gray-600">Addr:</span> <span id="zc-i2c-addr-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${this.factoryTestResults.i2c?.sensor_addr || '—'}</span></div>
-                        <div><span class="text-gray-600">Sensor:</span> <span id="zc-i2c-sensor-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${this.factoryTestResults.i2c?.sensor || '—'}</span></div>
-                        <div><span class="text-gray-600">Temp:</span> <span id="zc-i2c-temp-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${typeof this.factoryTestResults.i2c?.temperature_c !== 'undefined' ? this.factoryTestResults.i2c.temperature_c + '°C' : '—'}</span></div>
-                        <div><span class="text-gray-600">Humidity:</span> <span id="zc-i2c-hum-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${typeof this.factoryTestResults.i2c?.humidity_rh !== 'undefined' ? this.factoryTestResults.i2c.humidity_rh + '%' : '—'}</span></div>
+                        <div><span class="text-gray-600">Status:</span> <span id="zc-i2c-status-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.i2c && this.factoryTestResults.i2c.status) || (this.factoryTestResults.i2c && this.factoryTestResults.i2c.success ? 'done' : '—')}</span></div>
+                        <div><span class="text-gray-600">Addr:</span> <span id="zc-i2c-addr-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.i2c && this.factoryTestResults.i2c.sensor_addr) || '—'}</span></div>
+                        <div><span class="text-gray-600">Sensor:</span> <span id="zc-i2c-sensor-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.i2c && this.factoryTestResults.i2c.sensor) || '—'}</span></div>
+                        <div><span class="text-gray-600">Temp:</span> <span id="zc-i2c-temp-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.i2c && typeof this.factoryTestResults.i2c.temperature_c !== 'undefined') ? this.factoryTestResults.i2c.temperature_c + '°C' : '—'}</span></div>
+                        <div><span class="text-gray-600">Humidity:</span> <span id="zc-i2c-hum-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.i2c && typeof this.factoryTestResults.i2c.humidity_rh !== 'undefined') ? this.factoryTestResults.i2c.humidity_rh + '%' : '—'}</span></div>
                       </div>
                     </div>
 
                     <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
                       <div class="text-sm text-gray-500 mb-1">RS485 Test</div>
                       <div class="text-sm text-gray-800 dark:text-gray-100 space-y-1">
-                        <div><span class="text-gray-600">Status:</span> <span id="zc-rs485-status-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${this.factoryTestResults.rs485?.status || (this.factoryTestResults.rs485?.success ? 'done' : '—')}</span></div>
-                        <div><span class="text-gray-600">Temp:</span> <span id="zc-rs485-temp-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${typeof this.factoryTestResults.rs485?.temperature !== 'undefined' ? this.factoryTestResults.rs485.temperature + '°C' : '—'}</span></div>
-                        <div><span class="text-gray-600">Humidity:</span> <span id="zc-rs485-hum-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${typeof this.factoryTestResults.rs485?.humidity !== 'undefined' ? this.factoryTestResults.rs485.humidity : '—'}</span></div>
-                        <div><span class="text-gray-600">Slave OK:</span> <span id="zc-rs485-slave-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${typeof this.factoryTestResults.rs485?.slave_ok !== 'undefined' ? (this.factoryTestResults.rs485.slave_ok ? 'Yes' : 'No') : '—'}</span></div>
-                        <div><span class="text-gray-600">Master OK:</span> <span id="zc-rs485-master-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${typeof this.factoryTestResults.rs485?.master_ok !== 'undefined' ? (this.factoryTestResults.rs485.master_ok ? 'Yes' : 'No') : '—'}</span></div>
+                        <div><span class="text-gray-600">Status:</span> <span id="zc-rs485-status-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.rs485 && this.factoryTestResults.rs485.status) || (this.factoryTestResults.rs485 && this.factoryTestResults.rs485.success ? 'done' : '—')}</span></div>
+                        <div><span class="text-gray-600">Temp:</span> <span id="zc-rs485-temp-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.rs485 && typeof this.factoryTestResults.rs485.temperature !== 'undefined') ? this.factoryTestResults.rs485.temperature + '°C' : '—'}</span></div>
+                        <div><span class="text-gray-600">Humidity:</span> <span id="zc-rs485-hum-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.rs485 && typeof this.factoryTestResults.rs485.humidity !== 'undefined') ? this.factoryTestResults.rs485.humidity : '—'}</span></div>
+                        <div><span class="text-gray-600">Slave OK:</span> <span id="zc-rs485-slave-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.rs485 && typeof this.factoryTestResults.rs485.slave_ok !== 'undefined') ? (this.factoryTestResults.rs485.slave_ok ? 'Yes' : 'No') : '—'}</span></div>
+                        <div><span class="text-gray-600">Master OK:</span> <span id="zc-rs485-master-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.rs485 && typeof this.factoryTestResults.rs485.master_ok !== 'undefined') ? (this.factoryTestResults.rs485.master_ok ? 'Yes' : 'No') : '—'}</span></div>
                       </div>
                     </div>
                   </div>
@@ -1633,25 +2207,25 @@ class FactoryTestingPage {
               <div class="mt-3 p-3 bg-white dark:bg-gray-900 rounded border border-gray-200 dark:border-gray-700">
                 <div class="text-sm text-gray-500 mb-2">Raw JSON (parsed)</div>
                 <pre class="text-xs font-mono text-gray-800 dark:text-gray-100 max-h-64 overflow-auto">
-WiFi: ${JSON.stringify(this.factoryTestResults.wifi?.parsed || this.factoryTestResults.wifi || {}, null, 2)}
+WiFi: ${JSON.stringify((this.factoryTestResults.wifi && this.factoryTestResults.wifi.parsed) || this.factoryTestResults.wifi || {}, null, 2)}
 
-I2C: ${JSON.stringify(this.factoryTestResults.i2c?.parsed || this.factoryTestResults.i2c || {}, null, 2)}
+I2C: ${JSON.stringify((this.factoryTestResults.i2c && this.factoryTestResults.i2c.parsed) || this.factoryTestResults.i2c || {}, null, 2)}
 
-RS485: ${JSON.stringify(this.factoryTestResults.rs485?.parsed || this.factoryTestResults.rs485 || {}, null, 2)}
+RS485: ${JSON.stringify((this.factoryTestResults.rs485 && this.factoryTestResults.rs485.parsed) || this.factoryTestResults.rs485 || {}, null, 2)}
                 </pre>
               </div>
             ` : ''}
           ` : ''}
         ` : ''}
+          ` : ''}
 
         <!-- Instructions -->
+        ${this.acbStep === 'main' ? `
         <div class="mt-6 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-700">
-          <p class="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2">
-            ${this.selectedDevice === 'Micro Edge' ? 'Micro Edge Testing:' : 
-              this.selectedDevice === 'Droplet' ? 'Droplet Testing:' : 'Factory Testing Instructions:'}
-          </p>
+          <p class="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2">${this._instructionTitle()}</p>
           ${this.renderInstructionsByDevice()}
         </div>
+        ` : ''}
       </div>
       ${this.showConnectConfirm ? `
         <div class="fixed inset-0 z-50 flex items-center justify-center">
@@ -1667,6 +2241,13 @@ RS485: ${JSON.stringify(this.factoryTestResults.rs485?.parsed || this.factoryTes
         </div>
       ` : ''}
     `;
+  }
+
+  _instructionTitle() {
+    if (this.selectedDevice === 'Micro Edge') return 'Micro Edge Testing:';
+    if (this.selectedDevice === 'Droplet') return 'Droplet Testing:';
+    if (this.selectedDevice === 'ACB-M') return 'ACB-M Testing:';
+    return 'Factory Testing Instructions:';
   }
 }
 
