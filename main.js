@@ -757,9 +757,9 @@ ipcMain.handle('provisioning:checkCAConnection', async (event, caUrl) => {
     return { success: true, data: result };
   } catch (error) {
     console.error('CA connection check failed:', error);
-    return { 
-      success: false, 
-      error: error.message 
+    return {
+      success: false,
+      error: error.message
     };
   }
 });
@@ -932,4 +932,34 @@ ipcMain.handle('stm32:getCurrentDeviceType', () => {
     success: true,
     deviceType: OpenOCDSTM32Service.currentDeviceType
   };
+});
+
+ipcMain.handle('stm32:checkFlashProtection', async () => {
+  try {
+    return await OpenOCDSTM32Service.checkFlashProtection();
+  } catch (error) {
+    console.error('Failed to check flash protection:', error);
+    return {
+      success: false,
+      isProtected: false,
+      error: error.message
+    };
+  }
+});
+
+ipcMain.handle('stm32:unlockFlash', async (event) => {
+  try {
+    const mainWindow = BrowserWindow.getAllWindows()[0];
+
+    const result = await OpenOCDSTM32Service.unlockFlash((progress) => {
+      if (mainWindow) {
+        mainWindow.webContents.send('stm32:flash-progress', progress);
+      }
+    });
+
+    return result;
+  } catch (error) {
+    console.error('Failed to unlock flash:', error);
+    throw error;
+  }
 });
