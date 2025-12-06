@@ -934,6 +934,24 @@ class App {
     // Save scroll positions before render
     let fleetScrollPosition = 0;
     let udpScrollPosition = 0;
+    
+    // Save focused element and pre-testing input values before render
+    let focusedElement = null;
+    let focusedInputField = null;
+    let focusedInputValue = null;
+    let focusedInputSelectionStart = null;
+    let focusedInputSelectionEnd = null;
+    
+    if (this.currentPage === 'factory-testing' && document.activeElement) {
+      const active = document.activeElement;
+      if (active.tagName === 'INPUT' && active.dataset && active.dataset.field) {
+        focusedInputField = active.dataset.field;
+        focusedInputValue = active.value;
+        focusedInputSelectionStart = active.selectionStart;
+        focusedInputSelectionEnd = active.selectionEnd;
+        focusedElement = active;
+      }
+    }
 
     if (this.currentPage === 'fleet-monitoring') {
       const fleetContainer = document.getElementById('fleet-messages-container');
@@ -1139,6 +1157,21 @@ class App {
       // Use immediate timeout (next tick) to ensure DOM is ready
       setTimeout(() => {
         this.factoryTestingPage.attachPreTestingListeners();
+        
+        // Restore focus and cursor position if an input was focused before render
+        if (focusedInputField) {
+          const inputs = document.querySelectorAll('input[data-field]');
+          for (const input of inputs) {
+            if (input.dataset.field === focusedInputField) {
+              input.value = focusedInputValue;
+              input.focus();
+              if (focusedInputSelectionStart !== null) {
+                input.setSelectionRange(focusedInputSelectionStart, focusedInputSelectionEnd);
+              }
+              break;
+            }
+          }
+        }
       }, 0);
     }
 

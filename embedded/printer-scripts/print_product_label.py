@@ -141,11 +141,11 @@ def create_product_label(barcode_data, mn_text, sw_text, ba_text, product_code, 
     # Render barcode to memory buffer (PNG)
     buffer = BytesIO()
     barcode_img.write(buffer, {
-        'module_height': 12,  # Barcode module height (mm-like units used by writer)
-        'module_width': 0.3,  # Barcode module width
+        'module_height': 28,  # Barcode bar height
+        'module_width': 0.5,  # Barcode bar width
         'quiet_zone': 3,
-        'font_size': 14,  # Human-readable text under barcode
-        'text_distance': 6,  # Gap between bars and text
+        'font_size': 25,  # Human-readable UID text under barcode (increased from 23 to 25)
+        'text_distance': 10,  # Gap between bars and text (increased from 8 to 10 to lower text more)
         'write_text': True
     })
     buffer.seek(0)
@@ -157,22 +157,22 @@ def create_product_label(barcode_data, mn_text, sw_text, ba_text, product_code, 
     # Resize barcode to fit 12mm tape height in dots
     barcode_display_height = 138
     aspect_ratio = barcode_pil.width / barcode_pil.height
-    barcode_display_width = int(barcode_display_height * aspect_ratio)
+    barcode_display_width = int(barcode_display_height * aspect_ratio * 1.96)  # Increased by 40% again (1.4 * 1.4)
     barcode_resized = barcode_pil.resize((barcode_display_width, barcode_display_height), Image.LANCZOS)
 
     # Create main label canvas
     print("Building label image...")
-    label_width = barcode_display_width + 500  # Extra width for right-side text area and border
-    label_height = 160  # Overall label height (dots)
+    label_width = barcode_display_width + 950  # Extra width for 50mm total length
+    label_height = 160  # Overall label height (dots) - 12mm width at 180 dpi
 
     img = Image.new('L', (label_width, label_height), 255)
     draw = ImageDraw.Draw(img)
 
     # Fonts - choose Arial if available, fallback to PIL default
     try:
-        font_medium = ImageFont.truetype("arial.ttf", 38)
-        font_small = ImageFont.truetype("arial.ttf", 33)
-        font_tiny = ImageFont.truetype("arial.ttf", 27)
+        font_medium = ImageFont.truetype("arial.ttf", 42)  # Increased from 38
+        font_small = ImageFont.truetype("arial.ttf", 38)   # Increased from 33
+        font_tiny = ImageFont.truetype("arial.ttf", 32)    # Increased from 27
     except:
         font_medium = ImageFont.load_default()
         font_small = ImageFont.load_default()
@@ -183,25 +183,25 @@ def create_product_label(barcode_data, mn_text, sw_text, ba_text, product_code, 
     barcode_y = (label_height - barcode_display_height) // 2
     img.paste(barcode_resized, (barcode_x, barcode_y))
 
-    # Draw text to the right of the barcode (shifted further right)
-    text_x = barcode_x + barcode_display_width + 40
-    y_pos = 10
+    # Draw text to the right of the barcode (positioned near right edge)
+    text_x = label_width - 480  # Position text
+    y_pos = 0  # Start at top (moved up from 2 to 0)
 
     # MN
     draw.text((text_x, y_pos), f"MN:{mn_text}", font=font_small, fill=0)
-    y_pos += 28
+    y_pos += 35  # Increased from 28 to 35 for more vertical spacing
 
     # SW
     draw.text((text_x, y_pos), f"SW:{sw_text}", font=font_small, fill=0)
-    y_pos += 28
+    y_pos += 35  # Increased from 28 to 35
 
     # BA
     draw.text((text_x, y_pos), f"BA:{ba_text}", font=font_small, fill=0)
-    y_pos += 28
+    y_pos += 32  # Increased from 28 to 32
 
     # Product code (smaller font)
     draw.text((text_x, y_pos), product_code, font=font_tiny, fill=0)
-    y_pos += 24
+    y_pos += 30  # Increased from 24 to 30
 
     # Date + time (HH:MM)
     draw.text((text_x, y_pos), date_text, font=font_tiny, fill=0)

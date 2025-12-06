@@ -404,18 +404,31 @@ class FactoryTestingPage {
     // Don't re-render the entire page on input, just update internal state
   }
 
-  // Static helper function for inline handlers
-  static updateField(field, value) {
-    if (window.factoryTestingPage) {
-      window.factoryTestingPage.preTesting[field] = value;
-      console.log('[Factory Testing] Field updated:', field, value);
-    }
+  // Helper function for inline handlers (instance method, not static)
+  updateField(field, value) {
+    this.preTesting[field] = value;
+    console.log('[Factory Testing] Field updated:', field, value);
+    // Do NOT call this.app.render() here to avoid losing focus
   }
 
   attachPreTestingListeners() {
-    // No longer needed - using inline handlers (onkeyup/onchange)
-    // But keeping this method for compatibility
-    console.log('[Factory Testing] Pre-testing inputs use inline handlers');
+    // Use event delegation on document to avoid losing focus on re-render
+    // Remove old listener if exists
+    if (this._preTestingInputHandler) {
+      document.removeEventListener('input', this._preTestingInputHandler);
+    }
+
+    // Add new listener with event delegation
+    this._preTestingInputHandler = (e) => {
+      const target = e.target;
+      if (target.dataset && target.dataset.field) {
+        this.preTesting[target.dataset.field] = target.value;
+        console.log('[Factory Testing] Field updated:', target.dataset.field, target.value);
+      }
+    };
+
+    document.addEventListener('input', this._preTestingInputHandler);
+    console.log('[Factory Testing] Pre-testing event delegation attached to document');
   }
 
   // Save current preTesting as defaults for selected device type
@@ -425,7 +438,8 @@ class FactoryTestingPage {
       const key = `factoryDefaults:${this.selectedDevice.replace(/\s+/g, '-').toLowerCase()}`;
       localStorage.setItem(key, JSON.stringify(this.preTesting));
       this.testProgress = 'Saved defaults for ' + this.selectedDevice;
-      this.app.render();
+      // Don't re-render to avoid losing focus on input fields
+      console.log('[Factory Testing] Defaults saved for', this.selectedDevice);
     } catch (e) {
       console.error('[Factory Testing] Failed to save defaults:', e && e.message);
     }
@@ -438,9 +452,9 @@ class FactoryTestingPage {
       const key = `factoryDefaults:${this.selectedDevice.replace(/\s+/g, '-').toLowerCase()}`;
       localStorage.removeItem(key);
       // Clear current preTesting fields
-      this.preTesting = { testerName: '', hardwareVersion: '', batchId: '', workOrderSerial: '' };
+      this.preTesting = { testerName: '', hardwareVersion: '', firmwareVersion: '', batchId: '', workOrderSerial: '' };
       this.testProgress = 'Reset defaults for ' + this.selectedDevice;
-      this.app.render();
+      this.app.render(); // Re-render is OK here since user clicked Reset button
     } catch (e) {
       console.error('[Factory Testing] Failed to reset defaults:', e && e.message);
     }
@@ -1519,23 +1533,23 @@ class FactoryTestingPage {
             <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label class="text-xs text-gray-600 dark:text-gray-300">Tester Name *</label>
-                <input id="tester-name" onkeyup="window.FactoryTestingPage.updateField('testerName', this.value)" value="${this.preTesting.testerName || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <input type="text" data-field="testerName" value="${this.preTesting.testerName || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
               <div>
                 <label class="text-xs text-gray-600 dark:text-gray-300">Hardware Version *</label>
-                <input onkeyup="window.FactoryTestingPage.updateField('hardwareVersion', this.value)" value="${this.preTesting.hardwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <input type="text" data-field="hardwareVersion" value="${this.preTesting.hardwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
               <div>
                 <label class="text-xs text-gray-600 dark:text-gray-300">Firmware Version *</label>
-                <input onkeyup="window.FactoryTestingPage.updateField('firmwareVersion', this.value)" value="${this.preTesting.firmwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <input type="text" data-field="firmwareVersion" value="${this.preTesting.firmwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
               <div>
                 <label class="text-xs text-gray-600 dark:text-gray-300">Batch ID *</label>
-                <input onkeyup="window.FactoryTestingPage.updateField('batchId', this.value)" value="${this.preTesting.batchId || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <input type="text" data-field="batchId" value="${this.preTesting.batchId || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
               <div>
                 <label class="text-xs text-gray-600 dark:text-gray-300">Work Order Serial *</label>
-                <input onkeyup="window.FactoryTestingPage.updateField('workOrderSerial', this.value)" value="${this.preTesting.workOrderSerial || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <input type="text" data-field="workOrderSerial" value="${this.preTesting.workOrderSerial || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
             </div>
           </div>
@@ -1596,19 +1610,19 @@ class FactoryTestingPage {
             <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label class="text-xs text-gray-600 dark:text-gray-300">Tester Name *</label>
-                <input id="tester-name" onkeyup="window.FactoryTestingPage.updateField('testerName', this.value)" value="${this.preTesting.testerName || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <input type="text" data-field="testerName" value="${this.preTesting.testerName || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
               <div>
                 <label class="text-xs text-gray-600 dark:text-gray-300">Hardware Version *</label>
-                <input onkeyup="window.FactoryTestingPage.updateField('hardwareVersion', this.value)" value="${this.preTesting.hardwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <input type="text" data-field="hardwareVersion" value="${this.preTesting.hardwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
               <div>
                 <label class="text-xs text-gray-600 dark:text-gray-300">Batch ID</label>
-                <input onkeyup="window.FactoryTestingPage.updateField('batchId', this.value)" value="${this.preTesting.batchId || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <input type="text" data-field="batchId" value="${this.preTesting.batchId || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
               <div>
                 <label class="text-xs text-gray-600 dark:text-gray-300">Work Order Serial</label>
-                <input onkeyup="window.FactoryTestingPage.updateField('workOrderSerial', this.value)" value="${this.preTesting.workOrderSerial || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <input type="text" data-field="workOrderSerial" value="${this.preTesting.workOrderSerial || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
             </div>
           </div>

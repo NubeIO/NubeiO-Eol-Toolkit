@@ -48,10 +48,7 @@ function resolvePythonExecutable() {
 
   if (process.platform === 'win32') {
     candidates.push(
-      { cmd: 'python', args: [] },
-      { cmd: 'py', args: ['-3'] },
-      { cmd: 'py', args: [] },
-      { cmd: 'python3', args: [] }
+      { cmd: 'py', args: [] }
     );
   } else {
     candidates.push(
@@ -1294,7 +1291,7 @@ ipcMain.handle('printer:printLabel', async (event, payload) => {
       };
 
       // Try python commands in order using recursive approach
-      const pythonCommands = ['python', 'python3', 'py'];
+      const pythonCommands = process.platform === 'win32' ? ['py'] : ['python3', 'python'];
       let currentIndex = 0;
 
       const tryNextCommand = () => {
@@ -1348,6 +1345,40 @@ ipcMain.handle('stm32:getCurrentDeviceType', () => {
     success: true,
     deviceType: OpenOCDSTM32Service.currentDeviceType
   };
+});
+
+
+ipcMain.handle('stm32:checkFlashProtection', async () => {
+  try {
+    return await OpenOCDSTM32Service.checkFlashProtection();
+  } catch (error) {
+    console.error('Failed to check flash protection:', error);
+    return {
+      success: false,
+      isProtected: false,
+      error: error.message
+    };
+  }
+});
+
+ipcMain.handle('stm32:unlockFlash', async (event) => {
+  try {
+    const mainWindow = BrowserWindow.getAllWindows()[0];
+
+    const result = await OpenOCDSTM32Service.unlockFlash((progress) => {
+      if (mainWindow) {
+        mainWindow.webContents.send('stm32:flash-progress', progress);
+      }
+    });
+
+    return result;
+  } catch (error) {
+    console.error('Failed to unlock flash:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
 });
 
 // Factory Testing IPC Handlers
@@ -1593,36 +1624,6 @@ ipcMain.handle('factoryTesting:zc:full', async (event) => {
     return await factoryTesting.zcFullTest();
   } catch (error) {
     console.error('ZC-LCD Full test failed:', error);
-    throw error;
-  }
-});
-
-ipcMain.handle('stm32:checkFlashProtection', async () => {
-  try {
-    return await OpenOCDSTM32Service.checkFlashProtection();
-  } catch (error) {
-    console.error('Failed to check flash protection:', error);
-    return {
-      success: false,
-      isProtected: false,
-      error: error.message
-    };
-  }
-});
-
-ipcMain.handle('stm32:unlockFlash', async (event) => {
-  try {
-    const mainWindow = BrowserWindow.getAllWindows()[0];
-
-    const result = await OpenOCDSTM32Service.unlockFlash((progress) => {
-      if (mainWindow) {
-        mainWindow.webContents.send('stm32:flash-progress', progress);
-      }
-    });
-
-    return result;
-  } catch (error) {
-    console.error('Failed to unlock flash:', error);
     throw error;
   }
 });
