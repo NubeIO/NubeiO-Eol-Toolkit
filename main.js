@@ -1,6 +1,8 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 const util = require('util');
+const fs = require('fs');
+const childProcess = require('child_process');
 
 // Configure console.log to show more details
 util.inspect.defaultOptions.maxArrayLength = null; // Show all array items
@@ -16,6 +18,80 @@ const ESP32Provisioning = require('./services/esp32-provisioning');
 const SerialConsole = require('./services/serial-console');
 const FleetMonitoringService = require('./services/fleet-monitoring');
 const OpenOCDSTM32Service = require('./services/openocd-stm32');
+const FactoryTestingService = require('./services/factory-testing');
+
+let cachedPythonCommand = null;
+
+function resolvePythonExecutable() {
+  if (cachedPythonCommand) {
+    return cachedPythonCommand;
+  }
+
+  const candidates = [];
+  const envCandidates = [
+    process.env.NUBE_PYTHON_PATH,
+    process.env.PRINT_PYTHON_PATH,
+    process.env.PYTHON_PATH,
+    process.env.PYTHON
+  ];
+
+  envCandidates.filter(Boolean).forEach((candidatePath) => {
+    const trimmed = candidatePath.trim();
+    if (!trimmed) return;
+
+    if (fs.existsSync(trimmed)) {
+      candidates.push({ cmd: trimmed, args: [] });
+    } else {
+      candidates.push({ cmd: trimmed, args: [] });
+    }
+  });
+
+  if (process.platform === 'win32') {
+    candidates.push(
+      { cmd: 'py', args: [] }
+    );
+  } else {
+    candidates.push(
+      { cmd: 'python3', args: [] },
+      { cmd: 'python', args: [] }
+    );
+  }
+
+  for (const candidate of candidates) {
+    const { cmd, args } = candidate;
+    if (!cmd) continue;
+
+    try {
+      const checkResult = childProcess.spawnSync(cmd, [...args, '--version'], {
+        encoding: 'utf8',
+        windowsHide: true
+      });
+
+      if (checkResult.status === 0) {
+        cachedPythonCommand = { cmd, args };
+        console.log('[Printer] Using Python executable:', cmd, args.join(' '));
+        return cachedPythonCommand;
+      }
+    } catch (err) {
+      // Ignore and try next candidate
+    }
+  }
+
+  return null;
+}
+
+function spawnPython(pythonArgs, options = {}) {
+  const pythonCommand = resolvePythonExecutable();
+  if (!pythonCommand) {
+    throw new Error('Python executable not found. Install Python or set NUBE_PYTHON_PATH.');
+  }
+
+  const finalArgs = [...pythonCommand.args, ...pythonArgs];
+  return childProcess.spawn(pythonCommand.cmd, finalArgs, {
+    windowsHide: true,
+    ...options
+  });
+}
 
 // Disable hardware acceleration to avoid libva errors
 app.disableHardwareAcceleration();
@@ -28,6 +104,7 @@ let tcpConsole = null;
 let provisioningService = null;
 let serialConsole = null;
 let fleetMonitoring = null;
+let factoryTesting = null;
 
 // Create application menu
 function createMenu() {
@@ -150,6 +227,17 @@ function createMenu() {
             const mainWindow = BrowserWindow.getFocusedWindow();
             if (mainWindow) {
               mainWindow.webContents.send('menu:switch-page', 'fleet-monitoring');
+            }
+          }
+        },
+        {
+          label: 'Factory Testing',
+          accelerator: 'CmdOrCtrl+6',
+          click: () => {
+            console.log('Menu: Factory Testing clicked');
+            const mainWindow = BrowserWindow.getFocusedWindow();
+            if (mainWindow) {
+              mainWindow.webContents.send('menu:switch-page', 'factory-testing');
             }
           }
         },
@@ -317,6 +405,9 @@ function createWindow() {
   tcpConsole.on('messages-cleared', () => {
     mainWindow.webContents.send('tcp:messages-cleared');
   });
+
+  // Store reference for printer listing
+  global.__MAIN_WINDOW__ = mainWindow;
 }
 
 // App lifecycle
@@ -332,6 +423,7 @@ app.whenReady().then(() => {
   provisioningService = new ESP32Provisioning();
   serialConsole = new SerialConsole();
   fleetMonitoring = new FleetMonitoringService();
+  factoryTesting = new FactoryTestingService();
 
   // Initialize ESP32 flasher
   esp32Flasher.initialize().catch(err => {
@@ -883,8 +975,26 @@ ipcMain.handle('stm32:detectSTLink', async () => {
   }
 });
 
+ipcMain.handle('stm32:detectSTLinkOnce', async (event, speed) => {
+  try {
+    const result = await OpenOCDSTM32Service.detectSTLinkOnce(speed);
+    return result;
+  } catch (error) {
+    return null;
+  }
+});
+
 ipcMain.handle('stm32:getStatus', () => {
   return OpenOCDSTM32Service.getStatus();
+});
+
+ipcMain.handle('stm32:disconnectCubeCLI', async () => {
+  try {
+    return await OpenOCDSTM32Service.disconnectCubeCLI();
+  } catch (error) {
+    console.error('disconnectCubeCLI failed:', error);
+    return { success: false, error: error.message };
+  }
 });
 
 ipcMain.handle('stm32:setVersion', (event, version) => {
@@ -894,13 +1004,141 @@ ipcMain.handle('stm32:setVersion', (event, version) => {
 
 ipcMain.handle('stm32:disconnect', async () => {
   try {
-    return await OpenOCDSTM32Service.disconnectSTLink();
+    // Try OpenOCD disconnect first
+    const openocdRes = await OpenOCDSTM32Service.disconnectSTLink().catch(e => ({ success: false, error: e.message }));
+    // Also attempt to disconnect CubeProgrammer CLI to fully release the ST-Link
+    const cubeRes = await OpenOCDSTM32Service.disconnectCubeCLI().catch(() => ({ success: false }));
+
+    return {
+      openocd: openocdRes,
+      cubecli: cubeRes
+    };
   } catch (error) {
     console.error('Failed to disconnect ST-Link:', error);
     return {
       success: false,
       error: error.message
     };
+  }
+});
+
+// Force release: kill any lingering OpenOCD or STM32_Programmer_CLI processes
+ipcMain.handle('stm32:forceRelease', async () => {
+  try {
+    const results = {};
+
+    // First try graceful disconnects so ST-Link is released cleanly
+    try {
+      results.openocd_disconnect = await OpenOCDSTM32Service.disconnectSTLink().catch(e => ({ success: false, error: e.message }));
+    } catch (e) {
+      results.openocd_disconnect = { success: false, error: e.message };
+    }
+
+    try {
+      results.cubecli_disconnect = await OpenOCDSTM32Service.disconnectCubeCLI().catch(e => ({ success: false, error: e.message }));
+    } catch (e) {
+      results.cubecli_disconnect = { success: false, error: e.message };
+    }
+
+    // If graceful disconnects indicate success, return early and let UI refresh
+    const openOk = results.openocd_disconnect && results.openocd_disconnect.success;
+    const cliOk = results.cubecli_disconnect && results.cubecli_disconnect.success;
+    if (openOk || cliOk) {
+      // Append to diagnostics and return tails
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        const logPath = path.join(__dirname, 'cubecli-diagnostics.log');
+        fs.appendFileSync(logPath, `\n=== FORCE RELEASE (graceful) (${new Date().toISOString()}) ===\n` + JSON.stringify(results, null, 2) + '\n');
+      } catch (e) {}
+
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        const readTail = (p, lines = 200) => {
+          try {
+            if (!fs.existsSync(p)) return '';
+            const content = fs.readFileSync(p, 'utf8');
+            const arr = content.split(/\r?\n/);
+            return arr.slice(-lines).join('\n');
+          } catch (e) { return ''; }
+        };
+
+        const pathCube = require('path').join(__dirname, 'cubecli-diagnostics.log');
+        const pathOpen = require('path').join(__dirname, 'openocd-diagnostics.log');
+        const tailCube = readTail(pathCube, 200);
+        const tailOpen = readTail(pathOpen, 200);
+        return { success: true, results, logTailCube: tailCube, logTailOpenOCD: tailOpen };
+      } catch (e) {
+        return { success: true, results };
+      }
+    }
+
+    // If graceful disconnect did not succeed, perform force kills
+    // Try to kill OpenOCD
+    try {
+      const { spawnSync } = require('child_process');
+      if (process.platform === 'win32') {
+        const kill = spawnSync('taskkill', ['/F', '/IM', 'openocd.exe']);
+        results.openocd_kill = { status: kill.status, stdout: kill.stdout ? kill.stdout.toString() : '', stderr: kill.stderr ? kill.stderr.toString() : '' };
+      } else {
+        const kill = spawnSync('pkill', ['-f', 'openocd']);
+        results.openocd_kill = { status: kill.status, stdout: kill.stdout ? kill.stdout.toString() : '', stderr: kill.stderr ? kill.stderr.toString() : '' };
+      }
+    } catch (e) {
+      results.openocd_kill = { error: e.message };
+    }
+
+    // Try to kill STM32_Programmer_CLI
+    try {
+      const { spawnSync } = require('child_process');
+      if (process.platform === 'win32') {
+        const killCli = spawnSync('taskkill', ['/F', '/IM', 'STM32_Programmer_CLI.exe']);
+        results.cubecli_kill = { status: killCli.status, stdout: killCli.stdout ? killCli.stdout.toString() : '', stderr: killCli.stderr ? killCli.stderr.toString() : '' };
+      } else {
+        const killCli = spawnSync('pkill', ['-f', 'STM32_Programmer_CLI']);
+        results.cubecli_kill = { status: killCli.status, stdout: killCli.stdout ? killCli.stdout.toString() : '', stderr: killCli.stderr ? killCli.stderr.toString() : '' };
+      }
+    } catch (e) {
+      results.cubecli_kill = { error: e.message };
+    }
+
+    // Append to diagnostics
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const logPath = path.join(__dirname, 'cubecli-diagnostics.log');
+      fs.appendFileSync(logPath, `\n=== FORCE RELEASE (${new Date().toISOString()}) ===\n` + JSON.stringify(results, null, 2) + '\n');
+    } catch (e) {}
+
+    // Read last lines from diagnostics to help UI show immediate feedback
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const readTail = (p, lines = 200) => {
+        try {
+          if (!fs.existsSync(p)) return '';
+          const content = fs.readFileSync(p, 'utf8');
+          const arr = content.split(/\r?\n/);
+          return arr.slice(-lines).join('\n');
+        } catch (e) {
+          return '';
+        }
+      };
+
+      const pathCube = path.join(__dirname, 'cubecli-diagnostics.log');
+      const pathOpen = path.join(__dirname, 'openocd-diagnostics.log');
+
+      const tailCube = readTail(pathCube, 200);
+      const tailOpen = readTail(pathOpen, 200);
+
+      return { success: true, results, logTailCube: tailCube, logTailOpenOCD: tailOpen };
+    } catch (e) {
+      return { success: true, results };
+    }
+  } catch (error) {
+    console.error('Force release failed:', error);
+    return { success: false, error: error.message };
   }
 });
 
@@ -911,6 +1149,181 @@ ipcMain.handle('dialog:openFile', async (event, options) => {
   }
 
   return await dialog.showOpenDialog(mainWindow, options);
+});
+
+// Printer IPC Handlers for Brother PT-P900W USB printing
+ipcMain.handle('printer:getPrinters', async () => {
+  try {
+    const execPromise = util.promisify(childProcess.exec);
+    
+    // Use PowerShell to get installed printers
+    const { stdout } = await execPromise('powershell -Command "Get-Printer | Select-Object -ExpandProperty Name"');
+    const printers = stdout.trim().split('\n').map(name => ({ name: name.trim() })).filter(p => p.name);
+    console.log('Found printers:', printers);
+    return printers;
+  } catch (e) {
+    console.error('Failed to get printers:', e);
+    return [];
+  }
+});
+
+ipcMain.handle('printer:checkConnection', async () => {
+  try {
+    const path = require('path');
+    const pythonScriptDir = path.join(__dirname, 'embedded', 'printer-scripts');
+    const pythonScript = path.join(pythonScriptDir, 'print_product_label.py');
+
+    if (!require('fs').existsSync(pythonScript)) {
+      return { connected: false, error: `Python script not found: ${pythonScript}` };
+    }
+
+    return await new Promise((resolve) => {
+      let pythonProcess;
+      try {
+        pythonProcess = spawnPython([pythonScript, '--check'], {
+          cwd: pythonScriptDir
+        });
+      } catch (spawnError) {
+        resolve({ connected: false, error: spawnError.message });
+        return;
+      }
+
+      let output = '';
+      let errorOutput = '';
+
+      pythonProcess.stdout.on('data', (data) => {
+        output += data.toString();
+        console.log('[Printer check] stdout:', data.toString().trim());
+      });
+
+      pythonProcess.stderr.on('data', (data) => {
+        errorOutput += data.toString();
+        console.error('[Printer check] stderr:', data.toString().trim());
+      });
+
+      pythonProcess.on('close', (code) => {
+        const connected = code === 0;
+        if (!connected) {
+          console.warn('[Printer check] exit code', code, errorOutput || output);
+        }
+        resolve({ connected, output, error: connected ? null : (errorOutput || output).trim() });
+      });
+    });
+  } catch (e) {
+    console.error('Failed to check printer connection:', e);
+    return { connected: false, error: e.message };
+  }
+});
+
+ipcMain.handle('printer:printLabel', async (event, payload) => {
+  try {
+    if (!payload) {
+      return { success: false, error: 'No payload provided' };
+    }
+
+    const { spawn } = require('child_process');
+    const path = require('path');
+    
+    // Path to Python print script from embedded folder
+    const pythonScriptDir = path.join(__dirname, 'embedded', 'printer-scripts');
+    const pythonScript = path.join(pythonScriptDir, 'print_product_label.py');
+    
+    console.log('Printing label with Python script:', pythonScript);
+    console.log('Payload:', JSON.stringify(payload, null, 2));
+    
+    // Check if script exists
+    if (!require('fs').existsSync(pythonScript)) {
+      return { success: false, error: `Python script not found: ${pythonScript}` };
+    }
+    
+    return await new Promise((resolve) => {
+      // Call Python script with arguments
+      // Format: python print_product_label.py <barcode> <mn> <firmware> <batchId> <uid> <date>
+      // Barcode is used for barcode generation and traceability
+      const args = [
+        pythonScript,
+        payload.barcode || payload.uid || '',           // Barcode (UID)
+        payload.mn || '',                                // MN: Make+Model
+        payload.firmware || '',                          // FW: Firmware version
+        payload.batchId || '',                           // BA: Batch ID
+        payload.uid || '',                               // UID (for label display)
+        payload.date || new Date().toISOString().slice(0, 10).replace(/-/g, '/')  // Date
+      ];
+      
+      console.log('Calling Python with args:', args);
+      
+      // Try multiple Python executables (python, python3, py)
+      const tryPythonCommand = (pythonCmd) => {
+        return new Promise((cmdResolve) => {
+          const pythonProcess = spawn(pythonCmd, args, { 
+            cwd: pythonScriptDir,
+            shell: true 
+          });
+          
+          let output = '';
+          let errorOutput = '';
+          
+          pythonProcess.stdout.on('data', (data) => {
+            output += data.toString();
+            console.log(`[${pythonCmd}] stdout:`, data.toString());
+          });
+          
+          pythonProcess.stderr.on('data', (data) => {
+            errorOutput += data.toString();
+            console.error(`[${pythonCmd}] stderr:`, data.toString());
+          });
+          
+          pythonProcess.on('error', (err) => {
+            console.error(`[${pythonCmd}] Process error:`, err.message);
+            cmdResolve({ success: false, error: err.message, cmd: pythonCmd });
+          });
+          
+          pythonProcess.on('close', (code) => {
+            if (code === 0) {
+              console.log(`[${pythonCmd}] Print successful`);
+              cmdResolve({ success: true, output, cmd: pythonCmd });
+            } else {
+              console.error(`[${pythonCmd}] Exit code ${code}`);
+              cmdResolve({ success: false, error: `Exit code ${code}: ${errorOutput}`, cmd: pythonCmd });
+            }
+          });
+        });
+      };
+      
+      // Try python commands in order using recursive approach
+      const pythonCommands = process.platform === 'win32' ? ['py'] : ['python3', 'python'];
+      let currentIndex = 0;
+      
+      const tryNextCommand = () => {
+        if (currentIndex >= pythonCommands.length) {
+          // All attempts failed
+          resolve({ 
+            success: false, 
+            error: `Print failed: Python not found. Tried: ${pythonCommands.join(', ')}. Please install Python from python.org or Microsoft Store.`
+          });
+          return;
+        }
+        
+        const cmd = pythonCommands[currentIndex];
+        console.log(`Trying Python command: ${cmd}`);
+        
+        tryPythonCommand(cmd).then((result) => {
+          if (result.success) {
+            resolve(result);
+          } else {
+            console.log(`${cmd} failed: ${result.error}, trying next...`);
+            currentIndex++;
+            tryNextCommand();
+          }
+        });
+      };
+      
+      tryNextCommand();
+    });
+  } catch (error) {
+    console.error('Print error:', error);
+    return { success: false, error: error.message };
+  }
 });
 
 // STM32 Device Type Management
@@ -934,6 +1347,7 @@ ipcMain.handle('stm32:getCurrentDeviceType', () => {
   };
 });
 
+<<<<<<< HEAD
 ipcMain.handle('stm32:checkFlashProtection', async () => {
   try {
     return await OpenOCDSTM32Service.checkFlashProtection();
@@ -960,6 +1374,251 @@ ipcMain.handle('stm32:unlockFlash', async (event) => {
     return result;
   } catch (error) {
     console.error('Failed to unlock flash:', error);
+=======
+// Factory Testing IPC Handlers
+ipcMain.handle('factoryTesting:connect', async (event, port, baudRate, useUnlock = true, deviceType = null) => {
+  try {
+    return await factoryTesting.connect(port, baudRate, useUnlock, deviceType);
+  } catch (error) {
+    console.error('Failed to connect factory testing:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:disconnect', async () => {
+  try {
+    return await factoryTesting.disconnect();
+  } catch (error) {
+    console.error('Failed to disconnect factory testing:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:readDeviceInfo', async (event, deviceType = null) => {
+  try {
+    return await factoryTesting.readDeviceInfo(deviceType);
+  } catch (error) {
+    console.error('Failed to read device info:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:runFactoryTests', async (event, device) => {
+  try {
+    // Setup progress callback
+    factoryTesting.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) {
+        mainWindow.webContents.send('factoryTesting:progress', progress);
+      }
+    });
+
+    return await factoryTesting.runFactoryTests(device);
+  } catch (error) {
+    console.error('Failed to run factory tests:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:saveResults', async (event, version, device, deviceInfo, testResults, preTesting) => {
+  try {
+    return await factoryTesting.saveResults(version, device, deviceInfo, testResults, preTesting);
+  } catch (error) {
+    console.error('Failed to save factory test results:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:getStatus', () => {
+  return factoryTesting.getStatus();
+});
+
+// ACB-M specific test handlers
+ipcMain.handle('factoryTesting:acb:wifi', async (event) => {
+  try {
+    factoryTesting.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) mainWindow.webContents.send('factoryTesting:progress', progress);
+    });
+    return await factoryTesting.acbWifiTest();
+  } catch (error) {
+    console.error('ACB WiFi test failed:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:acb:rs485', async (event) => {
+  try {
+    factoryTesting.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) mainWindow.webContents.send('factoryTesting:progress', progress);
+    });
+    return await factoryTesting.acbRs485Test();
+  } catch (error) {
+    console.error('ACB RS485 test failed:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:acb:rs485_2', async (event) => {
+  try {
+    factoryTesting.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) mainWindow.webContents.send('factoryTesting:progress', progress);
+    });
+    return await factoryTesting.acbRs485_2Test();
+  } catch (error) {
+    console.error('ACB RS485-2 test failed:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:acb:eth', async (event) => {
+  try {
+    factoryTesting.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) mainWindow.webContents.send('factoryTesting:progress', progress);
+    });
+    return await factoryTesting.acbEthTest();
+  } catch (error) {
+    console.error('ACB ETH test failed:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:acb:lora', async (event) => {
+  try {
+    factoryTesting.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) mainWindow.webContents.send('factoryTesting:progress', progress);
+    });
+    return await factoryTesting.acbLoraTest();
+  } catch (error) {
+    console.error('ACB LoRa test failed:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:acb:rtc', async (event) => {
+  try {
+    factoryTesting.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) mainWindow.webContents.send('factoryTesting:progress', progress);
+    });
+    return await factoryTesting.acbRtcTest();
+  } catch (error) {
+    console.error('ACB RTC test failed:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:acb:full', async (event) => {
+  try {
+    factoryTesting.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) mainWindow.webContents.send('factoryTesting:progress', progress);
+    });
+    return await factoryTesting.acbFullTest();
+  } catch (error) {
+    console.error('ACB Full test failed:', error);
+    throw error;
+  }
+});
+
+// Two-step connect: probe connect-only and return working token
+ipcMain.handle('stm32:probeConnect', async () => {
+  try {
+    return await OpenOCDSTM32Service.probeConnect_via_CubeCLI();
+  } catch (error) {
+    console.error('probeConnect failed:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Flash using connect token (used after a successful probeConnect and user released RESET)
+ipcMain.handle('stm32:flashWithToken', async (event, connectToken, firmwarePath, version) => {
+  try {
+    if (version !== undefined) {
+      OpenOCDSTM32Service.setVersion(version);
+    }
+
+    const mainWindow = BrowserWindow.getAllWindows()[0];
+
+    const result = await OpenOCDSTM32Service.flashWithToken_via_CubeCLI(connectToken, firmwarePath, (progress) => {
+      if (mainWindow) mainWindow.webContents.send('stm32:flash-progress', progress);
+    });
+
+    if (mainWindow) mainWindow.webContents.send('stm32:flash-complete', result);
+    return result;
+  } catch (error) {
+    console.error('flashWithToken failed:', error);
+    const mainWindow = BrowserWindow.getAllWindows()[0];
+    if (mainWindow) mainWindow.webContents.send('stm32:flash-error', { error: error.message });
+    return { success: false, error: error.message };
+  }
+});
+
+// Abort backend processes immediately (force kill)
+ipcMain.handle('stm32:abort', async () => {
+  try {
+    const res = await OpenOCDSTM32Service.abort();
+    return res;
+  } catch (e) {
+    console.error('stm32:abort failed:', e);
+    return { success: false, error: e.message };
+  }
+});
+
+// ZC-LCD specific test handlers
+ipcMain.handle('factoryTesting:zc:wifi', async (event) => {
+  try {
+    factoryTesting.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) mainWindow.webContents.send('factoryTesting:progress', progress);
+    });
+    return await factoryTesting.zcWifiTest();
+  } catch (error) {
+    console.error('ZC-LCD WiFi test failed:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:zc:rs485', async (event) => {
+  try {
+    factoryTesting.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) mainWindow.webContents.send('factoryTesting:progress', progress);
+    });
+    return await factoryTesting.zcRs485Test();
+  } catch (error) {
+    console.error('ZC-LCD RS485 test failed:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:zc:i2c', async (event) => {
+  try {
+    factoryTesting.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) mainWindow.webContents.send('factoryTesting:progress', progress);
+    });
+    return await factoryTesting.zcI2cTest();
+  } catch (error) {
+    console.error('ZC-LCD I2C test failed:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('factoryTesting:zc:full', async (event) => {
+  try {
+    factoryTesting.setProgressCallback((progress) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) mainWindow.webContents.send('factoryTesting:progress', progress);
+    });
+    return await factoryTesting.zcFullTest();
+  } catch (error) {
+    console.error('ZC-LCD Full test failed:', error);
+>>>>>>> origin/factory-testing-micro-edge
     throw error;
   }
 });

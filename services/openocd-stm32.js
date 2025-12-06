@@ -27,6 +27,15 @@ const DEVICE_TYPES = {
         supportsLoRaID: false,
         flashAddress: '0x08000000',
         uidAddress: '0x1FFFF7AC'
+    },
+    MICRO_EDGE: {
+        name: 'Micro Edge',
+        mcu: 'STM32L432KBU6',
+        target: 'stm32l4x.cfg',
+        flashSize: '128KB',
+        supportsLoRaID: true,
+        flashAddress: '0x08000000',
+        uidAddress: '0x1FFF7590'
     }
 };
 
@@ -42,7 +51,23 @@ class OpenOCDSTM32Service {
         let openocdBinary, scriptsSubPath;
 
         if (platform === 'win32') {
-            openocdBinary = path.join(basePath, 'embedded/openocd-binaries/windows/bin/openocd.exe');
+            // Allow environment override to prefer system OpenOCD
+            const envOpenOcd = process.env.OPENOCD_BIN;
+            let systemOpenOcd = null;
+            try {
+                const { spawnSync } = require('child_process');
+                const where = spawnSync('where', ['openocd.exe'], { shell: true });
+                const out = where.stdout ? where.stdout.toString().trim() : '';
+                if (out) systemOpenOcd = out.split('\r\n')[0];
+            } catch (e) {}
+
+            if (envOpenOcd && fs.existsSync(envOpenOcd)) {
+                openocdBinary = envOpenOcd;
+            } else if (systemOpenOcd && fs.existsSync(systemOpenOcd)) {
+                openocdBinary = systemOpenOcd;
+            } else {
+                openocdBinary = path.join(basePath, 'embedded/openocd-binaries/windows/bin/openocd.exe');
+            }
             scriptsSubPath = 'embedded/openocd-binaries/windows/openocd/scripts';
         } else if (platform === 'linux') {
             openocdBinary = path.join(basePath, 'embedded/openocd-binaries/linux/bin/openocd');
@@ -102,6 +127,603 @@ class OpenOCDSTM32Service {
     }
 
     /**
+     * Single quick detection attempt (for continuous retry)
+     * @returns {Object} Detection result or null if failed
+     */
+    async detectSTLinkOnce(speed = 4000) {
+        // If CubeProgrammer CLI is available, prefer a quick probe-list check
+        try {
+            const probes = await this.listCubeProbes();
+            if (probes && probes.found) {
+                return { success: true, detected: true, info: { interface: 'ST-Link', raw: probes.raw }, output: probes.raw };
+            }
+        } catch (e) {
+            // ignore, fallback to OpenOCD below
+        }
+
+        if (!this.checkOpenOCD()) {
+            throw new Error('OpenOCD binary not found');
+        }
+
+        const deviceConfig = this.getDeviceConfig();
+
+        // Quick detection attempt for Micro Edge - match STM32CubeProgrammer settings
+        // STM32CubeProgrammer uses: SWD, 4000 kHz, Software reset
+        const args = [
+            '-s', this.scriptsPath,
+            '-f', 'interface/stlink.cfg',
+            '-c', 'transport select hla_swd',
+            '-c', `adapter speed ${speed}`,
+            '-c', 'source [find target/stm32l4x.cfg]',
+            '-c', 'init',
+            '-c', 'targets',
+            '-c', 'shutdown'
+        ];
+
+        try {
+            const result = await this.executeOpenOCD(args, null, { timeout: 8000 });
+
+            const output = (result && result.output) ? result.output : '';
+            const detected = output.includes('stm32l4') || output.includes('Cortex-M4') || output.includes('0x435');
+
+            if (detected) {
+                // Try to extract some info
+                const chipMatch = output.match(/Device\s+ID\s*:\s*0x([0-9a-fA-F]+)/i) || output.match(/Device\s*:\s*(STM32[\w\-]+)/i);
+                const flashMatch = output.match(/Flash\s+size\s*:\s*(\d+\s*kB)/i) || output.match(/flash size = (\d+)/i);
+
+                const info = {
+                    chip: chipMatch ? (chipMatch[0] || chipMatch[1]) : 'STM32L4',
+                    flashSize: flashMatch ? flashMatch[1] : undefined
+                };
+
+                return { success: true, detected: true, info, output };
+            }
+
+            // If OpenOCD timed out or returned no target, try STM32CubeProgrammer CLI fallback
+            const cubeResult = await this.detectViaCubeProgrammer();
+            if (cubeResult && cubeResult.detected) {
+                return { success: true, detected: true, info: cubeResult.info, output: cubeResult.output };
+            }
+
+            return { success: false, detected: false, output };
+        } catch (error) {
+            // Attempt fallback via STM32CubeProgrammer if OpenOCD crashed
+            const cubeResult = await this.detectViaCubeProgrammer();
+            if (cubeResult && cubeResult.detected) {
+                return { success: true, detected: true, info: cubeResult.info, output: cubeResult.output };
+            }
+            return { success: false, detected: false, output: error.message };
+        }
+    }
+
+    /**
+     * Attempt to detect the STM32 using STM32CubeProgrammer CLI as a fallback
+     */
+    async detectViaCubeProgrammer() {
+        const possiblePaths = [
+            'C:\\Program Files (x86)\\STMicroelectronics\\STM32Cube\\STM32CubeProgrammer\\bin\\STM32_Programmer_CLI.exe',
+            'C:\\Program Files\\STMicroelectronics\\STM32Cube\\STM32CubeProgrammer\\bin\\STM32_Programmer_CLI.exe',
+            'C:\\Program Files (x86)\\STMicroelectronics\\stlink_server\\STM32_Programmer_CLI.exe'
+        ];
+
+        let cliPath = null;
+        for (const p of possiblePaths) {
+            if (fs.existsSync(p)) { cliPath = p; break; }
+        }
+
+        if (!cliPath) {
+            // Try PATH lookup
+            try {
+                const which = spawnSync('where', ['STM32_Programmer_CLI.exe'], { shell: true });
+                const out = which.stdout ? which.stdout.toString().trim() : '';
+                if (out) cliPath = out.split('\r\n')[0];
+            } catch (e) {}
+        }
+
+        if (!cliPath) return null;
+
+        try {
+            const permutations = [
+                ['-c', 'connect port=SWD'],
+                ['-c', 'connect port=SWD mode=UR'],
+                ['-c', 'connect port=SWD frequency=4000'],
+                ['-c', 'connect port=SWD frequency=4000 mode=UR']
+            ];
+
+            for (const args of permutations) {
+                try {
+                    const proc = spawn(cliPath, args);
+                    let out = '';
+                    let err = '';
+                    proc.stdout.on('data', d => out += d.toString());
+                    proc.stderr.on('data', d => err += d.toString());
+
+                    const exit = await new Promise((resolve) => proc.on('close', (c) => resolve(c)));
+                    const combined = (out + err).trim();
+
+                    // Parse common success markers and device id
+                    const devIdMatch = combined.match(/Device ID\s*:?\s*0x([0-9a-fA-F]+)/i) || combined.match(/Device\s*name\s*:\s*(STM32[\w\-\d]+)/i);
+                    const connected = /connected|device id|device name|Device ID/i.test(combined);
+
+                    if (connected && devIdMatch) {
+                        const info = { chip: devIdMatch[1] ? `DeviceID: 0x${devIdMatch[1]}` : devIdMatch[0], output: combined };
+                        return { detected: true, info, output: combined };
+                    }
+
+                    // If the CLI reported 'Unable to get core ID' but also printed Device ID earlier, accept it
+                    if (/Unable to get core ID/i.test(combined) && /Device ID/i.test(combined)) {
+                        const info = { chip: 'STM32 (partial)', output: combined };
+                        return { detected: true, info, output: combined };
+                    }
+
+                    // otherwise try next permutation
+                } catch (e) {
+                    // try next permutation
+                }
+            }
+
+            return { detected: false, output: '' };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /**
+     * Helper: run STM32CubeProgrammer CLI with args and return combined output and exit code
+     */
+    async runCubeCLI(args, timeoutMs = 15000) {
+        const spawn = require('child_process').spawn;
+        const cliPath = this._findCubeCLI();
+        if (!cliPath) return null;
+
+        return await new Promise((resolve) => {
+            try {
+                const proc = spawn(cliPath, args);
+                let out = '';
+                let err = '';
+                proc.stdout.on('data', d => out += d.toString());
+                proc.stderr.on('data', d => err += d.toString());
+
+                const timeout = setTimeout(() => {
+                    try { proc.kill(); } catch (e) {}
+                    const combined = out + err;
+                    try {
+                        const logPath = path.join(__dirname, '..', 'cubecli-diagnostics.log');
+                        fs.appendFileSync(logPath, `\n=== CubeCLI TIMEOUT (${new Date().toISOString()}) ===\n` + cliPath + ' ' + args.join(' ') + '\n' + combined + '\n');
+                    } catch (e) {}
+                    resolve({ exit: null, output: combined, timedOut: true });
+                }, timeoutMs);
+
+                proc.on('close', (code) => {
+                    clearTimeout(timeout);
+                    const combined = (out + err).trim();
+                    try {
+                        const logPath = path.join(__dirname, '..', 'cubecli-diagnostics.log');
+                        fs.appendFileSync(logPath, `\n=== CubeCLI EXIT code=${code} (${new Date().toISOString()}) ===\n` + cliPath + ' ' + args.join(' ') + '\n' + combined + '\n');
+                    } catch (e) {}
+                    resolve({ exit: code, output: combined, timedOut: false });
+                });
+            } catch (e) {
+                resolve(null);
+            }
+        });
+    }
+
+    _findCubeCLI() {
+        const possiblePaths = [
+            'C:\\Program Files (x86)\\STMicroelectronics\\STM32Cube\\STM32CubeProgrammer\\bin\\STM32_Programmer_CLI.exe',
+            'C:\\Program Files\\STMicroelectronics\\STM32Cube\\STM32CubeProgrammer\\bin\\STM32_Programmer_CLI.exe',
+            'C:\\Program Files (x86)\\STMicroelectronics\\stlink_server\\STM32_Programmer_CLI.exe'
+        ];
+
+        for (const p of possiblePaths) {
+            if (fs.existsSync(p)) return p;
+        }
+
+        try {
+            const { spawnSync } = require('child_process');
+            const which = spawnSync('where', ['STM32_Programmer_CLI.exe'], { shell: true });
+            const out = which.stdout ? which.stdout.toString().trim() : '';
+            if (out) return out.split('\r\n')[0];
+        } catch (e) {}
+
+        return null;
+    }
+
+    /**
+     * List connected probes via STM32CubeProgrammer CLI (-l)
+     * Returns parsed info or null
+     */
+    async listCubeProbes() {
+        const cli = this._findCubeCLI();
+        if (!cli) return null;
+
+        try {
+            const res = await this.runCubeCLI(['-l'], 5000);
+            if (!res) return null;
+            const out = res.output || '';
+            // Look for ST-Link probe section
+            const stlinkMatch = out.match(/ST-Link Probe\s*\d+\s*:[\s\S]*?ST-LINK SN\s*:\s*([0-9A-Fa-f]+)/i);
+            if (stlinkMatch) {
+                return { found: true, raw: out, serial: stlinkMatch[1] };
+            }
+            // If probe list exists but no ST-Link, still return raw
+            if (/ST-Link Probe/i.test(out) || /STLINK/i.test(out)) {
+                return { found: true, raw: out };
+            }
+            return null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /**
+     * Use STM32CubeProgrammer CLI to read UID for Micro Edge
+     */
+    async readUID_via_CubeCLI() {
+        const deviceConfig = this.getDeviceConfig();
+        const cli = this._findCubeCLI();
+        if (!cli) throw new Error('STM32_Programmer_CLI not found');
+
+        // Use text memory read command. CLI syntax: -c "connect port=SWD [frequency=<kHz>]" -c "memory read <addr> <size>"
+        const addr = deviceConfig.uidAddress;
+        // read 12 bytes (3 words)
+        const connectToken = `connect port=SWD frequency=4000`;
+        const args = ['-c', connectToken, '-c', `memory read ${addr} 12`, '-c', 'disconnect'];
+        const res = await this.runCubeCLI(args, 10000);
+        if (!res) throw new Error('Failed to run CubeProg CLI');
+
+        const combined = res.output || '';
+        // Parse hex bytes from output lines like: "0x1FFF7590 : 0x12345678 0x9ABCDEF0 0x00000000"
+        const match = combined.match(/0x[0-9a-fA-F]+\s*:\s*0x([0-9a-fA-F]{8})\s*0x([0-9a-fA-F]{8})\s*0x([0-9a-fA-F]{8})/i);
+        if (match) {
+            const uid0 = parseInt(match[1], 16);
+            const uid1 = parseInt(match[2], 16);
+            const uid2 = parseInt(match[3], 16);
+            return { success: true, uid0, uid1, uid2, raw: combined };
+        }
+
+        // try alternative parsing for space-separated words
+        const words = combined.match(/([0-9a-fA-F]{8})/g);
+        if (words && words.length >= 3) {
+            const uid0 = parseInt(words[0], 16);
+            const uid1 = parseInt(words[1], 16);
+            const uid2 = parseInt(words[2], 16);
+            return { success: true, uid0, uid1, uid2, raw: combined };
+        }
+
+        throw new Error('Failed to parse UID from CubeProg CLI output');
+    }
+
+    /**
+     * Use CubeProgrammer CLI to flash firmware (for Micro Edge)
+     */
+    async flashFirmware_via_CubeCLI(firmwarePath, progressCallback = null) {
+        const cli = this._findCubeCLI();
+        if (!cli) throw new Error('STM32_Programmer_CLI not found');
+        const normalized = firmwarePath.replace(/\\/g, '/');
+        // Try multiple connect variants and retries to handle timing/reset modes
+        const probes = await this.listCubeProbes().catch(() => null);
+        let apIndex = null;
+        if (probes && probes.raw) {
+            const m = probes.raw.match(/Access Port Number\s*:\s*(\d+)/i);
+            if (m) apIndex = parseInt(m[1], 10);
+        }
+
+        // prefer simple connect tokens (avoid frequency which some CLI rejects)
+        const connectVariants = [];
+        if (apIndex != null) {
+            connectVariants.push(`port=SWD index=${apIndex}`);
+            connectVariants.push(`port=SWD index=${apIndex} mode=UR`);
+        }
+        connectVariants.push('port=SWD');
+
+        let lastErrOutput = '';
+        const timeoutMs = 3 * 60 * 1000; // 3 minutes for flash
+
+        // Try each connect variant, and for each variant perform a few connect attempts
+        for (const connectToken of connectVariants) {
+            if (progressCallback) progressCallback({ stage: 'connect', message: `Trying connect: ${connectToken}` });
+
+            // Try a small number of connect attempts to cope with reset timing
+            const attempts = [300, 800, 1500]; // ms delays between connect and flash
+            let connected = false;
+            let connectOutput = '';
+
+            for (let i = 0; i < attempts.length && !connected; i++) {
+                // 1) Try a plain connect to probe the core (separate process)
+                try {
+                    const connArgs = ['--connect', connectToken];
+                    const connRes = await this.runCubeCLI(connArgs, 8000);
+                    connectOutput = connRes ? connRes.output || '' : '';
+
+                    // If connect returned device info, consider it a success
+                    if (connRes && connRes.exit === 0 && /Device ID|Device name|Device\s*:|Device ID/i.test(connectOutput)) {
+                        connected = true;
+                        break;
+                    }
+
+                    // Some CLI runs return non-zero but still print device info; accept that too
+                    if (connRes && /Device ID|Device name/i.test(connectOutput)) {
+                        connected = true;
+                        break;
+                    }
+                } catch (e) {
+                    connectOutput = e.message || '';
+                }
+
+                // 2) Try a score check which may be slightly different internally
+                try {
+                    const scoreArgs = ['--connect', connectToken, '--score'];
+                    const scoreRes = await this.runCubeCLI(scoreArgs, 8000);
+                    const scoreOut = scoreRes ? scoreRes.output || '' : '';
+                    if (scoreRes && scoreRes.exit === 0 && !/Unable to get core ID|No STM32 target found/i.test(scoreOut)) {
+                        connected = true;
+                        connectOutput = scoreOut;
+                        break;
+                    }
+                } catch (e) {
+                    // ignore and continue to next attempt
+                }
+
+                // wait before next attempt to allow hardware reset/release timing
+                await new Promise(r => setTimeout(r, attempts[i]));
+            }
+
+            lastErrOutput = connectOutput || lastErrOutput;
+
+            if (!connected) {
+                // try next connect variant
+                continue;
+            }
+
+            // Proceed to erase/download/verify using the connectToken
+            if (progressCallback) progressCallback({ stage: 'flash', message: `Flashing using ${connectToken}` });
+
+            const args = [
+                '--connect', connectToken,
+                '--erase', 'all',
+                '--download', normalized, '0x08000000',
+                '--verify'
+            ];
+
+            const res = await this.runCubeCLI(args, timeoutMs);
+            const out = res ? res.output || '' : '';
+            lastErrOutput = out || lastErrOutput;
+
+            if (res && res.exit === 0 && /Download verified successfully/i.test(out)) {
+                if (progressCallback) progressCallback({ stage: 'complete', message: 'Flash completed successfully' });
+                return { success: true, output: out, connectToken };
+            }
+
+            // If this attempt failed, continue to next variant
+            await new Promise(r => setTimeout(r, 300));
+        }
+
+        throw new Error(`CubeProg flash failed: ${lastErrOutput || 'no output'}`);
+    }
+
+    /**
+     * Probe connect-only via CubeCLI: try multiple connect variants and return the working token
+     */
+    async probeConnect_via_CubeCLI() {
+        const cli = this._findCubeCLI();
+        if (!cli) return { success: false, error: 'STM32_Programmer_CLI not found' };
+
+        const probes = await this.listCubeProbes().catch(() => null);
+        let apIndex = null;
+        if (probes && probes.raw) {
+            const m = probes.raw.match(/Access Port Number\s*:\s*(\d+)/i);
+            if (m) apIndex = parseInt(m[1], 10);
+        }
+
+        const connectVariants = [];
+        if (apIndex != null) {
+            connectVariants.push(`port=SWD index=${apIndex}`);
+            connectVariants.push(`port=SWD index=${apIndex} mode=UR`);
+        }
+        connectVariants.push('port=SWD mode=UR');
+        connectVariants.push('port=SWD');
+
+        for (const connectToken of connectVariants) {
+            try {
+                // Try simple connect
+                const conn = await this.runCubeCLI(['--connect', connectToken], 8000);
+                const out = conn ? conn.output || '' : '';
+                if (conn && (conn.exit === 0 || /Device ID|Device name/i.test(out))) {
+                    // parse basic info
+                    const chipMatch = out.match(/Device name\s*:\s*(STM32[\w\-\d]+)/i) || out.match(/Device\s*:\s*(STM32[\w\-\d]+)/i);
+                    const devIdMatch = out.match(/Device ID\s*:?\s*0x([0-9a-fA-F]+)/i);
+                    const flashMatch = out.match(/Flash size\s*:?\s*(\d+\s*kB)/i);
+
+                    const info = {
+                        chip: chipMatch ? chipMatch[1] : (devIdMatch ? `DeviceID: 0x${devIdMatch[1]}` : undefined),
+                        flashSize: flashMatch ? flashMatch[1] : undefined,
+                        raw: out
+                    };
+
+                    return { success: true, connectToken, info, output: out };
+                }
+
+                // Try score check
+                const score = await this.runCubeCLI(['--connect', connectToken, '--score'], 7000);
+                const scoreOut = score ? score.output || '' : '';
+                if (score && score.exit === 0 && !/Unable to get core ID|No STM32 target found/i.test(scoreOut)) {
+                    const chipMatch = scoreOut.match(/Device name\s*:\s*(STM32[\w\-\d]+)/i) || scoreOut.match(/Device\s*:\s*(STM32[\w\-\d]+)/i);
+                    const devIdMatch = scoreOut.match(/Device ID\s*:?\s*0x([0-9a-fA-F]+)/i);
+                    const flashMatch = scoreOut.match(/Flash size\s*:?\s*(\d+\s*kB)/i);
+
+                    const info = {
+                        chip: chipMatch ? chipMatch[1] : (devIdMatch ? `DeviceID: 0x${devIdMatch[1]}` : undefined),
+                        flashSize: flashMatch ? flashMatch[1] : undefined,
+                        raw: scoreOut
+                    };
+
+                    return { success: true, connectToken, info, output: scoreOut };
+                }
+            } catch (e) {
+                // ignore and try next
+            }
+        }
+
+        return { success: false, error: 'No connect variant succeeded' };
+    }
+
+    /**
+     * Flash using an already-established connect token (from probeConnect)
+     */
+    async flashWithToken_via_CubeCLI(connectToken, firmwarePath, progressCallback = null) {
+        const cli = this._findCubeCLI();
+        if (!cli) throw new Error('STM32_Programmer_CLI not found');
+
+        const normalized = firmwarePath.replace(/\\/g, '/');
+        const timeoutMs = 3 * 60 * 1000;
+
+        if (progressCallback) progressCallback({ stage: 'flash', message: `Flashing using ${connectToken}` });
+        // Build a set of token variants to try (some CLI versions are picky)
+        const tokenVariants = [connectToken, `${connectToken} mode=UR`, `${connectToken} frequency=4000`, `${connectToken} frequency=4000 mode=UR`];
+
+        let lastErr = null;
+        // Try each token variant with a small number of retries to handle timing issues
+        for (const token of tokenVariants) {
+            if (progressCallback) progressCallback({ stage: 'connect', message: `Trying token variant: ${token}` });
+
+            // 1) Try a connect-only to ensure the CLI can see the device
+            let connected = false;
+            let connOut = '';
+            for (let attempt = 0; attempt < 4 && !connected; attempt++) {
+                try {
+                    const connArgs = ['--connect', token];
+                    const connRes = await this.runCubeCLI(connArgs, 8000);
+                    connOut = connRes ? connRes.output || '' : '';
+                    if (connRes && (connRes.exit === 0 || /Device ID|Device name|connected/i.test(connOut))) {
+                        connected = true;
+                        break;
+                    }
+                    if (/Unable to get core ID|No STM32 target found/i.test(connOut)) {
+                        // Wait a bit and retry - often RESET timing causes this
+                        await new Promise(r => setTimeout(r, 300));
+                        continue;
+                    }
+                } catch (e) {
+                    connOut = e.message || '';
+                    await new Promise(r => setTimeout(r, 300));
+                }
+            }
+
+            if (!connected) {
+                lastErr = connOut || 'Connect failed';
+                continue; // try next token variant
+            }
+
+            // 2) Perform an explicit erase step to ensure chip is cleared before download
+            try {
+                if (progressCallback) progressCallback({ stage: 'erase', message: `Erasing chip using ${token}` });
+                const eraseArgs = ['--connect', token, '--erase', 'all'];
+                const eraseRes = await this.runCubeCLI(eraseArgs, 60000);
+                const eraseOut = eraseRes ? eraseRes.output || '' : '';
+                if (eraseRes && eraseRes.exit === 0 && /Mass erase successfully|Erase successful|Erasing finished/i.test(eraseOut)) {
+                    // proceed
+                } else {
+                    // Some CLI versions print different messages; if we see error lines, treat accordingly
+                    if (/Unable to get core ID|No STM32 target found/i.test(eraseOut)) {
+                        lastErr = eraseOut;
+                        continue; // try next token variant
+                    }
+                }
+            } catch (e) {
+                lastErr = e.message || String(e);
+                continue; // try next token variant
+            }
+
+            // 3) Download and verify
+            try {
+                if (progressCallback) progressCallback({ stage: 'flash', message: `Downloading ${normalized} using ${token}` });
+                const flashArgs = ['--connect', token, '--download', normalized, '0x08000000', '--verify'];
+                const flashRes = await this.runCubeCLI(flashArgs, timeoutMs);
+                const out = flashRes ? flashRes.output || '' : '';
+                if (flashRes && flashRes.exit === 0 && /Download verified successfully|Download completed successfully/i.test(out)) {
+                    if (progressCallback) progressCallback({ stage: 'complete', message: 'Flash completed successfully' });
+                    return { success: true, output: out };
+                }
+                lastErr = out || lastErr;
+            } catch (e) {
+                lastErr = e.message || String(e);
+            }
+
+            // If we reach here, try next token variant
+        }
+
+        throw new Error(`CubeProg flash failed: ${lastErr || 'no output'}`);
+    }
+
+    /**
+     * Attempt to disconnect any active CubeProgrammer CLI connection
+     */
+    async disconnectCubeCLI() {
+        const cli = this._findCubeCLI();
+        if (!cli) return { success: false, error: 'STM32_Programmer_CLI not found' };
+
+        // Try a few disconnect forms; vendor CLI accepts --disconnect or -c disconnect in some forms
+        const variants = [
+            ['--disconnect'],
+            ['--connect', 'port=SWD', '--disconnect'],
+            ['--connect', 'port=SWD', 'mode=UR', '--disconnect'],
+            ['-c', 'disconnect']
+        ];
+
+        for (const args of variants) {
+            try {
+                const res = await this.runCubeCLI(args, 5000);
+                const out = res ? res.output || '' : '';
+                // Consider success if exit code 0 or no error text
+                if (res && res.exit === 0) return { success: true, output: out };
+                if (out && !/Error|Unable|Wrong connect parameter/i.test(out)) {
+                    return { success: true, output: out };
+                }
+            } catch (e) {
+                // continue to next variant
+            }
+        }
+
+        // If CLI variants failed, attempt to forcibly kill lingering STM32_Programmer_CLI processes
+        try {
+            const logPath = path.join(__dirname, '..', 'cubecli-diagnostics.log');
+            if (this.platform === 'win32') {
+                try {
+                    const { spawnSync } = require('child_process');
+                    const kill = spawnSync('taskkill', ['/F', '/IM', 'STM32_Programmer_CLI.exe']);
+                    const combined = (kill.stdout ? kill.stdout.toString() : '') + (kill.stderr ? kill.stderr.toString() : '');
+                    fs.appendFileSync(logPath, `\n=== CubeCLI KILL ATTEMPT (${new Date().toISOString()}) ===\n` + combined + '\n');
+                    if (kill.status === 0) {
+                        return { success: true, killed: true, method: 'taskkill', output: combined };
+                    }
+                } catch (e) {
+                    // ignore and try fallback
+                    fs.appendFileSync(logPath, `\n=== CubeCLI KILL ERROR (${new Date().toISOString()}) ===\n` + e.message + '\n');
+                }
+            } else {
+                try {
+                    const { spawnSync } = require('child_process');
+                    const kill = spawnSync('pkill', ['-f', 'STM32_Programmer_CLI']);
+                    const combined = (kill.stdout ? kill.stdout.toString() : '') + (kill.stderr ? kill.stderr.toString() : '');
+                    fs.appendFileSync(logPath, `\n=== CubeCLI KILL ATTEMPT (${new Date().toISOString()}) ===\n` + combined + '\n');
+                    // pkill exit code 0 -> succeeded
+                    if (kill.status === 0) {
+                        return { success: true, killed: true, method: 'pkill', output: combined };
+                    }
+                } catch (e) {
+                    fs.appendFileSync(logPath, `\n=== CubeCLI KILL ERROR (${new Date().toISOString()}) ===\n` + e.message + '\n');
+                }
+            }
+        } catch (e) {
+            // ignore logging failures
+        }
+
+        return { success: false, error: 'CubeCLI disconnect did not succeed' };
+    }
+
+    /**
      * Check if OpenOCD binary exists
      */
     checkOpenOCD() {
@@ -109,10 +731,79 @@ class OpenOCDSTM32Service {
     }
 
     /**
+     * Single quick detection attempt (for continuous retry)
+     * @returns {Object} Detection result or null if failed
+     */
+    async detectSTLinkOnce(speed = 1800) {
+        // For Micro Edge, prefer vendor CLI which was observed to successfully connect
+        if (this.currentDeviceType === 'MICRO_EDGE') {
+            try {
+                const cube = await this.detectViaCubeProgrammer();
+                if (cube && cube.detected) {
+                    return { success: true, detected: true, info: cube.info, output: cube.output };
+                }
+                // fallthrough to OpenOCD if CLI didn't detect
+            } catch (e) {
+                // ignore and fallback to OpenOCD
+            }
+        }
+
+        if (!this.checkOpenOCD()) {
+            // No OpenOCD available and CLI didn't detect
+            return { success: false, detected: false, output: 'OpenOCD binary not found' };
+        }
+
+        const deviceConfig = this.getDeviceConfig();
+
+        // Quick detection attempt
+        const args = [
+            '-s', this.scriptsPath,
+            '-f', 'interface/stlink.cfg',
+            '-c', `adapter speed ${speed}`,
+            '-c', 'transport select hla_swd',
+            '-c', 'source [find target/stm32l4x.cfg]',
+            '-c', 'init',
+            '-c', 'targets',
+            '-c', 'halt',
+            '-c', 'shutdown'
+        ];
+
+        try {
+            const result = await this.executeOpenOCD(args);
+            return result;
+        } catch (error) {
+            return { success: false, detected: false, output: error.message || '' };
+        }
+    }
+
+    /**
      * Detect ST-Link and MCU
      * @returns {Object} Detection result with MCU info
      */
     async detectSTLink() {
+        // Fast-path: if CubeProgrammer CLI is available and lists a probe, return early
+        try {
+            const probes = await this.listCubeProbes();
+            if (probes && probes.found) {
+                return {
+                    success: true,
+                    detected: true,
+                    mismatch: false,
+                    detectedType: null,
+                    selectedType: this.currentDeviceType,
+                    info: {
+                        chip: this.getDeviceConfig().mcu,
+                        deviceType: DEVICE_TYPES[this.currentDeviceType].name,
+                        flashSize: this.getDeviceConfig().flashSize,
+                        interface: 'ST-Link (via STM32CubeProgrammer CLI)'
+                    },
+                    rawOutput: probes.raw
+                };
+            }
+        } catch (e) {
+            // ignore and continue with OpenOCD path
+        }
+
         if (!this.checkOpenOCD()) {
             throw new Error('OpenOCD binary not found');
         }
@@ -124,47 +815,83 @@ class OpenOCDSTM32Service {
 
         try {
             // First attempt: Use selected device config
-            console.log(`=== Attempting detection with ${deviceConfig.name} config ===`);
-
-            // Try multiple speeds and reset configs
-            const speeds = [480, 100];
-            const resetConfigs = [
-                'reset_config none separate',           // Software reset only (best for most cases, no NRST needed)
-                'reset_config none',                    // No reset
-                'reset_config srst_only',               // Hardware reset (needs NRST)
-                'reset_config srst_only srst_nogate connect_assert_srst'  // Connect under reset (needs NRST)
-            ];
-
+            // console.log(`=== Attempting detection with ${deviceConfig.name} config ===`);
+            
+            // Try multiple speeds and reset strategies
+            // STM32L432: Match STM32CubeProgrammer settings (4000 kHz, SWD, Software reset)
+            const speeds = deviceConfig.name === 'Micro Edge' ? [4000, 1800, 480] : [480, 100];
+            
             let detectionResult = null;
             let detectionSucceeded = false;
-
-            // Try all combinations of speed and reset config
+            
+            console.log(`[OpenOCD] Trying detection for ${deviceConfig.name}...`);
+            
+            // Try all speeds
             for (const speed of speeds) {
                 if (detectionSucceeded) break;
-
-                for (const resetConfig of resetConfigs) {
+                
+                // Special sequence for Micro Edge (STM32L432) - match STM32CubeProgrammer
+                if (deviceConfig.name === 'Micro Edge') {
+                    // STM32CubeProgrammer settings: SWD, 4000 kHz, Software reset, Normal mode
                     const args = [
                         '-s', this.scriptsPath,
                         '-f', 'interface/stlink.cfg',
-                        '-f', `target/${deviceConfig.target}`,
+                        '-c', 'transport select hla_swd',
                         '-c', `adapter speed ${speed}`,
-                        '-c', resetConfig,
+                        '-c', 'source [find target/stm32l4x.cfg]',
                         '-c', 'init',
                         '-c', 'targets',
-                        '-c', 'reset halt',
                         '-c', 'shutdown'
                     ];
+
+                    console.log(`[OpenOCD] Trying Micro Edge: ${speed} kHz (SWD mode)`);
 
                     try {
                         detectionResult = await this.executeOpenOCD(args);
                         result = detectionResult;
                         detectionSucceeded = true;
-                        console.log(`Detection succeeded at ${speed} kHz with ${resetConfig}`);
-                        break; // Success, exit inner loop
+                        console.log(`✓ Detection succeeded at ${speed} kHz`);
+                        break;
                     } catch (error) {
-                        console.log(`Detection at ${speed} kHz with ${resetConfig} failed`);
+                        console.log(`✗ Failed at ${speed} kHz`);
                         detectionResult = { output: error.message || '' };
                         result = detectionResult;
+                    }
+                } else {
+                    // Normal detection for other devices
+                    const resetConfigs = [
+                        'reset_config none separate',
+                        'reset_config none',
+                        'reset_config srst_only',
+                        'reset_config srst_only srst_nogate connect_assert_srst'
+                    ];
+                    
+                    for (const resetConfig of resetConfigs) {
+                        const args = [
+                            '-s', this.scriptsPath,
+                            '-f', 'interface/stlink.cfg',
+                            '-f', `target/${deviceConfig.target}`,
+                            '-c', `adapter speed ${speed}`,
+                            '-c', resetConfig,
+                            '-c', 'init',
+                            '-c', 'targets',
+                            '-c', 'reset halt',
+                            '-c', 'shutdown'
+                        ];
+
+                        console.log(`[OpenOCD] Trying: ${speed} kHz, ${resetConfig}`);
+
+                        try {
+                            detectionResult = await this.executeOpenOCD(args);
+                            result = detectionResult;
+                            detectionSucceeded = true;
+                            console.log(`✓ Detection succeeded at ${speed} kHz with ${resetConfig}`);
+                            break;
+                        } catch (error) {
+                            console.log(`✗ Failed at ${speed} kHz with ${resetConfig}`);
+                            detectionResult = { output: error.message || '' };
+                            result = detectionResult;
+                        }
                     }
                 }
             }
@@ -232,6 +959,7 @@ class OpenOCDSTM32Service {
 
                 // STM32WLE5 device IDs: 0x10036497
                 // STM32F030 device IDs: 0x440, 0x444, 0x445
+                // STM32L432 device IDs: 0x435
                 if (deviceId.includes('497') || deviceId.includes('10036497')) {
                     detectedMCUType = 'DROPLET';
                     detectedChip = 'STM32WLE5';
@@ -240,6 +968,10 @@ class OpenOCDSTM32Service {
                     detectedMCUType = 'ZONE_CONTROLLER';
                     detectedChip = 'STM32F030C8T6';
                     console.log('Detected by Device ID: STM32F030');
+                } else if (deviceId.includes('435')) {
+                    detectedMCUType = 'MICRO_EDGE';
+                    detectedChip = 'STM32L432KBU6';
+                    console.log('Detected by Device ID: STM32L432');
                 }
             }
 
@@ -252,8 +984,15 @@ class OpenOCDSTM32Service {
                     detectedMCUType = 'ZONE_CONTROLLER';
                     detectedChip = 'STM32F030C8T6';
                 } else if (processor === 'M4') {
-                    detectedMCUType = 'DROPLET';
-                    detectedChip = 'STM32WLE5';
+                    // Could be Droplet (STM32WLE5) or Micro Edge (STM32L432)
+                    // Default to current selection if M4
+                    if (this.currentDeviceType === 'MICRO_EDGE') {
+                        detectedMCUType = 'MICRO_EDGE';
+                        detectedChip = 'STM32L432KBU6';
+                    } else {
+                        detectedMCUType = 'DROPLET';
+                        detectedChip = 'STM32WLE5';
+                    }
                 }
             }
 
@@ -264,19 +1003,7 @@ class OpenOCDSTM32Service {
             const mismatch = detectedMCUType && detectedMCUType !== this.currentDeviceType;
 
             console.log(`Mismatch: ${mismatch}`);
-
-            // Check flash protection status if device was detected
-            let protectionStatus = null;
-            if (processorMatch || deviceIdMatch) {
-                try {
-                    console.log(`[Detect] Checking flash protection status...`);
-                    protectionStatus = await this.checkFlashProtection();
-                    console.log(`[Detect] Protection status:`, JSON.stringify(protectionStatus, null, 2));
-                } catch (protectionError) {
-                    console.log(`[Detect] Failed to check protection: ${protectionError.message}`);
-                    // Continue without protection info
-                }
-            }
+            console.log(`=== Detection Complete ===`);
 
             return {
                 success: true,
@@ -316,6 +1043,9 @@ class OpenOCDSTM32Service {
                 } else if (deviceId.includes('440') || deviceId.includes('444') || deviceId.includes('445')) {
                     detectedMCUType = 'ZONE_CONTROLLER';
                     detectedChip = 'STM32F030C8T6';
+                } else if (deviceId.includes('435')) {
+                    detectedMCUType = 'MICRO_EDGE';
+                    detectedChip = 'STM32L432KBU6';
                 }
             }
 
@@ -330,8 +1060,14 @@ class OpenOCDSTM32Service {
                         detectedMCUType = 'ZONE_CONTROLLER';
                         detectedChip = 'STM32F030C8T6';
                     } else if (processor === 'M4') {
-                        detectedMCUType = 'DROPLET';
-                        detectedChip = 'STM32WLE5';
+                        // Could be Droplet or Micro Edge
+                        if (this.currentDeviceType === 'MICRO_EDGE') {
+                            detectedMCUType = 'MICRO_EDGE';
+                            detectedChip = 'STM32L432KBU6';
+                        } else {
+                            detectedMCUType = 'DROPLET';
+                            detectedChip = 'STM32WLE5';
+                        }
                     }
                 }
             }
@@ -1069,6 +1805,10 @@ class OpenOCDSTM32Service {
         this.isFlashing = true;
 
         try {
+            // If device is Micro Edge, prefer CLI implementation (vendor tool is more reliable)
+            if (this.currentDeviceType === 'MICRO_EDGE') {
+                return await this.flashFirmware_via_CubeCLI(firmwarePath, progressCallback);
+            }
             // Check firmware file size
             const firmwareStats = fs.statSync(firmwarePath);
             const firmwareSizeBytes = firmwareStats.size;
@@ -1206,11 +1946,45 @@ class OpenOCDSTM32Service {
                         attemptCount++;
                         console.log(`[Flash] Attempt ${attemptCount}/${totalAttempts}: ${speed} kHz, ${strategy.name}`);
 
-                        if (progressCallback && attemptCount > 1) {
-                            progressCallback({
-                                stage: 'retry',
-                                message: `Trying different method (${attemptCount}/${totalAttempts})...`
-                            });
+                    let args;
+                    
+                    if (strategy.initSequence === null) {
+                        // Use flash write_image erase to ensure a full erase before writing
+                        args = [
+                            '-s', this.scriptsPath,
+                            '-f', 'interface/stlink.cfg',
+                            '-f', `target/${deviceConfig.target}`,
+                            '-c', `adapter speed ${speed}`,
+                            '-c', strategy.resetConfig,
+                            '-c', 'init',
+                            '-c', 'reset init',
+                            '-c', `flash write_image erase {${normalizedPath}} 0x08000000`,
+                            '-c', `verify_image {${normalizedPath}} 0x08000000`,
+                            '-c', 'reset run',
+                            '-c', 'shutdown'
+                        ];
+                    } else {
+                        // Manual flash sequence with custom init
+                        args = [
+                            '-s', this.scriptsPath,
+                            '-f', 'interface/stlink.cfg',
+                            '-f', `target/${deviceConfig.target}`,
+                            '-c', `adapter speed ${speed}`,
+                            '-c', strategy.resetConfig,
+                            '-c', strategy.initSequence[0],
+                            '-c', strategy.initSequence[1],
+                            '-c', `flash write_image erase {${normalizedPath}} 0x08000000`,
+                            '-c', `verify_image {${normalizedPath}} 0x08000000`,
+                            '-c', 'reset run',
+                            '-c', 'shutdown'
+                        ];
+                    }
+
+                    try {
+                        const result = await this.executeOpenOCD(args, progressCallback);
+
+                        if (progressCallback) {
+                            progressCallback({ stage: 'complete', message: 'Flash completed successfully' });
                         }
 
                         let args;
@@ -1329,6 +2103,12 @@ class OpenOCDSTM32Service {
 
             // All attempts failed
             this.isFlashing = false;
+            // Last resort: try CLI if available for Micro Edge
+            if (this.currentDeviceType === 'MICRO_EDGE') {
+                try {
+                    return await this.flashFirmware_via_CubeCLI(firmwarePath, progressCallback);
+                } catch (cliErr) {}
+            }
             throw lastError || new Error('Flash failed with all reset configurations');
         } catch (error) {
             this.isFlashing = false;
@@ -1341,6 +2121,15 @@ class OpenOCDSTM32Service {
      * @returns {Object} UID values (uid0, uid1, uid2)
      */
     async readUID() {
+        // Prefer CLI for Micro Edge
+        if (this.currentDeviceType === 'MICRO_EDGE') {
+            try {
+                return await this.readUID_via_CubeCLI();
+            } catch (e) {
+                // fallback to OpenOCD if CLI fails
+            }
+        }
+
         if (!this.checkOpenOCD()) {
             throw new Error('OpenOCD binary not found');
         }
@@ -1571,7 +2360,8 @@ class OpenOCDSTM32Service {
      * Execute OpenOCD command
      * @private
      */
-    executeOpenOCD(args, progressCallback = null) {
+    executeOpenOCD(args, progressCallback = null, options = {}) {
+        const timeoutMs = options.timeout != null ? options.timeout : 10000; // default 10s
         return new Promise((resolve, reject) => {
             console.log('Executing OpenOCD:', this.openocdPath, args.join(' '));
 
@@ -1584,18 +2374,23 @@ class OpenOCDSTM32Service {
             // Timeout to force kill if process doesn't exit
             const timeout = setTimeout(() => {
                 if (!isResolved) {
-                    console.log('[OpenOCD] Timeout - force killing process');
-                    proc.kill('SIGKILL');
+                    // console.log('[OpenOCD] Timeout - force killing process');
+                    try { proc.kill(); } catch (e) {}
                     isResolved = true;
                     const combinedOutput = errorOutput + output;
-                    resolve({ success: true, output: combinedOutput, code: 0 });
+                    // Resolve with timeout flag so caller can inspect output
+                    try {
+                        const logPath = path.join(__dirname, '..', 'openocd-diagnostics.log');
+                        fs.appendFileSync(logPath, `\n=== OpenOCD TIMEOUT (${new Date().toISOString()}) ===\n` + combinedOutput + '\n');
+                    } catch (e) {}
+                    resolve({ success: false, timedOut: true, output: combinedOutput, code: null });
                 }
-            }, 10000); // 10 second timeout (increased to allow reset run)
+            }, timeoutMs);
 
             proc.stdout.on('data', (data) => {
                 const text = data.toString();
                 output += text;
-                console.log('[OpenOCD]:', text.trim());
+                // console.log('[OpenOCD]:', text.trim());
 
                 if (progressCallback) {
                     // Parse progress from output
@@ -1610,9 +2405,15 @@ class OpenOCDSTM32Service {
 
                 // If we see "Verified OK" or "Programming Finished", wait for shutdown
                 if (text.includes('** Verified OK **') || text.includes('** Programming Finished **')) {
-                    // Don't kill immediately - let reset run command execute
-                    // Will be handled by shutdown or timeout
-                    console.log('[OpenOCD] Flash verified, waiting for reset and shutdown...');
+                    setTimeout(() => {
+                        if (!isResolved) {
+                            clearTimeout(timeout);
+                            try { proc.kill(); } catch (e) {}
+                            isResolved = true;
+                            const combinedOutput = errorOutput + output;
+                            resolve({ success: true, output: combinedOutput, code: 0 });
+                        }
+                    }, 300); // Short delay to catch any final output
                 }
             });
 
@@ -1625,9 +2426,8 @@ class OpenOCDSTM32Service {
                 if (text.includes('** Verify Failed **') || text.includes('** Programming Failed **')) {
                     setTimeout(() => {
                         if (!isResolved) {
-                            console.log('[OpenOCD] Flash failed, terminating');
                             clearTimeout(timeout);
-                            proc.kill('SIGKILL');
+                            try { proc.kill(); } catch (e) {}
                             isResolved = true;
                             const combinedOutput = errorOutput + output;
                             reject(new Error(`OpenOCD flash failed\n${combinedOutput}`));
@@ -1640,7 +2440,7 @@ class OpenOCDSTM32Service {
                     setTimeout(() => {
                         if (!isResolved) {
                             clearTimeout(timeout);
-                            proc.kill('SIGKILL');
+                            try { proc.kill(); } catch (e) {}
                             isResolved = true;
                             const combinedOutput = errorOutput + output;
 
@@ -1671,8 +2471,12 @@ class OpenOCDSTM32Service {
                     isResolved = true;
                     // OpenOCD writes most output to stderr, so combine both
                     const combinedOutput = errorOutput + output;
+                    try {
+                        const logPath = path.join(__dirname, '..', 'openocd-diagnostics.log');
+                        fs.appendFileSync(logPath, `\n=== OpenOCD EXIT code=${code} (${new Date().toISOString()}) ===\n` + combinedOutput + '\n');
+                    } catch (e) {}
 
-                    if (code === 0 || code === null) {
+                    if (code === 0) {
                         resolve({ success: true, output: combinedOutput, code });
                     } else {
                         reject(new Error(`OpenOCD exited with code ${code}\n${combinedOutput}`));
@@ -1761,8 +2565,43 @@ class OpenOCDSTM32Service {
             openocdPath: this.openocdPath,
             scriptsPath: this.scriptsPath,
             platform: this.platform,
-            version: this.VERSION
+            version: this.VERSION,
+            cubeCliAvailable: !!this._findCubeCLI()
         };
+    }
+
+    /**
+     * Abort any running OpenOCD or STM32_Programmer_CLI processes (force kill)
+     */
+    async abort() {
+        try {
+            const logPath = path.join(__dirname, '..', 'cubecli-diagnostics.log');
+            if (this.platform === 'win32') {
+                try {
+                    const { spawnSync } = require('child_process');
+                    const killOpen = spawnSync('taskkill', ['/F', '/IM', 'openocd.exe']);
+                    const killCli = spawnSync('taskkill', ['/F', '/IM', 'STM32_Programmer_CLI.exe']);
+                    fs.appendFileSync(logPath, `\n=== ABORT KILL (${new Date().toISOString()}) ===\nopenocd: ${killOpen.status} ${killOpen.stdout ? killOpen.stdout.toString() : ''} ${killOpen.stderr ? killOpen.stderr.toString() : ''}\ncli: ${killCli.status} ${killCli.stdout ? killCli.stdout.toString() : ''} ${killCli.stderr ? killCli.stderr.toString() : ''}\n`);
+                    return { success: true, openocd: killOpen.status, cubecli: killCli.status };
+                } catch (e) {
+                    fs.appendFileSync(logPath, `\n=== ABORT ERROR (${new Date().toISOString()}) ===\n${e.message}\n`);
+                    return { success: false, error: e.message };
+                }
+            } else {
+                try {
+                    const { spawnSync } = require('child_process');
+                    const killOpen = spawnSync('pkill', ['-f', 'openocd']);
+                    const killCli = spawnSync('pkill', ['-f', 'STM32_Programmer_CLI']);
+                    fs.appendFileSync(logPath, `\n=== ABORT KILL (${new Date().toISOString()}) ===\nopenocd: ${killOpen.status} ${killOpen.stdout ? killOpen.stdout.toString() : ''} ${killOpen.stderr ? killOpen.stderr.toString() : ''}\ncli: ${killCli.status} ${killCli.stdout ? killCli.stdout.toString() : ''} ${killCli.stderr ? killCli.stderr.toString() : ''}\n`);
+                    return { success: true, openocd: killOpen.status, cubecli: killCli.status };
+                } catch (e) {
+                    fs.appendFileSync(logPath, `\n=== ABORT ERROR (${new Date().toISOString()}) ===\n${e.message}\n`);
+                    return { success: false, error: e.message };
+                }
+            }
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
     }
 }
 
