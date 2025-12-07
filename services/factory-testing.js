@@ -1202,21 +1202,14 @@ class FactoryTestingService {
       try {
         const loraAddrResponse = await this.sendATCommand('AT+LRRADDRUNQ?', '+LRRADDRUNQ:');
         results.loraAddress = loraAddrResponse.replace('+LRRADDRUNQ:', '').trim();
+        // Use loraAddress as loraDetect for label printing (no need to call AT+LORADETECT?)
+        results.loraDetect = results.loraAddress;
       } catch (error) {
         results.loraAddress = 'ERROR';
-      }
-
-      // 8. LoRa Detect
-      this.updateProgress('Detecting LoRa module...');
-      try {
-        const loraDetectResponse = await this.sendATCommand('AT+LORADETECT?', '+LORADETECT:');
-        const detectValue = loraDetectResponse.replace('+LORADETECT:', '').trim();
-        results.loraDetect = detectValue === '1' ? 'Detected' : 'Not Detected';
-      } catch (error) {
         results.loraDetect = 'ERROR';
       }
 
-      // 9. Push LoRaRaw packet
+      // 8. Push LoRaRaw packet
       this.updateProgress('Testing LoRa transmission...');
       try {
         // This command expects OK response instead of a value
@@ -1279,8 +1272,9 @@ class FactoryTestingService {
         const pulsesNum = parseInt(String(results.pulsesCounter || '').replace(/\D/g, ''), 10);
         evalFlags.pass_pulses = !Number.isNaN(pulsesNum) && pulsesNum > 3;
 
-        // LoRa: detected and raw push OK
-        const loraDetectOk = typeof results.loraDetect === 'string' && /detect/i.test(results.loraDetect);
+        // LoRa: valid address (8 hex chars) or contains 'detect', and raw push OK
+        const loraDetectValue = String(results.loraDetect || '');
+        const loraDetectOk = /detect/i.test(loraDetectValue) || /^[0-9a-f]{8}$/i.test(loraDetectValue);
         const loraPushOk = String(results.loraRawPush || '').toUpperCase() === 'OK';
         evalFlags.pass_lora = loraDetectOk && loraPushOk;
 

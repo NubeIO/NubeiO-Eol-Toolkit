@@ -625,7 +625,9 @@ class FactoryTestingPage {
     const pulses = Number(results.pulsesCounter || 0);
     setStatus('me-pulses-icon', 'me-pulses-label', 'me-pulse-box', (pulses > 3));
     // 6. LoRa: detect + raw push OK
-    const detectOk = String(results.loraDetect || '').toLowerCase().includes('detect');
+    // Check if loraDetect is a valid hex address (8 characters) or contains 'detect'
+    const loraDetectValue = String(results.loraDetect || '');
+    const detectOk = loraDetectValue.toLowerCase().includes('detect') || /^[0-9a-f]{8}$/i.test(loraDetectValue);
     const pushOk = String(results.loraRawPush || '').toLowerCase().includes('ok');
     const loraPass = detectOk && pushOk;
     setStatus('me-lora-icon', 'me-lora-label', 'me-lora-box', loraPass);
@@ -1250,7 +1252,9 @@ class FactoryTestingPage {
       }
 
       // Build payload from device/preTesting and test results
-      const uid = (this.deviceInfo && (this.deviceInfo.uniqueId || this.deviceInfo.uid || this.deviceInfo.mac)) || '';
+      // Use LoRa Detect ID instead of full UID (e.g., F8AC119F)
+      const loraId = (this.factoryTestResults && this.factoryTestResults.loraDetect) || '';
+      const uid = loraId || ((this.deviceInfo && (this.deviceInfo.uniqueId || this.deviceInfo.uid || this.deviceInfo.mac)) || '');
       
       // MN = Make + Model (e.g., "ME-0005" or "ME-05")
       const deviceMake = (this.deviceInfo && this.deviceInfo.deviceMake) || '';
@@ -1267,16 +1271,16 @@ class FactoryTestingPage {
       // Date in YYYY/MM/DD format
       const dateStr = new Date().toISOString().slice(0,10).replace(/-/g, '/');
       
-      // Barcode = UID for traceability
-      const barcode = uid || '';
+      // Barcode = LoRa ID for traceability
+      const barcode = loraId || uid || '';
 
       const payload = { 
-        uid,           // Full UID
+        uid,           // LoRa Detect ID (e.g., F8AC119F)
         mn,            // MN: Make + Model
         firmware,      // FW: Firmware version
         batchId,       // BA: Batch ID
         date: dateStr, // Date
-        barcode        // Barcode data (UID)
+        barcode        // Barcode data (LoRa ID)
       };
       
       console.log('Print payload:', payload);

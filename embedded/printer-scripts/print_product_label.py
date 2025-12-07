@@ -143,10 +143,10 @@ def create_product_label(barcode_data, mn_text, sw_text, ba_text, product_code, 
     barcode_img.write(buffer, {
         'module_height': 28,  # Barcode bar height
         'module_width': 0.5,  # Barcode bar width
-        'quiet_zone': 3,
-        'font_size': 25,  # Human-readable UID text under barcode (increased from 23 to 25)
-        'text_distance': 10,  # Gap between bars and text (increased from 8 to 10 to lower text more)
-        'write_text': True
+        'quiet_zone': 6,  # Increased from 0 to 6 to show full UID including '6D00'
+        'font_size': 0,  # Disable default text, we'll draw custom text below
+        'text_distance': 0,  # No distance needed since we disable default text
+        'write_text': False  # Disable automatic text, draw custom MN-LoRaAddr instead
     })
     buffer.seek(0)
 
@@ -155,59 +155,78 @@ def create_product_label(barcode_data, mn_text, sw_text, ba_text, product_code, 
 
     # Do not rotate - keep barcode horizontal
     # Resize barcode to fit 12mm tape height in dots
-    barcode_display_height = 138
+    barcode_display_height = 120  # Set to 130 pixels as requested
     aspect_ratio = barcode_pil.width / barcode_pil.height
-    barcode_display_width = int(barcode_display_height * aspect_ratio * 1.96)  # Increased by 40% again (1.4 * 1.4)
+    barcode_display_width = int(barcode_display_height * aspect_ratio * 3.0)
     barcode_resized = barcode_pil.resize((barcode_display_width, barcode_display_height), Image.LANCZOS)
 
     # Create main label canvas
     print("Building label image...")
-    label_width = barcode_display_width + 950  # Extra width for 50mm total length
-    label_height = 160  # Overall label height (dots) - 12mm width at 180 dpi
+    label_width = barcode_display_width + 500
+    label_height = 160  # Set to 180 pixels as requested
 
     img = Image.new('L', (label_width, label_height), 255)
     draw = ImageDraw.Draw(img)
 
-    # Fonts - choose Arial if available, fallback to PIL default
+    # Fonts - restored original sizes
     try:
-        font_medium = ImageFont.truetype("arial.ttf", 42)  # Increased from 38
-        font_small = ImageFont.truetype("arial.ttf", 38)   # Increased from 33
-        font_tiny = ImageFont.truetype("arial.ttf", 32)    # Increased from 27
+        font_medium = ImageFont.truetype("arial.ttf", 44)
+        font_small = ImageFont.truetype("arial.ttf", 39)
+        font_tiny = ImageFont.truetype("arial.ttf", 34)
     except:
         font_medium = ImageFont.load_default()
         font_small = ImageFont.load_default()
         font_tiny = ImageFont.load_default()
 
-    # Paste barcode on the left (horizontal)
-    barcode_x = 10
-    barcode_y = (label_height - barcode_display_height) // 2
+    # Paste barcode - centered vertically
+    barcode_x = 15
+    barcode_y = (label_height - barcode_display_height) // 2 -  18 # Center vertically
     img.paste(barcode_resized, (barcode_x, barcode_y))
 
-    # Draw text to the right of the barcode (positioned near right edge)
-    text_x = label_width - 480  # Position text
-    y_pos = 0  # Start at top (moved up from 2 to 0)
+    # Helper function to draw text with custom letter spacing
+    def draw_text_with_spacing(draw, pos, text, font, fill, letter_spacing=2):
+        x, y = pos
+        for char in text:
+            draw.text((x, y), char, font=font, fill=fill)
+            char_width = draw.textlength(char, font=font)
+            x += char_width + letter_spacing
+    
+    # Draw custom text below barcode: MN-LoRaAddr (e.g., ME-0005-F8AC119F) with letter spacing
+    try:
+        barcode_text_font = ImageFont.truetype("arial.ttf", 44)  # Font size 44
+    except:
+        barcode_text_font = ImageFont.load_default()
+    
+    barcode_text = f"{mn_text}-{product_code}"  # e.g., "ME-0005-F8AC119F"
+    # Calculate width with letter spacing
+    total_width = sum(draw.textlength(char, font=barcode_text_font) + 6 for char in barcode_text) - 6
+    barcode_text_x = barcode_x + (barcode_display_width - total_width) // 2
+    barcode_text_y = barcode_y + barcode_display_height - 2  # 4 pixels below barcode
+    # Draw with letter spacing (same as information: 6 pixels)
+    draw_text_with_spacing(draw, (barcode_text_x, barcode_text_y), barcode_text, barcode_text_font, 0, letter_spacing=6)
+    # Draw text after barcode - restored spacing
+    text_x = barcode_x + barcode_display_width - 40
+    line_spacing = 36  # Restored original spacing
+    total_text_height = 3 * line_spacing
+    y_pos = (label_height - total_text_height) // 2 - 30 # Center vertically
 
-    # MN
-    draw.text((text_x, y_pos), f"MN:{mn_text}", font=font_small, fill=0)
-    y_pos += 35  # Increased from 28 to 35 for more vertical spacing
+    # MN - with letter spacing
+    draw_text_with_spacing(draw, (text_x, y_pos), f"MN:{mn_text}", font_medium, 0, letter_spacing=14)
+    y_pos += line_spacing
 
-    # SW
-    draw.text((text_x, y_pos), f"SW:{sw_text}", font=font_small, fill=0)
-    y_pos += 35  # Increased from 28 to 35
+    # SW - with letter spacing
+    draw_text_with_spacing(draw, (text_x, y_pos), f"SW:{sw_text}", font_medium, 0, letter_spacing=14)
+    y_pos += line_spacing
 
-    # BA
-    draw.text((text_x, y_pos), f"BA:{ba_text}", font=font_small, fill=0)
-    y_pos += 32  # Increased from 28 to 32
+    # BA - with letter spacing
+    draw_text_with_spacing(draw, (text_x, y_pos), f"BA:{ba_text}", font_medium, 0, letter_spacing=14)
+    y_pos += line_spacing
 
-    # Product code (smaller font)
-    draw.text((text_x, y_pos), product_code, font=font_tiny, fill=0)
-    y_pos += 30  # Increased from 24 to 30
+    # Date + time (HH:MM) - with letter spacing, using tiny font
+    draw_text_with_spacing(draw, (text_x, y_pos), date_text, font_medium, 0, letter_spacing=4)
 
-    # Date + time (HH:MM)
-    draw.text((text_x, y_pos), date_text, font=font_tiny, fill=0)
-
-    # Border - fully flush with paper edges
-    draw.rectangle([(8, 0), (label_width-9, label_height-1)], outline=0, width=4)
+    # Border removed as requested
+    # draw.rectangle([(8, 0), (label_width-9, label_height-1)], outline=0, width=4)
 
     # Keep mode 'L' (grayscale) – works with PT-P900W raster engine
     # No invert/convert needed
