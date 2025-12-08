@@ -33,10 +33,12 @@ PyInstaller.__main__.run([
     '--clean',                      # Clean cache
     '--noconfirm',                  # Replace output without asking
     f'--distpath={output_dir}',     # Output directory
+    f'--paths={os.path.join(script_dir, "py-brotherlabel")}',  # Add py-brotherlabel to path
     '--hidden-import=PIL',
     '--hidden-import=PIL._imaging',
     '--hidden-import=barcode',
     '--hidden-import=barcode.writer',
+    '--hidden-import=brotherlabel',
     '--hidden-import=brother_ql',
     '--hidden-import=brother_ql.backends',
     '--hidden-import=brother_ql.backends.helpers',
