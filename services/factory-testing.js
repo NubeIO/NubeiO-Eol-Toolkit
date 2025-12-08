@@ -332,6 +332,34 @@ class FactoryTestingService {
         console.warn('[Factory Testing Service] Failed to read device info after connect:', e.message);
       }
 
+      // Read device info for ZC-LCD immediately after connection
+      if (deviceType === 'ZC-LCD') {
+        try {
+          console.log('[Factory Testing Service] Reading ZC-LCD device info...');
+          const zcDeviceInfo = await this.readZCLCDDeviceInfo();
+          if (zcDeviceInfo.success) {
+            deviceInfo = zcDeviceInfo.data;
+            console.log('[Factory Testing Service] ZC-LCD device info:', deviceInfo);
+          }
+        } catch (err) {
+          console.warn('[Factory Testing Service] Failed to read ZC-LCD device info:', err.message);
+        }
+      }
+
+      // Read device info for Droplet immediately after connection
+      if (deviceType === 'Droplet') {
+        try {
+          console.log('[Factory Testing Service] Reading Droplet device info...');
+          const dropletDeviceInfo = await this.readDropletDeviceInfo();
+          if (dropletDeviceInfo.success) {
+            deviceInfo = dropletDeviceInfo.data;
+            console.log('[Factory Testing Service] Droplet device info:', deviceInfo);
+          }
+        } catch (err) {
+          console.warn('[Factory Testing Service] Failed to read Droplet device info:', err.message);
+        }
+      }
+
       console.log('[Factory Testing Service] === END CONNECT (SUCCESS) ===');
       console.log('[Factory Testing Service] Final isConnected:', this.isConnected);
       console.log('[Factory Testing Service] Final port:', this.port ? 'SET' : 'NULL');
@@ -881,6 +909,124 @@ class FactoryTestingService {
   }
 
   /**
+   * Read ZC-LCD device information using AT commands with 30s timeout
+   * Commands: AT+HWVERSION?, AT+UNIQUEID?, AT+DEVICEMAKE?, AT+DEVICEMODEL?
+   */
+  async readZCLCDDeviceInfo() {
+    try {
+      console.log('[Factory Testing] Reading ZC-LCD device information...');
+      
+      const deviceInfo = {};
+      const timeout = 30000; // 30 seconds timeout per command
+
+      // 1. HW Version: AT+HWVERSION? → +HWVERSION:v1.0
+      try {
+        const hwResponse = await this.sendATCommand('AT+HWVERSION?', '+HWVERSION:', timeout, false);
+        deviceInfo.hwVersion = hwResponse.replace('+HWVERSION:', '').trim();
+        console.log('[Factory Testing] HW Version:', deviceInfo.hwVersion);
+      } catch (error) {
+        console.error('[Factory Testing] Failed to read HW version:', error.message);
+        deviceInfo.hwVersion = 'ERROR';
+      }
+
+      // 2. Unique ID: AT+UNIQUEID? → +UNIQUEID:1CDBD4963210
+      try {
+        const uidResponse = await this.sendATCommand('AT+UNIQUEID?', '+UNIQUEID:', timeout, false);
+        deviceInfo.uniqueId = uidResponse.replace('+UNIQUEID:', '').trim();
+        console.log('[Factory Testing] Unique ID:', deviceInfo.uniqueId);
+      } catch (error) {
+        console.error('[Factory Testing] Failed to read Unique ID:', error.message);
+        deviceInfo.uniqueId = 'ERROR';
+      }
+
+      // 3. Device Make: AT+DEVICEMAKE? → +DEVICEMAKE:ZC-LCD
+      try {
+        const makeResponse = await this.sendATCommand('AT+DEVICEMAKE?', '+DEVICEMAKE:', timeout, false);
+        deviceInfo.deviceMake = makeResponse.replace('+DEVICEMAKE:', '').trim();
+        console.log('[Factory Testing] Device Make:', deviceInfo.deviceMake);
+      } catch (error) {
+        console.error('[Factory Testing] Failed to read Device Make:', error.message);
+        deviceInfo.deviceMake = 'ERROR';
+      }
+
+      // 4. Device Model: AT+DEVICEMODEL? → +DEVICEMODEL:1.0
+      try {
+        const modelResponse = await this.sendATCommand('AT+DEVICEMODEL?', '+DEVICEMODEL:', timeout, false);
+        deviceInfo.deviceModel = modelResponse.replace('+DEVICEMODEL:', '').trim();
+        console.log('[Factory Testing] Device Model:', deviceInfo.deviceModel);
+      } catch (error) {
+        console.error('[Factory Testing] Failed to read Device Model:', error.message);
+        deviceInfo.deviceModel = 'ERROR';
+      }
+
+      console.log('[Factory Testing] ZC-LCD device information read successfully:', deviceInfo);
+      return { success: true, data: deviceInfo };
+    } catch (error) {
+      console.error('[Factory Testing] Error reading ZC-LCD device info:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Read Droplet device information using AT commands with 30s timeout
+   * Commands: AT+DEVICEMODEL?, AT+DEVICEMAKE?, AT+FWVERSION?, AT+UNIQUEID?
+   */
+  async readDropletDeviceInfo() {
+    try {
+      console.log('[Factory Testing] Reading Droplet device information...');
+      
+      const deviceInfo = {};
+      const timeout = 30000; // 30 seconds timeout per command
+
+      // 1. Device Model: AT+DEVICEMODEL? → +DEVICEMODEL:0002
+      try {
+        const modelResponse = await this.sendATCommand('AT+DEVICEMODEL?', '+DEVICEMODEL:', timeout, false);
+        deviceInfo.deviceModel = modelResponse.replace('+DEVICEMODEL:', '').trim();
+        console.log('[Factory Testing] Device Model:', deviceInfo.deviceModel);
+      } catch (error) {
+        console.error('[Factory Testing] Failed to read Device Model:', error.message);
+        deviceInfo.deviceModel = 'ERROR';
+      }
+
+      // 2. Device Make: AT+DEVICEMAKE? → +DEVICEMAKE:ACB-M
+      try {
+        const makeResponse = await this.sendATCommand('AT+DEVICEMAKE?', '+DEVICEMAKE:', timeout, false);
+        deviceInfo.deviceMake = makeResponse.replace('+DEVICEMAKE:', '').trim();
+        console.log('[Factory Testing] Device Make:', deviceInfo.deviceMake);
+      } catch (error) {
+        console.error('[Factory Testing] Failed to read Device Make:', error.message);
+        deviceInfo.deviceMake = 'ERROR';
+      }
+
+      // 3. FW Version: AT+FWVERSION? → +HWVERSION:v0.1
+      try {
+        const fwResponse = await this.sendATCommand('AT+FWVERSION?', '+HWVERSION:', timeout, false);
+        deviceInfo.fwVersion = fwResponse.replace('+HWVERSION:', '').trim();
+        console.log('[Factory Testing] FW Version:', deviceInfo.fwVersion);
+      } catch (error) {
+        console.error('[Factory Testing] Failed to read FW version:', error.message);
+        deviceInfo.fwVersion = 'ERROR';
+      }
+
+      // 4. Unique ID: AT+UNIQUEID? → +UNIQUEID:841FE8109E38
+      try {
+        const uidResponse = await this.sendATCommand('AT+UNIQUEID?', '+UNIQUEID:', timeout, false);
+        deviceInfo.uniqueId = uidResponse.replace('+UNIQUEID:', '').trim();
+        console.log('[Factory Testing] Unique ID:', deviceInfo.uniqueId);
+      } catch (error) {
+        console.error('[Factory Testing] Failed to read Unique ID:', error.message);
+        deviceInfo.uniqueId = 'ERROR';
+      }
+
+      console.log('[Factory Testing] Droplet device information read successfully:', deviceInfo);
+      return { success: true, data: deviceInfo };
+    } catch (error) {
+      console.error('[Factory Testing] Error reading Droplet device info:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
    * Run factory tests
    */
   async runFactoryTests(device) {
@@ -889,50 +1035,141 @@ class FactoryTestingService {
 
       // Route tests based on device type
       if (device === 'ZC-LCD') {
-        const results = {};
+        const resultsZC = {
+          info: {},
+          tests: {},
+          _eval: {}
+        };
 
-        // Prefer reading unique ID via esptool
-        this.updateProgress('Reading device unique ID (MAC) via esptool...');
+        const setEval = (key, state) => {
+          resultsZC._eval[key] = state === true;
+        };
+
+        this.updateProgress('ZC-LCD: Starting tests...');
+
+        // WiFi test: AT+TEST=wifi → +WIFI:6,1 (networks>1, connected=1)
+        this.updateProgress('ZC-LCD: Running WiFi test...');
         try {
-          const mac = await this.readEsp32MAC(this.portPath);
-          results.uniqueId = mac || null;
-        } catch (e) {
-          results.uniqueId = null;
+          const resp = await this.sendATCommand('AT+TEST=wifi', '+WIFI:', 30000, false);
+          const payload = resp.replace('+WIFI:', '').trim();
+          const parts = payload.split(',');
+          const networkCount = Number(parts[0] || '0');
+          const connected = Number(parts[1] || '0');
+          const pass = Number.isFinite(networkCount) && networkCount > 1 && connected === 1;
+          resultsZC.tests.wifi = {
+            pass,
+            networks: networkCount,
+            connected,
+            raw: resp,
+            message: pass ? `Networks: ${networkCount}, connected` : `Networks=${networkCount}, connected=${connected}`
+          };
+          setEval('pass_wifi', pass);
+        } catch (err) {
+          resultsZC.tests.wifi = {
+            pass: false,
+            networks: null,
+            connected: null,
+            raw: null,
+            message: err.message || 'WiFi test failed'
+          };
+          setEval('pass_wifi', false);
         }
 
-        // 1. WiFi test
-        this.updateProgress('Running WiFi test...');
+        // RS485 test: AT+TEST=rs485 → +RS485:4096 (must be exactly 4096)
+        this.updateProgress('ZC-LCD: Running RS485 test...');
         try {
-          const respObj = await this.awaitTestJSONResult('test_wifi', 10000);
-          results.wifi = respObj;
-        } catch (e) {
-          results.wifi = { success: false, error: e.message };
+          const resp = await this.sendATCommand('AT+TEST=rs485', '+RS485:', 30000, false);
+          const payload = resp.replace('+RS485:', '').trim();
+          // Expected format: +RS485:4096 (value should be 4096 for pass)
+          const value = Number(payload);
+          const pass = value === 4096;
+          resultsZC.tests.rs485 = {
+            pass,
+            value,
+            raw: resp,
+            message: pass ? 'RS485 test passed (value=4096)' : `Expected 4096, received ${value}`
+          };
+          setEval('pass_rs485', pass);
+        } catch (err) {
+          resultsZC.tests.rs485 = {
+            pass: false,
+            value: null,
+            raw: null,
+            message: err.message || 'RS485 test failed'
+          };
+          setEval('pass_rs485', false);
         }
 
-        // 2. I2C test (temp/humidity)
-        this.updateProgress('Running I2C (Temp/Humidity) test...');
+        // I2C test: AT+TEST=i2c → +I2C:0x40,266,671 (address, temp, humidity with OK)
+        this.updateProgress('ZC-LCD: Running I2C test...');
         try {
-          const respObj = await this.awaitTestJSONResult('test_i2c', 10000);
-          results.i2c = respObj;
-        } catch (e) {
-          results.i2c = { success: false, error: e.message };
+          const resp = await this.sendATCommand('AT+TEST=i2c', '+I2C:', 30000, false);
+          const payload = resp.replace('+I2C:', '').trim();
+          // Expected format: +I2C:0x40,266,671 (i2c_address, temp*10, hum*10)
+          const parts = payload.split(',');
+          const i2cAddress = parts[0] ? parts[0].trim() : '';
+          const temp = parts[1] ? Number(parts[1].trim()) : null;
+          const hum = parts[2] ? Number(parts[2].trim()) : null;
+          
+          // Validate: must have valid address and reasonable sensor values
+          const addressValid = i2cAddress && i2cAddress.startsWith('0x');
+          const tempValid = temp !== null && Number.isFinite(temp);
+          const humValid = hum !== null && Number.isFinite(hum);
+          const pass = addressValid && tempValid && humValid;
+          
+          resultsZC.tests.i2c = {
+            pass,
+            i2cAddress,
+            temperature: temp,
+            humidity: hum,
+            raw: resp,
+            message: pass ? `I2C: ${i2cAddress}, Temp: ${temp}, Hum: ${hum}` : 'Invalid I2C values'
+          };
+          setEval('pass_i2c', pass);
+        } catch (err) {
+          resultsZC.tests.i2c = {
+            pass: false,
+            i2cAddress: null,
+            temperature: null,
+            humidity: null,
+            raw: null,
+            message: err.message || 'I2C test failed'
+          };
+          setEval('pass_i2c', false);
         }
 
-        // 3. LCD display test removed (firmware unsupported)
-
-        // 4. RS485 test
-        this.updateProgress('Running RS485 test...');
+        // LCD test: AT+TEST=lcd → +LCD:5 (touch count > 2 for pass)
+        this.updateProgress('ZC-LCD: Running LCD test...');
         try {
-          const respObj = await this.awaitTestJSONResult('test_rs485', 10000);
-          results.rs485 = respObj;
-        } catch (e) {
-          results.rs485 = { success: false, error: e.message };
+          const resp = await this.sendATCommand('AT+TEST=lcd', '+LCD:', 30000, false);
+          const payload = resp.replace('+LCD:', '').trim();
+          // Expected format: +LCD:5 (touch count must be > 2)
+          const touchCount = Number(payload);
+          const pass = Number.isFinite(touchCount) && touchCount > 2;
+          resultsZC.tests.lcd = {
+            pass,
+            touchCount,
+            raw: resp,
+            message: pass ? `LCD test passed (touches: ${touchCount})` : `Touch count: ${touchCount} (need > 2)`
+          };
+          setEval('pass_lcd', pass);
+        } catch (err) {
+          resultsZC.tests.lcd = {
+            pass: false,
+            touchCount: null,
+            raw: null,
+            message: err.message || 'LCD test failed'
+          };
+          setEval('pass_lcd', false);
         }
 
-        // Duplicate LCD test block removed
+        const allPass = Object.keys(resultsZC._eval).length > 0 && Object.values(resultsZC._eval).every(Boolean);
+        resultsZC.summary = {
+          passAll: allPass
+        };
 
         this.updateProgress('ZC-LCD tests completed');
-        return { success: true, data: results };
+        return { success: true, data: resultsZC };
       }
 
       // ACB-M device specific tests
@@ -1137,6 +1374,121 @@ class FactoryTestingService {
 
         this.updateProgress('ACB-M tests completed');
         return { success: true, data: resultsACB };
+      }
+
+      // Droplet device specific tests
+      if (device === 'Droplet') {
+        const resultsDroplet = {
+          info: {},
+          tests: {},
+          _eval: {}
+        };
+
+        const setEval = (key, state) => {
+          resultsDroplet._eval[key] = state === true;
+        };
+
+        this.updateProgress('Droplet: Starting tests...');
+
+        // LoRa test: AT+TEST=lora → +LORA:1,1,0 (tx_done, rx_done, value_rx)
+        this.updateProgress('Droplet: Running LoRa test...');
+        try {
+          const resp = await this.sendATCommand('AT+TEST=lora', '+LORA:', 30000, false);
+          const payload = resp.replace('+LORA:', '').trim();
+          const parts = payload.split(',');
+          const txDone = Number(parts[0] || '0');
+          const rxDone = Number(parts[1] || '0');
+          const valueRx = Number(parts[2] || '0');
+          const pass = txDone === 1 && rxDone === 1;
+          resultsDroplet.tests.lora = {
+            pass,
+            txDone,
+            rxDone,
+            valueRx,
+            raw: resp,
+            message: pass ? `LoRa: TX=${txDone}, RX=${rxDone}, Value=${valueRx}` : `TX=${txDone}, RX=${rxDone} (need both=1)`
+          };
+          setEval('pass_lora', pass);
+        } catch (err) {
+          resultsDroplet.tests.lora = {
+            pass: false,
+            txDone: null,
+            rxDone: null,
+            valueRx: null,
+            raw: null,
+            message: err.message || 'LoRa test failed'
+          };
+          setEval('pass_lora', false);
+        }
+
+        // Battery test: AT+TEST=bat → +BAT:3.61 (voltage)
+        this.updateProgress('Droplet: Running Battery test...');
+        try {
+          const resp = await this.sendATCommand('AT+TEST=bat', '+BAT:', 30000, false);
+          const payload = resp.replace('+BAT:', '').trim();
+          const voltage = Number(payload);
+          // Valid voltage should be > 0 and < 5V (reasonable range)
+          const pass = Number.isFinite(voltage) && voltage > 0 && voltage < 5;
+          resultsDroplet.tests.battery = {
+            pass,
+            voltage,
+            raw: resp,
+            message: pass ? `Battery: ${voltage}V` : payload.includes('NOT VALUE') ? 'No battery value' : 'Invalid voltage'
+          };
+          setEval('pass_battery', pass);
+        } catch (err) {
+          resultsDroplet.tests.battery = {
+            pass: false,
+            voltage: null,
+            raw: null,
+            message: err.message || 'Battery test failed'
+          };
+          setEval('pass_battery', false);
+        }
+
+        // I2C test: AT+TEST=i2c → +I2C:0x40,275,686 (address, temp, humidity)
+        this.updateProgress('Droplet: Running I2C test...');
+        try {
+          const resp = await this.sendATCommand('AT+TEST=i2c', '+I2C:', 30000, false);
+          const payload = resp.replace('+I2C:', '').trim();
+          const parts = payload.split(',');
+          const i2cAddress = parts[0] ? parts[0].trim() : '';
+          const temp = parts[1] ? Number(parts[1].trim()) : null;
+          const hum = parts[2] ? Number(parts[2].trim()) : null;
+          
+          const addressValid = i2cAddress && i2cAddress.startsWith('0x');
+          const tempValid = temp !== null && Number.isFinite(temp);
+          const humValid = hum !== null && Number.isFinite(hum);
+          const pass = addressValid && tempValid && humValid;
+          
+          resultsDroplet.tests.i2c = {
+            pass,
+            i2cAddress,
+            temperature: temp,
+            humidity: hum,
+            raw: resp,
+            message: pass ? `I2C: ${i2cAddress}, Temp: ${temp}, Hum: ${hum}` : 'Invalid I2C values'
+          };
+          setEval('pass_i2c', pass);
+        } catch (err) {
+          resultsDroplet.tests.i2c = {
+            pass: false,
+            i2cAddress: null,
+            temperature: null,
+            humidity: null,
+            raw: null,
+            message: err.message || 'I2C test failed'
+          };
+          setEval('pass_i2c', false);
+        }
+
+        const allPass = Object.keys(resultsDroplet._eval).length > 0 && Object.values(resultsDroplet._eval).every(Boolean);
+        resultsDroplet.summary = {
+          passAll: allPass
+        };
+
+        this.updateProgress('Droplet tests completed');
+        return { success: true, data: resultsDroplet };
       }
 
       // Default: run Micro Edge / general tests (existing flow)
@@ -1406,6 +1758,27 @@ class FactoryTestingService {
         csvContent += `Test Results,RS485 Status,${formatStatus(acbTests.rs4852)}\n`;
       }
 
+      // ZC-LCD CSV entries
+      if (device === 'ZC-LCD') {
+        const zcTests = testResults.tests || {};
+        const formatStatus = (res) => {
+          if (!res) return 'N/A';
+          const state = res.pass === true ? 'PASS' : res.pass === false ? 'FAIL' : 'N/A';
+          const detail = res.message || res.raw || '';
+          return detail ? `${state} (${detail})` : state;
+        };
+        csvContent += `Test Results,WiFi Networks,${zcTests.wifi && typeof zcTests.wifi.networks !== 'undefined' ? zcTests.wifi.networks : 'N/A'}\n`;
+        csvContent += `Test Results,WiFi Connected,${zcTests.wifi && typeof zcTests.wifi.connected !== 'undefined' ? zcTests.wifi.connected : 'N/A'}\n`;
+        csvContent += `Test Results,WiFi Status,${formatStatus(zcTests.wifi)}\n`;
+        csvContent += `Test Results,RS485 Value,${zcTests.rs485 && typeof zcTests.rs485.value !== 'undefined' ? zcTests.rs485.value : 'N/A'}\n`;
+        csvContent += `Test Results,RS485 Status,${formatStatus(zcTests.rs485)}\n`;
+        csvContent += `Test Results,I2C Address,${zcTests.i2c ? (zcTests.i2c.i2cAddress || 'N/A') : 'N/A'}\n`;
+        csvContent += `Test Results,I2C Temperature,${zcTests.i2c && typeof zcTests.i2c.temperature !== 'undefined' ? zcTests.i2c.temperature : 'N/A'}\n`;
+        csvContent += `Test Results,I2C Humidity,${zcTests.i2c && typeof zcTests.i2c.humidity !== 'undefined' ? zcTests.i2c.humidity : 'N/A'}\n`;
+        csvContent += `Test Results,I2C Status,${formatStatus(zcTests.i2c)}\n`;
+        csvContent += `Test Results,LCD Status,${formatStatus(zcTests.lcd)}\n`;
+      }
+
       // Write CSV file
       fs.writeFileSync(csvPath, csvContent, 'utf8');
 
@@ -1483,6 +1856,25 @@ class FactoryTestingService {
         logContent += `RS485 Failures:    ${acbTests.rs4852 && typeof acbTests.rs4852.failures !== 'undefined' ? acbTests.rs4852.failures : 'N/A'}\n`;
         logContent += `RS485 Status:      ${statusToString(acbTests.rs4852)}\n`;
       }
+      // ZC-LCD log entries
+      if (device === 'ZC-LCD') {
+        const zcTests = testResults.tests || {};
+        const statusToString = (res) => {
+          if (!res) return 'N/A';
+          const state = res.pass === true ? 'PASS' : res.pass === false ? 'FAIL' : 'N/A';
+          return res.message ? `${state} - ${res.message}` : state;
+        };
+        logContent += `WiFi Networks:     ${zcTests.wifi && typeof zcTests.wifi.networks !== 'undefined' ? zcTests.wifi.networks : 'N/A'}\n`;
+        logContent += `WiFi Connected:    ${zcTests.wifi && typeof zcTests.wifi.connected !== 'undefined' ? zcTests.wifi.connected : 'N/A'}\n`;
+        logContent += `WiFi Status:       ${statusToString(zcTests.wifi)}\n`;
+        logContent += `RS485 Value:       ${zcTests.rs485 && typeof zcTests.rs485.value !== 'undefined' ? zcTests.rs485.value : 'N/A'}\n`;
+        logContent += `RS485 Status:      ${statusToString(zcTests.rs485)}\n`;
+        logContent += `I2C Address:       ${zcTests.i2c ? (zcTests.i2c.i2cAddress || 'N/A') : 'N/A'}\n`;
+        logContent += `I2C Temperature:   ${zcTests.i2c && typeof zcTests.i2c.temperature !== 'undefined' ? zcTests.i2c.temperature : 'N/A'}\n`;
+        logContent += `I2C Humidity:      ${zcTests.i2c && typeof zcTests.i2c.humidity !== 'undefined' ? zcTests.i2c.humidity : 'N/A'}\n`;
+        logContent += `I2C Status:        ${statusToString(zcTests.i2c)}\n`;
+        logContent += `LCD Status:        ${statusToString(zcTests.lcd)}\n`;
+      }
       
       logContent += '\n';
       logContent += '='.repeat(80) + '\n';
@@ -1528,6 +1920,8 @@ class FactoryTestingService {
                      'Version,Device Type,Firmware Version,HW Version,Unique ID,Device Make,Device Model,';
         if (device === 'ACB-M') {
           header += 'UART Loopback,RTC Time,RTC Status,WiFi Networks,WiFi Connected,WiFi Status,ETH MAC,ETH IP,ETH Status,RS485 Cycles,RS485 Failures,RS485 Status,Test Result\n';
+        } else if (device === 'ZC-LCD') {
+          header += 'WiFi Networks,WiFi Connected,WiFi Status,RS485 Value,RS485 Status,I2C Address,I2C Temperature,I2C Humidity,I2C Status,LCD Status,Test Result\n';
         } else if (device === 'Droplet') {
           header += 'Temperature,Humidity,Pressure,CO2,AIN 1 Voltage,AIN 2 Voltage,AIN 3 Voltage,LoRa Address,LoRa Detect,LoRa Raw Push,Test Result\n';
         } else {
@@ -1548,7 +1942,7 @@ class FactoryTestingService {
         if (criticalTests.some(test => test === 'ERROR' || test === 'Not Detected')) {
           testResult = 'FAIL';
         }
-      } else if (device === 'ACB-M') {
+      } else if (device === 'ACB-M' || device === 'ZC-LCD') {
         const evalFlags = testResults && testResults._eval ? Object.values(testResults._eval) : [];
         if (!evalFlags.length || evalFlags.some(flag => flag !== true)) {
           testResult = 'FAIL';
@@ -1648,6 +2042,36 @@ class FactoryTestingService {
                   `${escapeCSV(typeof acbTests.rs4852?.cycles !== 'undefined' ? acbTests.rs4852.cycles : 'N/A')},` +
                   `${escapeCSV(typeof acbTests.rs4852?.failures !== 'undefined' ? acbTests.rs4852.failures : 'N/A')},` +
                   `${escapeCSV(statusValue(acbTests.rs4852))},` +
+                  `${escapeCSV(testResult)}\n`;
+      }
+      else if (device === 'ZC-LCD') {
+        const zcTests = testResults.tests || {};
+        const statusValue = (res) => {
+          if (!res) return 'N/A';
+          return res.pass === true ? 'PASS' : res.pass === false ? 'FAIL' : 'N/A';
+        };
+        csvLine += `${escapeCSV(timestamp)},` +
+                  `${escapeCSV(preTesting?.testerName || 'N/A')},` +
+                  `${escapeCSV(preTesting?.hardwareVersion || 'N/A')},` +
+                  `${escapeCSV(preTesting?.batchId || 'N/A')},` +
+                  `${escapeCSV(preTesting?.workOrderSerial || 'N/A')},` +
+                  `${escapeCSV(version)},` +
+                  `${escapeCSV(device)},` +
+                  `${escapeCSV(deviceInfo.firmwareVersion)},` +
+                  `${escapeCSV(deviceInfo.hwVersion)},` +
+                  `${escapeCSV(deviceInfo.uniqueId)},` +
+                  `${escapeCSV(deviceInfo.deviceMake)},` +
+                  `${escapeCSV(deviceInfo.deviceModel)},` +
+                  `${escapeCSV(typeof zcTests.wifi?.networks !== 'undefined' ? zcTests.wifi.networks : 'N/A')},` +
+                  `${escapeCSV(typeof zcTests.wifi?.connected !== 'undefined' ? zcTests.wifi.connected : 'N/A')},` +
+                  `${escapeCSV(statusValue(zcTests.wifi))},` +
+                  `${escapeCSV(typeof zcTests.rs485?.value !== 'undefined' ? zcTests.rs485.value : 'N/A')},` +
+                  `${escapeCSV(statusValue(zcTests.rs485))},` +
+                  `${escapeCSV(zcTests.i2c ? (zcTests.i2c.i2cAddress || 'N/A') : 'N/A')},` +
+                  `${escapeCSV(typeof zcTests.i2c?.temperature !== 'undefined' ? zcTests.i2c.temperature : 'N/A')},` +
+                  `${escapeCSV(typeof zcTests.i2c?.humidity !== 'undefined' ? zcTests.i2c.humidity : 'N/A')},` +
+                  `${escapeCSV(statusValue(zcTests.i2c))},` +
+                  `${escapeCSV(statusValue(zcTests.lcd))},` +
                   `${escapeCSV(testResult)}\n`;
       }
       

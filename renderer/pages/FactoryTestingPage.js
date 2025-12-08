@@ -10,10 +10,10 @@ class FactoryTestingPage {
     this.selectedDevice = null; // Device name
     
     // Gen 1 devices
-    this.v1Devices = ['Micro Edge', 'Droplet'];
+    this.v1Devices = ['Micro Edge'];
     
     // Gen 2 devices
-    this.v2Devices = ['ZC-LCD', 'ACB-M', 'Droplet', 'ZC-Controller'];
+    this.v2Devices = ['ZC-LCD', 'ZC-Controller', 'ACB-M', 'Droplet'];
     
     // Pre-testing information (filled by tester)
     this.preTesting = {
@@ -49,9 +49,11 @@ class FactoryTestingPage {
     this._autoConnectLastPort = '';
     this._autoConnectLastAttempt = 0;
     this._autoConnectManualSuppressUntil = 0;
-    // Step flow: 'pre' (pre-test form) -> 'main' (tests) for both ACB-M and Micro Edge
+    // Step flow: 'pre' (pre-test form) -> 'main' (tests) for ACB-M, ZC-LCD, Micro Edge and Droplet
     this.acbStep = 'main';
+    this.zcStep = 'main';
     this.microEdgeStep = 'main';
+    this.dropletStep = 'main';
     
     // Printer state
     this.printerConnected = false;
@@ -142,11 +144,19 @@ class FactoryTestingPage {
     } catch (e) {
       console.warn('[Factory Testing] Failed to load defaults for device:', device, e && e.message);
     }
-    // Default tabs: both ACB-M and Micro Edge start at Auto tab and pre-step
+    // Default tabs: ACB-M, ZC-LCD, Droplet and Micro Edge start at Auto tab and pre-step
     if (this.selectedDevice === 'ACB-M') {
       this.mode = 'auto';
       this.acbStep = 'pre';
       console.log('[Factory Testing Page] ACB-M selected, waiting for Proceed to Testing...');
+    } else if (this.selectedDevice === 'ZC-LCD') {
+      this.mode = 'auto';
+      this.zcStep = 'pre';
+      console.log('[Factory Testing Page] ZC-LCD selected, waiting for Proceed to Testing...');
+    } else if (this.selectedDevice === 'Droplet') {
+      this.mode = 'auto';
+      this.dropletStep = 'pre';
+      console.log('[Factory Testing Page] Droplet selected, waiting for Proceed to Testing...');
     } else if (this.selectedDevice === 'Micro Edge') {
       this.mode = 'auto';
       this.microEdgeStep = 'pre';
@@ -197,6 +207,25 @@ class FactoryTestingPage {
     }
   }
 
+  goToZcMain() {
+    // Validate required pre-testing info
+    if (!this.validatePreTestingInfo()) {
+      return;
+    }
+    // Stop printer polling when entering main testing page
+    if (this._printerPollTimer) {
+      clearTimeout(this._printerPollTimer);
+      this._printerPollTimer = null;
+    }
+    this.zcStep = 'main';
+    this.app.render();
+    // If auto mode, kick off detection and connection
+    if (this.selectedDevice === 'ZC-LCD' && this.mode === 'auto') {
+      console.log('[Factory Testing Page] ZC-LCD Auto mode: starting auto workflow...');
+      setTimeout(() => this._startAutoWorkflow(), 150);
+    }
+  }
+
   goToMicroEdgeMain() {
     // Validate required pre-testing info
     if (!this.validatePreTestingInfo()) {
@@ -212,6 +241,32 @@ class FactoryTestingPage {
     // If auto mode, kick off detection and connection
     if (this.selectedDevice === 'Micro Edge' && this.mode === 'auto') {
       console.log('[Factory Testing Page] Micro Edge Auto mode: starting auto workflow...');
+      setTimeout(() => this._startAutoWorkflow(), 150);
+    }
+  }
+
+  goToDropletMain() {
+    // Debug: Log current preTesting state
+    console.log('[goToDropletMain] Current preTesting:', JSON.stringify(this.preTesting));
+    
+    // Validate required pre-testing info
+    if (!this.validatePreTestingInfo()) {
+      console.log('[goToDropletMain] Validation failed, staying on pre page');
+      return;
+    }
+    
+    console.log('[goToDropletMain] Validation passed, proceeding to main');
+    
+    // Stop printer polling when entering main testing page
+    if (this._printerPollTimer) {
+      clearTimeout(this._printerPollTimer);
+      this._printerPollTimer = null;
+    }
+    this.dropletStep = 'main';
+    this.app.render();
+    // If auto mode, kick off detection and connection
+    if (this.selectedDevice === 'Droplet' && this.mode === 'auto') {
+      console.log('[Factory Testing Page] Droplet Auto mode: starting auto workflow...');
       setTimeout(() => this._startAutoWorkflow(), 150);
     }
   }
@@ -313,6 +368,10 @@ class FactoryTestingPage {
     if (this.selectedDevice === 'ACB-M') {
       return this.acbStep === 'main' && this.mode === 'auto';
     }
+    // ZC-LCD: only auto-connect when in main step (after clicking Proceed to Testing) and auto mode
+    if (this.selectedDevice === 'ZC-LCD') {
+      return this.zcStep === 'main' && this.mode === 'auto';
+    }
     // Micro Edge: only auto-connect when in main step (after clicking Proceed to Testing) and auto mode
     if (this.selectedDevice === 'Micro Edge') {
       return this.microEdgeStep === 'main' && this.mode === 'auto';
@@ -377,11 +436,9 @@ class FactoryTestingPage {
       return `
         <ol class="text-xs text-gray-700 dark:text-gray-300 space-y-1 ml-4 list-decimal">
           <li>Connect Droplet device via UART (115200 baud)</li>
-          <li>Read temperature sensor (verify room temperature ~20-25°C)</li>
-          <li>Read humidity sensor (verify normal range 30-70%)</li>
-          <li>Read pressure sensor (verify atmospheric ~1000 hPa)</li>
-          <li>Read CO2 sensor (verify indoor air quality 400-1000 ppm)</li>
-          <li>Test LoRa module detection and communication</li>
+          <li>Run LoRa test (verify TX/RX communication)</li>
+          <li>Read battery voltage (valid range check)</li>
+          <li>Read I2C temperature & humidity sensor</li>
           <li>Results saved to: <code>factory-tests/{uniqueID}/</code> as CSV + LOG</li>
         </ol>
       `;
@@ -472,8 +529,11 @@ class FactoryTestingPage {
     if (this.mode === 'auto') {
       // Only start auto workflow if we're in the main testing step
       // For ACB-M: must be in 'main' step (after Proceed to Testing)
+      // For ZC-LCD: must be in 'main' step (after Proceed to Testing)
       // For Micro Edge: must be in 'main' step (after Proceed to Testing)
       if (this.selectedDevice === 'ACB-M' && this.acbStep === 'main') {
+        this._startAutoWorkflow();
+      } else if (this.selectedDevice === 'ZC-LCD' && this.zcStep === 'main') {
         this._startAutoWorkflow();
       } else if (this.selectedDevice === 'Micro Edge' && this.microEdgeStep === 'main') {
         this._startAutoWorkflow();
@@ -644,19 +704,26 @@ class FactoryTestingPage {
   }
 
   validatePreTestingInfo() {
+    console.log('[validatePreTestingInfo] Checking device:', this.selectedDevice);
+    console.log('[validatePreTestingInfo] Current preTesting:', JSON.stringify(this.preTesting));
+    
     const missing = [];
     if (!this.preTesting.testerName) missing.push('Tester Name');
     if (!this.preTesting.hardwareVersion) missing.push('Hardware Version');
     
     // For ACB-M, only Tester Name and Hardware Version are required
-    // For other devices (Micro Edge), all fields are required
-    if (this.selectedDevice !== 'ACB-M') {
+    // For ZC-LCD and Droplet, also require Firmware Version
+    // For Micro Edge, all fields are required
+    if (this.selectedDevice === 'ZC-LCD' || this.selectedDevice === 'Droplet') {
+      if (!this.preTesting.firmwareVersion) missing.push('Firmware Version');
+    } else if (this.selectedDevice === 'Micro Edge') {
       if (!this.preTesting.firmwareVersion) missing.push('Firmware Version');
       if (!this.preTesting.batchId) missing.push('Batch ID');
       if (!this.preTesting.workOrderSerial) missing.push('Work Order Serial');
     }
     
     if (missing.length > 0) {
+        console.log('[validatePreTestingInfo] Missing fields:', missing);
         const msg = `Please fill in the following required fields:\n- ${missing.join('\n- ')}`;
         if (this.mode === 'auto') {
           this.testProgress = msg;
@@ -666,6 +733,8 @@ class FactoryTestingPage {
         }
         return false;
     }
+    
+    console.log('[validatePreTestingInfo] All required fields present, validation passed');
     return true;
   }
 
@@ -820,6 +889,112 @@ class FactoryTestingPage {
               }
             } catch (e) {
               console.warn('[Factory Testing] Micro Edge auto test error:', e && e.message);
+              this.testProgress = `❌ Auto test error: ${e && e.message}`;
+            }
+            this.app.render();
+          }
+          
+        } else if (this.selectedDevice === 'ZC-LCD') {
+          // ZC-LCD: Device info already read during connect, show popup
+          if (result.deviceInfo) {
+            this.deviceInfo = result.deviceInfo;
+            console.log('[Factory Testing Page] ZC-LCD device info from connect:', this.deviceInfo);
+          }
+          this.testProgress = `✅ Connected - Device info retrieved`;
+          
+          // Show connection success popup with device information
+          if (!silent) {
+            const infoMsg = [
+              `✅ Connected successfully to ${selectedPort} @ ${selectedBaud} baud`,
+              ``,
+              `Device Information:`,
+              `  HW Version: ${this.deviceInfo?.hwVersion || 'N/A'}`,
+              `  Unique ID: ${this.deviceInfo?.uniqueId || 'N/A'}`,
+              `  Device Make: ${this.deviceInfo?.deviceMake || 'N/A'}`,
+              `  Device Model: ${this.deviceInfo?.deviceModel || 'N/A'}`,
+              ``,
+              `Ready to run tests!`
+            ].join('\n');
+            alert(infoMsg);
+          }
+          
+          this.app.render();
+          
+          // Auto mode: run tests automatically after showing device info
+          if (this.mode === 'auto') {
+            if (!silent) {
+              this._lastAutoConnectedPort = selectedPort;
+              this.showConnectConfirm = true;
+              this.app.render();
+            }
+            try {
+              this.testProgress = 'Starting ZC-LCD auto tests...';
+              this.app.render();
+              
+              const fullRes = await window.factoryTestingModule.runFactoryTests('ZC-LCD');
+              if (fullRes && fullRes.success) {
+                this.factoryTestResults = fullRes.data || this.factoryTestResults;
+                this.testProgress = '✅ ZC-LCD auto tests completed';
+                // Save results to enable Print Label if all tests pass
+                await this.saveResultsToFile();
+              } else {
+                this.testProgress = `❌ ZC-LCD auto tests failed: ${fullRes && fullRes.error ? fullRes.error : 'Unknown error'}`;
+              }
+            } catch (e) {
+              console.warn('[Factory Testing] ZC-LCD auto test error:', e && e.message);
+              this.testProgress = `❌ Auto test error: ${e && e.message}`;
+            }
+            this.app.render();
+          }
+          
+        } else if (this.selectedDevice === 'Droplet') {
+          // Droplet: Device info already read during connect, show popup
+          if (result.deviceInfo) {
+            this.deviceInfo = result.deviceInfo;
+            console.log('[Factory Testing Page] Droplet device info from connect:', this.deviceInfo);
+          }
+          this.testProgress = `✅ Connected - Device info retrieved`;
+          
+          // Show connection success popup with device information
+          if (!silent) {
+            const infoMsg = [
+              `✅ Connected successfully to ${selectedPort} @ ${selectedBaud} baud`,
+              ``,
+              `Device Information:`,
+              `  Device Model: ${this.deviceInfo?.deviceModel || 'N/A'}`,
+              `  Device Make: ${this.deviceInfo?.deviceMake || 'N/A'}`,
+              `  FW Version: ${this.deviceInfo?.fwVersion || 'N/A'}`,
+              `  Unique ID: ${this.deviceInfo?.uniqueId || 'N/A'}`,
+              ``,
+              `Ready to run tests!`
+            ].join('\n');
+            alert(infoMsg);
+          }
+          
+          this.app.render();
+          
+          // Auto mode: run tests automatically after showing device info
+          if (this.mode === 'auto') {
+            if (!silent) {
+              this._lastAutoConnectedPort = selectedPort;
+              this.showConnectConfirm = true;
+              this.app.render();
+            }
+            try {
+              this.testProgress = 'Starting Droplet auto tests...';
+              this.app.render();
+              
+              const fullRes = await window.factoryTestingModule.runFactoryTests('Droplet');
+              if (fullRes && fullRes.success) {
+                this.factoryTestResults = fullRes.data || this.factoryTestResults;
+                this.testProgress = '✅ Droplet auto tests completed';
+                // Save results to enable Print Label if all tests pass
+                await this.saveResultsToFile();
+              } else {
+                this.testProgress = `❌ Droplet auto tests failed: ${fullRes && fullRes.error ? fullRes.error : 'Unknown error'}`;
+              }
+            } catch (e) {
+              console.warn('[Factory Testing] Droplet auto test error:', e && e.message);
               this.testProgress = `❌ Auto test error: ${e && e.message}`;
             }
             this.app.render();
@@ -1061,9 +1236,16 @@ class FactoryTestingPage {
           this.deviceInfo = Object.assign({}, this.deviceInfo, this.factoryTestResults.info);
         }
 
+        if (this.selectedDevice === 'ZC-LCD' && this.factoryTestResults.info) {
+          this.deviceInfo = Object.assign({}, this.deviceInfo, this.factoryTestResults.info);
+        }
+
         if (this.selectedDevice === 'ACB-M') {
           const success = !!(this.factoryTestResults.summary && this.factoryTestResults.summary.passAll);
           this.testProgress = success ? 'ACB-M factory tests passed' : 'ACB-M factory tests reported failures';
+        } else if (this.selectedDevice === 'ZC-LCD') {
+          const success = !!(this.factoryTestResults.summary && this.factoryTestResults.summary.passAll);
+          this.testProgress = success ? 'ZC-LCD factory tests passed' : 'ZC-LCD factory tests reported failures';
         } else {
           this.testProgress = 'Factory tests completed successfully';
         }
@@ -1173,6 +1355,13 @@ class FactoryTestingPage {
           } else if (this.selectedDevice === 'ACB-M') {
             const evals = (this.factoryTestResults && this.factoryTestResults._eval) ? this.factoryTestResults._eval : null;
             const allPass = evals ? ['pass_uart','pass_rtc','pass_wifi','pass_eth','pass_rs4852'].every(k => evals[k] === true) : false;
+            if (allPass) {
+              this.allowPrint = true;
+              this.testProgress += '\n✅ All tests passed - Print Label enabled';
+            }
+          } else if (this.selectedDevice === 'ZC-LCD') {
+            const evals = (this.factoryTestResults && this.factoryTestResults._eval) ? this.factoryTestResults._eval : null;
+            const allPass = evals ? ['pass_wifi','pass_rs485','pass_i2c','pass_lcd'].every(k => evals[k] === true) : false;
             if (allPass) {
               this.allowPrint = true;
               this.testProgress += '\n✅ All tests passed - Print Label enabled';
@@ -1320,7 +1509,7 @@ class FactoryTestingPage {
             >
               <div class="mb-4 text-4xl text-gray-600 group-hover:text-gray-800 dark:text-gray-400 dark:group-hover:text-gray-200">📟</div>
               <div class="mb-2 text-2xl font-bold text-gray-800 dark:text-gray-100">Gen 1</div>
-              <div class="text-sm text-gray-600 dark:text-gray-400">Micro Edge & Droplet</div>
+              <div class="text-sm text-gray-600 dark:text-gray-400">Micro Edge</div>
             </button>
             
             <button
@@ -1359,6 +1548,9 @@ class FactoryTestingPage {
           <div class="grid grid-cols-2 gap-6">
             ${devices.map(device => {
               const isMicroEdge = device === 'Micro Edge';
+              const isZCLCD = device === 'ZC-LCD';
+              const isZCController = device === 'ZC-Controller';
+              const isACBM = device === 'ACB-M';
               const isDroplet = device === 'Droplet';
 
               let icon, description;
@@ -1366,6 +1558,15 @@ class FactoryTestingPage {
               if (isMicroEdge) {
                 icon = '⚡';
                 description = 'Digital, Analog, Pulse & LoRa';
+              } else if (isZCLCD) {
+                icon = '📺';
+                description = 'Screen Testing';
+              } else if (isZCController) {
+                icon = '🔌';
+                description = 'Relay Testing';
+              } else if (isACBM) {
+                icon = '🌐';
+                description = 'Gateway Testing';
               } else if (isDroplet) {
                 icon = '🌡️';
                 description = 'Environmental Sensors & LoRa';
@@ -1392,7 +1593,7 @@ class FactoryTestingPage {
 
     // Testing interface: enable Gen1 Micro Edge and Gen2 ZC-LCD/ACB-M
     const isTestingEnabled = (this.selectedVersion === 'v1' && this.selectedDevice === 'Micro Edge') ||
-                 (this.selectedVersion === 'v2' && (this.selectedDevice === 'ZC-LCD' || this.selectedDevice === 'ACB-M'));
+                 (this.selectedVersion === 'v2' && (this.selectedDevice === 'ZC-LCD' || this.selectedDevice === 'ACB-M' || this.selectedDevice === 'Droplet'));
     
     // Schedule port dropdown update after render
     if (isTestingEnabled && window.factoryTestingModule && !this._postRenderTicket) {
@@ -1451,12 +1652,29 @@ class FactoryTestingPage {
     };
     const acbSummaryBadge = acbStatusBadge(typeof acbSummary.passAll === 'boolean' ? acbSummary.passAll : undefined);
 
+    // ZC-LCD badges
+    const zcTests = this.factoryTestResults.tests || {};
+    const zcEval = this.factoryTestResults._eval || {};
+    const zcSummary = this.factoryTestResults.summary || {};
+    const zcStatusBadge = (flag) => {
+      if (flag === true) return { text: 'PASS', className: 'bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-200 dark:border-green-700' };
+      if (flag === false) return { text: 'FAIL', className: 'bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-200 dark:border-red-700' };
+      return { text: 'N/A', className: 'bg-gray-100 text-gray-600 border-gray-200 dark:bg-gray-900/40 dark:text-gray-300 dark:border-gray-700' };
+    };
+    const zcBadges = {
+      wifi: zcStatusBadge(zcEval.pass_wifi),
+      rs485: zcStatusBadge(zcEval.pass_rs485),
+      i2c: zcStatusBadge(zcEval.pass_i2c),
+      lcd: zcStatusBadge(zcEval.pass_lcd)
+    };
+    const zcSummaryBadge = zcStatusBadge(typeof zcSummary.passAll === 'boolean' ? zcSummary.passAll : undefined);
+
     return `
       <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6">
         <div class="flex items-center justify-between mb-6">
           <div class="flex items-center gap-4">
             <div class="flex h-14 w-14 items-center justify-center rounded-xl bg-gray-100 text-2xl text-gray-700 dark:bg-gray-700 dark:text-gray-200">
-              ${this.selectedDevice === 'Micro Edge' ? '⚡' : this.selectedDevice === 'Droplet' ? '🌡️' : '🔧'}
+              ${this.selectedDevice === 'Micro Edge' ? '⚡' : this.selectedDevice === 'ZC-LCD' ? '📺' : this.selectedDevice === 'ZC-Controller' ? '🔌' : this.selectedDevice === 'ACB-M' ? '🌐' : this.selectedDevice === 'Droplet' ? '🌡️' : '🔧'}
             </div>
             <div>
               <h2 class="text-2xl font-bold text-gray-800 dark:text-gray-100">
@@ -1464,6 +1682,9 @@ class FactoryTestingPage {
               </h2>
               <p class="text-sm text-gray-600 dark:text-gray-400">
                 ${this.selectedDevice === 'Micro Edge' ? 'Digital, Analog, Pulse & LoRa Testing' : 
+                  this.selectedDevice === 'ZC-LCD' ? 'Screen Testing' : 
+                  this.selectedDevice === 'ZC-Controller' ? 'Relay Testing' : 
+                  this.selectedDevice === 'ACB-M' ? 'Gateway Testing' : 
                   this.selectedDevice === 'Droplet' ? 'Environmental Sensors & LoRa Testing' : 
                   'Factory Testing'} • Gen ${this.selectedVersion === 'v1' ? '1' : '2'}
               </p>
@@ -1486,7 +1707,7 @@ class FactoryTestingPage {
         ${!isTestingEnabled ? `
           <div class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4 mb-6">
             <p class="text-yellow-800 dark:text-yellow-200 font-semibold">
-              ⚠️ Testing is currently available for Gen 1 - Micro Edge and Gen 2 - ZC-LCD
+              ⚠️ Testing is currently available for Gen 1 - Micro Edge and Gen 2 - ZC-LCD, ACB-M, Droplet
             </p>
             <p class="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
               Support for additional Gen 2 devices will be added soon.
@@ -1656,7 +1877,185 @@ class FactoryTestingPage {
           </div>
         ` : ''}
 
-        ${isTestingEnabled && ((this.selectedDevice === 'ACB-M' && this.acbStep === 'main') || (this.selectedDevice === 'Micro Edge' && this.microEdgeStep === 'main') || (this.selectedDevice !== 'ACB-M' && this.selectedDevice !== 'Micro Edge')) ? `
+        <!-- ZC-LCD Pre Page (Mode + Pre-Testing) -->
+        ${this.selectedDevice === 'ZC-LCD' && this.zcStep === 'pre' ? `
+          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">🧭</div>
+                <div>
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 1 · Select Mode</h3>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">Auto will detect COM and run tests</p>
+                </div>
+              </div>
+              <div class="inline-flex items-center rounded-lg border border-gray-300 bg-gray-50 p-0.5 dark:border-gray-600 dark:bg-gray-900/40">
+                <button onclick="window.factoryTestingPage.toggleMode('auto')" class="px-4 py-2 text-sm font-medium ${this.mode === 'auto' ? 'bg-gray-900 text-white dark:bg-gray-200 dark:text-gray-900' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'} rounded-md">Auto</button>
+                <button onclick="window.factoryTestingPage.toggleMode('manual')" class="px-4 py-2 text-sm font-medium ${this.mode === 'manual' ? 'bg-gray-900 text-white dark:bg-gray-200 dark:text-gray-900' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'} rounded-md">Manual</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">📝</div>
+                <div>
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 2 · Pre-Testing Information</h3>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">Complete before running tests</p>
+                </div>
+              </div>
+            </div>
+            <div class="mt-4 flex items-center gap-2">
+              <button 
+                onclick="window.factoryTestingPage.saveDefaultsForDevice()" 
+                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                Save defaults
+              </button>
+              <button 
+                onclick="window.factoryTestingPage.resetDefaultsForDevice()" 
+                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                Reset
+              </button>
+            </div>
+            <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Tester Name *</label>
+                <input type="text" data-field="testerName" value="${this.preTesting.testerName || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Firmware Version *</label>
+                <input type="text" data-field="firmwareVersion" value="${this.preTesting.firmwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Hardware Version *</label>
+                <input type="text" data-field="hardwareVersion" value="${this.preTesting.hardwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Batch ID</label>
+                <input type="text" data-field="batchId" value="${this.preTesting.batchId || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Work Order Serial</label>
+                <input type="text" data-field="workOrderSerial" value="${this.preTesting.workOrderSerial || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+              </div>
+            </div>
+          </div>
+
+          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">🖨️</div>
+                <div>
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 3 · Connect Brother PT-P900W</h3>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">Ensure USB printer is connected</p>
+                </div>
+              </div>
+              <div>
+                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${this.printerConnected ? 'text-green-600 border-green-300' : 'text-red-600 border-red-300'}">${this.printerConnected ? 'Connected' : 'Not Connected'}</span>
+              </div>
+            </div>
+            <div class="mt-3 flex items-center gap-2">
+              <button onclick="window.factoryTestingPage.checkPrinterConnection({ force: true })" class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">Check Printer</button>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-end">
+            <button onclick="window.factoryTestingPage.goToZcMain()" class="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-gray-700 disabled:cursor-not-allowed disabled:bg-gray-400 dark:bg-gray-200 dark:text-gray-900 dark:hover:bg-gray-100">
+              Proceed to Testing
+            </button>
+          </div>
+        ` : ''}
+
+        <!-- Droplet Pre Page (Mode + Pre-Testing + Printer) -->
+        ${this.selectedDevice === 'Droplet' && this.dropletStep === 'pre' ? `
+          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">🧭</div>
+                <div>
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 1 · Select Mode</h3>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">Auto will detect COM and run tests</p>
+                </div>
+              </div>
+              <div class="inline-flex items-center rounded-lg border border-gray-300 bg-gray-50 p-0.5 dark:border-gray-600 dark:bg-gray-900/40">
+                <button onclick="window.factoryTestingPage.toggleMode('auto')" class="px-4 py-2 text-sm font-medium ${this.mode === 'auto' ? 'bg-gray-900 text-white dark:bg-gray-200 dark:text-gray-900' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'} rounded-md">Auto</button>
+                <button onclick="window.factoryTestingPage.toggleMode('manual')" class="px-4 py-2 text-sm font-medium ${this.mode === 'manual' ? 'bg-gray-900 text-white dark:bg-gray-200 dark:text-gray-900' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'} rounded-md">Manual</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">📝</div>
+                <div>
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 2 · Pre-Testing Information</h3>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">Complete before running tests</p>
+                </div>
+              </div>
+            </div>
+            <div class="mt-4 flex items-center gap-2">
+              <button 
+                onclick="window.factoryTestingPage.saveDefaultsForDevice()" 
+                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                Save defaults
+              </button>
+              <button 
+                onclick="window.factoryTestingPage.resetDefaultsForDevice()" 
+                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                Reset
+              </button>
+            </div>
+            <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Tester Name *</label>
+                <input type="text" data-field="testerName" value="${this.preTesting.testerName || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Firmware Version *</label>
+                <input type="text" data-field="firmwareVersion" value="${this.preTesting.firmwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Hardware Version *</label>
+                <input type="text" data-field="hardwareVersion" value="${this.preTesting.hardwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Batch ID</label>
+                <input type="text" data-field="batchId" value="${this.preTesting.batchId || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Work Order Serial</label>
+                <input type="text" data-field="workOrderSerial" value="${this.preTesting.workOrderSerial || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+              </div>
+            </div>
+          </div>
+
+          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">🖨️</div>
+                <div>
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 3 · Connect Brother PT-P900W</h3>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">Ensure USB printer is connected</p>
+                </div>
+              </div>
+              <div>
+                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${this.printerConnected ? 'text-green-600 border-green-300' : 'text-red-600 border-red-300'}">${this.printerConnected ? 'Connected' : 'Not Connected'}</span>
+              </div>
+            </div>
+            <div class="mt-3 flex items-center gap-2">
+              <button onclick="window.factoryTestingPage.checkPrinterConnection({ force: true })" class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">Check Printer</button>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-end">
+            <button onclick="window.factoryTestingPage.goToDropletMain()" class="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-gray-700 disabled:cursor-not-allowed disabled:bg-gray-400 dark:bg-gray-200 dark:text-gray-900 dark:hover:bg-gray-100">
+              Proceed to Testing
+            </button>
+          </div>
+        ` : ''}
+
+        ${isTestingEnabled && ((this.selectedDevice === 'ACB-M' && this.acbStep === 'main') || (this.selectedDevice === 'ZC-LCD' && this.zcStep === 'main') || (this.selectedDevice === 'Micro Edge' && this.microEdgeStep === 'main') || (this.selectedDevice === 'Droplet' && this.dropletStep === 'main') || (this.selectedDevice !== 'ACB-M' && this.selectedDevice !== 'ZC-LCD' && this.selectedDevice !== 'Micro Edge' && this.selectedDevice !== 'Droplet')) ? `
           <!-- Connection Section (hidden in Auto mode) -->
           ${this.mode === 'manual' ? `
           <div class="mb-6 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
@@ -1938,7 +2337,7 @@ class FactoryTestingPage {
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
                 <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">
-                  ${this.selectedDevice === 'Micro Edge' ? '⚡' : this.selectedDevice === 'Droplet' ? '🌡️' : '🧪'}
+                  ${this.selectedDevice === 'Micro Edge' ? '⚡' : this.selectedDevice === 'ZC-LCD' ? '📺' : this.selectedDevice === 'ZC-Controller' ? '🔌' : this.selectedDevice === 'ACB-M' ? '🌐' : this.selectedDevice === 'Droplet' ? '🌡️' : '🧪'}
                 </div>
                 <div>
                   <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 3 · Run Factory Tests</h3>
@@ -1977,6 +2376,22 @@ class FactoryTestingPage {
                                   this.factoryTestResults._eval.pass_wifi && 
                                   this.factoryTestResults._eval.pass_eth && 
                                   this.factoryTestResults._eval.pass_rs4852;
+                  return allPass ? `
+                    <div class="mt-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700 dark:border-green-800 dark:bg-green-900/20 dark:text-green-200">
+                      Device passed all checks.
+                    </div>
+                  ` : `
+                    <div class="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+                      Device failed one or more checks. Review the results below.
+                    </div>
+                  `;
+                }
+                // For ZC-LCD: check ZC-LCD specific tests
+                if (this.selectedDevice === 'ZC-LCD') {
+                  const allPass = this.factoryTestResults._eval.pass_wifi && 
+                                  this.factoryTestResults._eval.pass_rs485 && 
+                                  this.factoryTestResults._eval.pass_i2c && 
+                                  this.factoryTestResults._eval.pass_lcd;
                   return allPass ? `
                     <div class="mt-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700 dark:border-green-800 dark:bg-green-900/20 dark:text-green-200">
                       Device passed all checks.
@@ -2164,46 +2579,168 @@ class FactoryTestingPage {
 
             ${this.selectedDevice === 'ZC-LCD' ? `
               <div class="mt-6 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                <h4 class="text-sm font-semibold mb-3">🎮 Test Controls - ZC-LCD</h4>
-                <div class="grid grid-cols-1 gap-2">
-                    <button id="zc-wifi-btn" onclick="window.factoryTestingPage.runZcWifiTest()" class="px-4 py-3 bg-gray-300 hover:bg-gray-350 rounded-lg text-sm">📶 WiFi Test</button>
-                    <button id="zc-i2c-btn" onclick="window.factoryTestingPage.runZcI2cTest()" class="px-4 py-3 bg-gray-300 hover:bg-gray-350 rounded-lg text-sm">🔬 I2C Temp/Humidity</button>
-                    <button id="zc-rs485-btn" onclick="window.factoryTestingPage.runZcRs485Test()" class="px-4 py-3 bg-gray-300 hover:bg-gray-350 rounded-lg text-sm">🧭 RS485 Test</button>
-                    <button id="zc-full-btn" onclick="window.factoryTestingPage.runZcFullTest()" class="px-4 py-3 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-semibold">✳️ Run FULL TEST (ZC-LCD)</button>
-                    <button onclick="window.factoryTestingModule.acbClearOutput()" class="px-4 py-3 bg-orange-500 hover:bg-orange-600 text-white rounded-lg text-sm font-semibold">🧹 Clear Output</button>
+                <!-- Header with Clear Output Button -->
+                <div class="flex items-center justify-between mb-3">
+                  <h4 class="text-sm font-semibold">📊 Test Results - ZC-LCD</h4>
+                  <button onclick="window.factoryTestingModule.acbClearOutput()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg text-sm font-medium">🧹 Clear Output</button>
+                </div>
+                
+                <!-- Full Test Button -->
+                <div class="mb-4">
+                  <button id="zc-full-btn" onclick="window.factoryTestingPage.runZcFullTest()" class="w-full px-4 py-3 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-semibold">✳️ Run FULL TEST (ZC-LCD)</button>
                 </div>
 
-                  <div class="mt-4 grid grid-cols-2 gap-3">
-                    <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
-                      <div class="text-sm text-gray-500 mb-1">WiFi Test</div>
-                      <div class="text-sm text-gray-800 dark:text-gray-100 space-y-1">
-                        <div><span class="text-gray-600">Status:</span> <span id="zc-wifi-status-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.wifi && this.factoryTestResults.wifi.status) || (this.factoryTestResults.wifi && this.factoryTestResults.wifi.success ? 'done' : '—')}</span></div>
-                        <div><span class="text-gray-600">RSSI:</span> <span id="zc-wifi-rssi-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.wifi && this.factoryTestResults.wifi.rssi) || '—'}</span></div>
-                        <div><span class="text-gray-600">Networks:</span> <span id="zc-wifi-networks-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.wifi && this.factoryTestResults.wifi.networks && this.factoryTestResults.wifi.networks.length) ? this.factoryTestResults.wifi.networks.join(', ') : '—'}</span></div>
-                      </div>
+                <!-- Test Results Grid -->
+                <div class="grid grid-cols-2 gap-3">
+                  <!-- WiFi Test -->
+                  <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
+                    <div class="flex items-center justify-between mb-2">
+                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300">📶 WiFi Test</div>
+                      ${this.factoryTestResults?.tests?.wifi ? `
+                        <div class="text-xl">${this.factoryTestResults.tests.wifi.pass ? '✅' : '❌'}</div>
+                      ` : ''}
                     </div>
-                    <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
-                      <div class="text-sm text-gray-500 mb-1">I2C Test</div>
-                      <div class="text-sm text-gray-800 dark:text-gray-100 space-y-1">
-                        <div><span class="text-gray-600">Status:</span> <span id="zc-i2c-status-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.i2c && this.factoryTestResults.i2c.status) || (this.factoryTestResults.i2c && this.factoryTestResults.i2c.success ? 'done' : '—')}</span></div>
-                        <div><span class="text-gray-600">Addr:</span> <span id="zc-i2c-addr-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.i2c && this.factoryTestResults.i2c.sensor_addr) || '—'}</span></div>
-                        <div><span class="text-gray-600">Sensor:</span> <span id="zc-i2c-sensor-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.i2c && this.factoryTestResults.i2c.sensor) || '—'}</span></div>
-                        <div><span class="text-gray-600">Temp:</span> <span id="zc-i2c-temp-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.i2c && typeof this.factoryTestResults.i2c.temperature_c !== 'undefined') ? this.factoryTestResults.i2c.temperature_c + '°C' : '—'}</span></div>
-                        <div><span class="text-gray-600">Humidity:</span> <span id="zc-i2c-hum-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.i2c && typeof this.factoryTestResults.i2c.humidity_rh !== 'undefined') ? this.factoryTestResults.i2c.humidity_rh + '%' : '—'}</span></div>
-                      </div>
-                    </div>
-
-                    <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
-                      <div class="text-sm text-gray-500 mb-1">RS485 Test</div>
-                      <div class="text-sm text-gray-800 dark:text-gray-100 space-y-1">
-                        <div><span class="text-gray-600">Status:</span> <span id="zc-rs485-status-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.rs485 && this.factoryTestResults.rs485.status) || (this.factoryTestResults.rs485 && this.factoryTestResults.rs485.success ? 'done' : '—')}</span></div>
-                        <div><span class="text-gray-600">Temp:</span> <span id="zc-rs485-temp-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.rs485 && typeof this.factoryTestResults.rs485.temperature !== 'undefined') ? this.factoryTestResults.rs485.temperature + '°C' : '—'}</span></div>
-                        <div><span class="text-gray-600">Humidity:</span> <span id="zc-rs485-hum-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.rs485 && typeof this.factoryTestResults.rs485.humidity !== 'undefined') ? this.factoryTestResults.rs485.humidity : '—'}</span></div>
-                        <div><span class="text-gray-600">Slave OK:</span> <span id="zc-rs485-slave-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.rs485 && typeof this.factoryTestResults.rs485.slave_ok !== 'undefined') ? (this.factoryTestResults.rs485.slave_ok ? 'Yes' : 'No') : '—'}</span></div>
-                        <div><span class="text-gray-600">Master OK:</span> <span id="zc-rs485-master-val" class="font-mono text-sm text-gray-800 dark:text-gray-100">${(this.factoryTestResults.rs485 && typeof this.factoryTestResults.rs485.master_ok !== 'undefined') ? (this.factoryTestResults.rs485.master_ok ? 'Yes' : 'No') : '—'}</span></div>
-                      </div>
+                    <div class="text-xs text-gray-600 dark:text-gray-400 space-y-1">
+                      <div><span class="font-medium">Status:</span> <span class="font-mono">${this.factoryTestResults?.tests?.wifi?.pass ? 'PASS' : (this.factoryTestResults?.tests?.wifi ? 'FAIL' : '—')}</span></div>
+                      <div><span class="font-medium">Networks:</span> <span class="font-mono">${this.factoryTestResults?.tests?.wifi?.networks ?? '—'}</span></div>
+                      <div><span class="font-medium">Connected:</span> <span class="font-mono">${this.factoryTestResults?.tests?.wifi?.connected ?? '—'}</span></div>
+                      ${this.factoryTestResults?.tests?.wifi?.message ? `
+                        <div class="mt-2 text-xs italic text-gray-500">${this.factoryTestResults.tests.wifi.message}</div>
+                      ` : ''}
                     </div>
                   </div>
+
+                  <!-- I2C Test -->
+                  <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
+                    <div class="flex items-center justify-between mb-2">
+                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300">🔬 I2C Temp/Humidity</div>
+                      ${this.factoryTestResults?.tests?.i2c ? `
+                        <div class="text-xl">${this.factoryTestResults.tests.i2c.pass ? '✅' : '❌'}</div>
+                      ` : ''}
+                    </div>
+                    <div class="text-xs text-gray-600 dark:text-gray-400 space-y-1">
+                      <div><span class="font-medium">Status:</span> <span class="font-mono">${this.factoryTestResults?.tests?.i2c?.pass ? 'PASS' : (this.factoryTestResults?.tests?.i2c ? 'FAIL' : '—')}</span></div>
+                      <div><span class="font-medium">Address:</span> <span class="font-mono">${this.factoryTestResults?.tests?.i2c?.i2cAddress ?? '—'}</span></div>
+                      <div><span class="font-medium">Temperature:</span> <span class="font-mono">${this.factoryTestResults?.tests?.i2c?.temperature != null ? this.factoryTestResults.tests.i2c.temperature : '—'}</span></div>
+                      <div><span class="font-medium">Humidity:</span> <span class="font-mono">${this.factoryTestResults?.tests?.i2c?.humidity != null ? this.factoryTestResults.tests.i2c.humidity : '—'}</span></div>
+                      ${this.factoryTestResults?.tests?.i2c?.message ? `
+                        <div class="mt-2 text-xs italic text-gray-500">${this.factoryTestResults.tests.i2c.message}</div>
+                      ` : ''}
+                    </div>
+                  </div>
+
+                  <!-- RS485 Test -->
+                  <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
+                    <div class="flex items-center justify-between mb-2">
+                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300">🧭 RS485 Test</div>
+                      ${this.factoryTestResults?.tests?.rs485 ? `
+                        <div class="text-xl">${this.factoryTestResults.tests.rs485.pass ? '✅' : '❌'}</div>
+                      ` : ''}
+                    </div>
+                    <div class="text-xs text-gray-600 dark:text-gray-400 space-y-1">
+                      <div><span class="font-medium">Status:</span> <span class="font-mono">${this.factoryTestResults?.tests?.rs485?.pass ? 'PASS' : (this.factoryTestResults?.tests?.rs485 ? 'FAIL' : '—')}</span></div>
+                      <div><span class="font-medium">Value:</span> <span class="font-mono">${this.factoryTestResults?.tests?.rs485?.value ?? '—'}</span></div>
+                      <div><span class="font-medium">Expected:</span> <span class="font-mono">4096</span></div>
+                      ${this.factoryTestResults?.tests?.rs485?.message ? `
+                        <div class="mt-2 text-xs italic text-gray-500">${this.factoryTestResults.tests.rs485.message}</div>
+                      ` : ''}
+                    </div>
+                  </div>
+
+                  <!-- LCD Test -->
+                  <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
+                    <div class="flex items-center justify-between mb-2">
+                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300">📺 LCD Test</div>
+                      ${this.factoryTestResults?.tests?.lcd ? `
+                        <div class="text-xl">${this.factoryTestResults.tests.lcd.pass ? '✅' : '❌'}</div>
+                      ` : ''}
+                    </div>
+                    <div class="text-xs text-gray-600 dark:text-gray-400 space-y-1">
+                      <div><span class="font-medium">Status:</span> <span class="font-mono">${this.factoryTestResults?.tests?.lcd?.pass ? 'PASS' : (this.factoryTestResults?.tests?.lcd ? 'FAIL' : '—')}</span></div>
+                      <div><span class="font-medium">Touch Count:</span> <span class="font-mono">${this.factoryTestResults?.tests?.lcd?.touchCount ?? '—'}</span></div>
+                      <div><span class="font-medium">Required:</span> <span class="font-mono">> 2</span></div>
+                      ${this.factoryTestResults?.tests?.lcd?.message ? `
+                        <div class="mt-2 text-xs italic text-gray-500">${this.factoryTestResults.tests.lcd.message}</div>
+                      ` : ''}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ` : ''}
+
+            ${this.selectedDevice === 'Droplet' ? `
+              <div class="mt-6 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                <!-- Header with Clear Output Button -->
+                <div class="flex items-center justify-between mb-3">
+                  <h4 class="text-sm font-semibold">🌡️ Test Results - Droplet</h4>
+                  <button onclick="window.factoryTestingModule.acbClearOutput()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg text-sm font-medium">🧹 Clear Output</button>
+                </div>
+                
+                <!-- Full Test Button -->
+                <div class="mb-4">
+                  <button onclick="window.factoryTestingPage.runFactoryTests()" class="w-full px-4 py-3 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-semibold">✳️ Run FULL TEST (Droplet)</button>
+                </div>
+
+                <!-- Test Results Grid -->
+                <div class="grid grid-cols-2 gap-3">
+                  <!-- LoRa Test -->
+                  <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
+                    <div class="flex items-center justify-between mb-2">
+                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300">📡 LoRa Test</div>
+                      ${this.factoryTestResults?.tests?.lora ? `
+                        <div class="text-xl">${this.factoryTestResults.tests.lora.pass ? '✅' : '❌'}</div>
+                      ` : ''}
+                    </div>
+                    <div class="text-xs text-gray-600 dark:text-gray-400 space-y-1">
+                      <div><span class="font-medium">Status:</span> <span class="font-mono">${this.factoryTestResults?.tests?.lora?.pass ? 'PASS' : (this.factoryTestResults?.tests?.lora ? 'FAIL' : '—')}</span></div>
+                      <div><span class="font-medium">TX Done:</span> <span class="font-mono">${this.factoryTestResults?.tests?.lora?.txDone ?? '—'}</span></div>
+                      <div><span class="font-medium">RX Done:</span> <span class="font-mono">${this.factoryTestResults?.tests?.lora?.rxDone ?? '—'}</span></div>
+                      <div><span class="font-medium">Value RX:</span> <span class="font-mono">${this.factoryTestResults?.tests?.lora?.valueRx ?? '—'}</span></div>
+                      ${this.factoryTestResults?.tests?.lora?.message ? `
+                        <div class="mt-2 text-xs italic text-gray-500">${this.factoryTestResults.tests.lora.message}</div>
+                      ` : ''}
+                    </div>
+                  </div>
+
+                  <!-- Battery Test -->
+                  <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
+                    <div class="flex items-center justify-between mb-2">
+                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300">🔋 Battery Test</div>
+                      ${this.factoryTestResults?.tests?.battery ? `
+                        <div class="text-xl">${this.factoryTestResults.tests.battery.pass ? '✅' : '❌'}</div>
+                      ` : ''}
+                    </div>
+                    <div class="text-xs text-gray-600 dark:text-gray-400 space-y-1">
+                      <div><span class="font-medium">Status:</span> <span class="font-mono">${this.factoryTestResults?.tests?.battery?.pass ? 'PASS' : (this.factoryTestResults?.tests?.battery ? 'FAIL' : '—')}</span></div>
+                      <div><span class="font-medium">Voltage:</span> <span class="font-mono">${this.factoryTestResults?.tests?.battery?.voltage != null ? this.factoryTestResults.tests.battery.voltage + 'V' : '—'}</span></div>
+                      <div><span class="font-medium">Range:</span> <span class="font-mono">0-5V</span></div>
+                      ${this.factoryTestResults?.tests?.battery?.message ? `
+                        <div class="mt-2 text-xs italic text-gray-500">${this.factoryTestResults.tests.battery.message}</div>
+                      ` : ''}
+                    </div>
+                  </div>
+
+                  <!-- I2C Test -->
+                  <div class="col-span-2 p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
+                    <div class="flex items-center justify-between mb-2">
+                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300">🔬 I2C Temp/Humidity</div>
+                      ${this.factoryTestResults?.tests?.i2c ? `
+                        <div class="text-xl">${this.factoryTestResults.tests.i2c.pass ? '✅' : '❌'}</div>
+                      ` : ''}
+                    </div>
+                    <div class="text-xs text-gray-600 dark:text-gray-400 space-y-1">
+                      <div class="grid grid-cols-2 gap-x-4">
+                        <div><span class="font-medium">Status:</span> <span class="font-mono">${this.factoryTestResults?.tests?.i2c?.pass ? 'PASS' : (this.factoryTestResults?.tests?.i2c ? 'FAIL' : '—')}</span></div>
+                        <div><span class="font-medium">Address:</span> <span class="font-mono">${this.factoryTestResults?.tests?.i2c?.i2cAddress ?? '—'}</span></div>
+                        <div><span class="font-medium">Temperature:</span> <span class="font-mono">${this.factoryTestResults?.tests?.i2c?.temperature != null ? this.factoryTestResults.tests.i2c.temperature : '—'}</span></div>
+                        <div><span class="font-medium">Humidity:</span> <span class="font-mono">${this.factoryTestResults?.tests?.i2c?.humidity != null ? this.factoryTestResults.tests.i2c.humidity : '—'}</span></div>
+                      </div>
+                      ${this.factoryTestResults?.tests?.i2c?.message ? `
+                        <div class="mt-2 text-xs italic text-gray-500">${this.factoryTestResults.tests.i2c.message}</div>
+                      ` : ''}
+                    </div>
+                  </div>
+                </div>
               </div>
             ` : ''}
           </div>
