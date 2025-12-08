@@ -39,3 +39,10 @@ node_modules/
 node_modules/
 electron/
 *.exe
+# Allow printer executable
+!embedded/printer-scripts/print_product_label.exe
+
+# PyInstaller build artifacts
+embedded/printer-scripts/build/
+embedded/printer-scripts/dist/
+embedded/printer-scripts/*.spec

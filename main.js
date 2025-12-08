@@ -22,6 +22,20 @@ const FactoryTestingService = require('./services/factory-testing');
 
 let cachedPythonCommand = null;
 
+// Helper function to get printer scripts directory
+// Handles both ASAR unpacked and development paths
+function getPrinterScriptsDir() {
+  // In production, files in asarUnpack are extracted to app.asar.unpacked
+  const unpackedPath = path.join(__dirname, '..', 'app.asar.unpacked', 'embedded', 'printer-scripts');
+  
+  if (fs.existsSync(unpackedPath)) {
+    return unpackedPath;
+  }
+  
+  // Development or non-ASAR build
+  return path.join(__dirname, 'embedded', 'printer-scripts');
+}
+
 function resolvePythonExecutable() {
   if (cachedPythonCommand) {
     return cachedPythonCommand;
@@ -81,9 +95,33 @@ function resolvePythonExecutable() {
 }
 
 function spawnPython(pythonArgs, options = {}) {
+  // Check if first arg is the print_product_label.py script
+  const isLabelPrinter = pythonArgs.length > 0 && pythonArgs[0].includes('print_product_label.py');
+  
+  if (isLabelPrinter) {
+    // For label printer, check for bundled .exe first
+    const scriptPath = pythonArgs[0];
+    const exePath = scriptPath.replace('.py', '.exe');
+    
+    console.log('[Printer] Checking for executable:', exePath);
+    
+    if (fs.existsSync(exePath)) {
+      console.log('[Printer] Using bundled executable:', exePath);
+      // Remove the .py script path and pass remaining args to .exe
+      const exeArgs = pythonArgs.slice(1);
+      return childProcess.spawn(exePath, exeArgs, {
+        windowsHide: false,  // Show console for debugging
+        ...options
+      });
+    } else {
+      console.log('[Printer] Executable not found, falling back to Python');
+    }
+  }
+  
+  // Fall back to Python interpreter
   const pythonCommand = resolvePythonExecutable();
   if (!pythonCommand) {
-    throw new Error('Python executable not found. Install Python or set NUBE_PYTHON_PATH.');
+    throw new Error('Python not found. Tried: py. Please install Python from python.org or Microsoft Store.');
   }
 
   const finalArgs = [...pythonCommand.args, ...pythonArgs];
@@ -1170,7 +1208,7 @@ ipcMain.handle('printer:getPrinters', async () => {
 ipcMain.handle('printer:checkConnection', async () => {
   try {
     const path = require('path');
-    const pythonScriptDir = path.join(__dirname, 'embedded', 'printer-scripts');
+    const pythonScriptDir = getPrinterScriptsDir();
     const pythonScript = path.join(pythonScriptDir, 'print_product_label.py');
 
     if (!require('fs').existsSync(pythonScript)) {
@@ -1221,25 +1259,23 @@ ipcMain.handle('printer:printLabel', async (event, payload) => {
       return { success: false, error: 'No payload provided' };
     }
 
-    const { spawn } = require('child_process');
     const path = require('path');
     
     // Path to Python print script from embedded folder
-    const pythonScriptDir = path.join(__dirname, 'embedded', 'printer-scripts');
+    const pythonScriptDir = getPrinterScriptsDir();
     const pythonScript = path.join(pythonScriptDir, 'print_product_label.py');
     
-    console.log('Printing label with Python script:', pythonScript);
+    console.log('Printing label with script:', pythonScript);
     console.log('Payload:', JSON.stringify(payload, null, 2));
     
     // Check if script exists
     if (!require('fs').existsSync(pythonScript)) {
-      return { success: false, error: `Python script not found: ${pythonScript}` };
+      return { success: false, error: `Script not found: ${pythonScript}` };
     }
     
     return await new Promise((resolve) => {
-      // Call Python script with arguments
-      // Format: python print_product_label.py <barcode> <mn> <firmware> <batchId> <uid> <date>
-      // Barcode is used for barcode generation and traceability
+      // Call script with arguments
+      // Format: print_product_label.py <barcode> <mn> <firmware> <batchId> <uid> <date>
       const args = [
         pythonScript,
         payload.barcode || payload.uid || '',           // Barcode (UID)
@@ -1250,75 +1286,44 @@ ipcMain.handle('printer:printLabel', async (event, payload) => {
         payload.date || new Date().toISOString().slice(0, 10).replace(/-/g, '/')  // Date
       ];
       
-      console.log('Calling Python with args:', args);
+      console.log('Calling print script with args:', args);
       
-      // Try multiple Python executables (python, python3, py)
-      const tryPythonCommand = (pythonCmd) => {
-        return new Promise((cmdResolve) => {
-          const pythonProcess = spawn(pythonCmd, args, { 
-            cwd: pythonScriptDir,
-            shell: true 
-          });
-          
-          let output = '';
-          let errorOutput = '';
-          
-          pythonProcess.stdout.on('data', (data) => {
-            output += data.toString();
-            console.log(`[${pythonCmd}] stdout:`, data.toString());
-          });
-          
-          pythonProcess.stderr.on('data', (data) => {
-            errorOutput += data.toString();
-            console.error(`[${pythonCmd}] stderr:`, data.toString());
-          });
-          
-          pythonProcess.on('error', (err) => {
-            console.error(`[${pythonCmd}] Process error:`, err.message);
-            cmdResolve({ success: false, error: err.message, cmd: pythonCmd });
-          });
-          
-          pythonProcess.on('close', (code) => {
-            if (code === 0) {
-              console.log(`[${pythonCmd}] Print successful`);
-              cmdResolve({ success: true, output, cmd: pythonCmd });
-            } else {
-              console.error(`[${pythonCmd}] Exit code ${code}`);
-              cmdResolve({ success: false, error: `Exit code ${code}: ${errorOutput}`, cmd: pythonCmd });
-            }
-          });
+      try {
+        // Use spawnPython which handles .exe detection automatically
+        const pythonProcess = spawnPython(args, { cwd: pythonScriptDir });
+        
+        let output = '';
+        let errorOutput = '';
+        
+        pythonProcess.stdout.on('data', (data) => {
+          output += data.toString();
+          console.log('[Print] stdout:', data.toString());
         });
-      };
-      
-      // Try python commands in order using recursive approach
-      const pythonCommands = process.platform === 'win32' ? ['py'] : ['python3', 'python'];
-      let currentIndex = 0;
-      
-      const tryNextCommand = () => {
-        if (currentIndex >= pythonCommands.length) {
-          // All attempts failed
-          resolve({ 
-            success: false, 
-            error: `Print failed: Python not found. Tried: ${pythonCommands.join(', ')}. Please install Python from python.org or Microsoft Store.`
-          });
-          return;
-        }
         
-        const cmd = pythonCommands[currentIndex];
-        console.log(`Trying Python command: ${cmd}`);
+        pythonProcess.stderr.on('data', (data) => {
+          errorOutput += data.toString();
+          console.log('[Print] stderr:', data.toString());
+        });
         
-        tryPythonCommand(cmd).then((result) => {
-          if (result.success) {
-            resolve(result);
+        pythonProcess.on('error', (err) => {
+          console.error('[Print] Process error:', err.message);
+          resolve({ success: false, error: err.message });
+        });
+        
+        pythonProcess.on('close', (code) => {
+          console.log('[Print] Exit code:', code);
+          if (code === 0) {
+            console.log('[Print] Print successful');
+            resolve({ success: true, output });
           } else {
-            console.log(`${cmd} failed: ${result.error}, trying next...`);
-            currentIndex++;
-            tryNextCommand();
+            console.error('[Print] Print failed');
+            resolve({ success: false, error: `Print failed: ${errorOutput || 'Unknown error'}` });
           }
         });
-      };
-      
-      tryNextCommand();
+      } catch (err) {
+        console.error('[Print] Error spawning process:', err.message);
+        resolve({ success: false, error: `Print failed: ${err.message}` });
+      }
     });
   } catch (error) {
     console.error('Print error:', error);
