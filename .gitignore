@@ -39,10 +39,12 @@ node_modules/
 node_modules/
 electron/
 *.exe
-# Allow printer executable
+# Allow printer executable and dependencies
 !embedded/printer-scripts/print_product_label.exe
+!embedded/printer-scripts/libusb-1.0.dll
+!embedded/printer-scripts/dist/print_product_label.exe
 
 # PyInstaller build artifacts
-embedded/printer-scripts/build/
-embedded/printer-scripts/dist/
-embedded/printer-scripts/*.spec
+# embedded/printer-scripts/build/
+# embedded/printer-scripts/dist/
+# embedded/printer-scripts/*.spec
