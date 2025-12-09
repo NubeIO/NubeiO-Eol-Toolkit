@@ -325,8 +325,17 @@ class FactoryTestingService {
             }
           }
         } else {
-          // Non-ESP32 devices (like ACB-M STM32): Skip esptool entirely
-          console.log('[Factory Testing Service] Non-ESP32 device detected, skipping MAC read');
+          // Non-ESP32 devices (like ACB-M STM32): Skip esptool, but read device info via AT commands
+          console.log('[Factory Testing Service] Non-ESP32 device detected, reading device info via AT commands');
+          try {
+            const infoRes = await this.readDeviceInfo(this.deviceType);
+            if (infoRes.success) {
+              deviceInfo = infoRes.data;
+              console.log('[Factory Testing Service] ACB-M device info:', deviceInfo);
+            }
+          } catch (err) {
+            console.warn('[Factory Testing Service] Failed to read ACB-M device info:', err.message);
+          }
         }
       } catch (e) {
         console.warn('[Factory Testing Service] Failed to read device info after connect:', e.message);
