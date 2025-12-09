@@ -816,8 +816,8 @@ class FactoryTestingPage {
           }
           this.testProgress = `✅ Connected - Device info retrieved`;
           
-          // Show connection success popup with device information
-          if (!silent) {
+          // Show connection success popup with device information (always show in manual mode)
+          if (!silent || this.mode === 'manual') {
             const infoMsg = [
               `✅ Connected successfully to ${selectedPort} @ ${selectedBaud} baud`,
               ``,
@@ -904,8 +904,8 @@ class FactoryTestingPage {
           }
           this.testProgress = `✅ Connected - Device info retrieved`;
           
-          // Show connection success popup with device information
-          if (!silent) {
+          // Show connection success popup with device information (always show in manual mode)
+          if (!silent || this.mode === 'manual') {
             const infoMsg = [
               `✅ Connected successfully to ${selectedPort} @ ${selectedBaud} baud`,
               ``,
@@ -957,8 +957,8 @@ class FactoryTestingPage {
           }
           this.testProgress = `✅ Connected - Device info retrieved`;
           
-          // Show connection success popup with device information
-          if (!silent) {
+          // Show connection success popup with device information (always show in manual mode)
+          if (!silent || this.mode === 'manual') {
             const infoMsg = [
               `✅ Connected successfully to ${selectedPort} @ ${selectedBaud} baud`,
               ``,
