@@ -183,8 +183,9 @@ class FactoryTestingService {
       this.baudRate = baudRate;
       this.deviceType = deviceType; // Store device type for later use
 
-      // Skip esptool for ACB-M and other STM32-based devices (not ESP32)
-      const isEsp32Device = deviceType && (deviceType.includes('ZC-') || deviceType === 'Droplet');
+      // Skip esptool for ACB-M, Droplet and other non-ESP32 devices
+      // Only ZC-LCD uses ESP32 and might need esptool
+      const isEsp32Device = deviceType && deviceType.includes('ZC-');
       
       // If device is non-AT and is ESP32, attempt to read MAC via esptool BEFORE opening the serial port
       let preDeviceInfo = null;
@@ -298,6 +299,22 @@ class FactoryTestingService {
         // If we previously read MAC before opening port, reuse it
         if (preDeviceInfo) {
           deviceInfo = preDeviceInfo;
+        } else if (deviceType === 'ZC-LCD') {
+          // ZC-LCD: Read device info via dedicated method
+          console.log('[Factory Testing Service] Reading ZC-LCD device info...');
+          const zcDeviceInfo = await this.readZCLCDDeviceInfo();
+          if (zcDeviceInfo.success) {
+            deviceInfo = zcDeviceInfo.data;
+            console.log('[Factory Testing Service] ZC-LCD device info:', deviceInfo);
+          }
+        } else if (deviceType === 'Droplet') {
+          // Droplet: Read device info via dedicated method
+          console.log('[Factory Testing Service] Reading Droplet device info...');
+          const dropletDeviceInfo = await this.readDropletDeviceInfo();
+          if (dropletDeviceInfo.success) {
+            deviceInfo = dropletDeviceInfo.data;
+            console.log('[Factory Testing Service] Droplet device info:', deviceInfo);
+          }
         } else if (useUnlock) {
           // Micro Edge / AT-based devices: do NOT attempt esptool (it will conflict with the open port).
           // Simply read device info via AT commands.
@@ -339,34 +356,6 @@ class FactoryTestingService {
         }
       } catch (e) {
         console.warn('[Factory Testing Service] Failed to read device info after connect:', e.message);
-      }
-
-      // Read device info for ZC-LCD immediately after connection
-      if (deviceType === 'ZC-LCD') {
-        try {
-          console.log('[Factory Testing Service] Reading ZC-LCD device info...');
-          const zcDeviceInfo = await this.readZCLCDDeviceInfo();
-          if (zcDeviceInfo.success) {
-            deviceInfo = zcDeviceInfo.data;
-            console.log('[Factory Testing Service] ZC-LCD device info:', deviceInfo);
-          }
-        } catch (err) {
-          console.warn('[Factory Testing Service] Failed to read ZC-LCD device info:', err.message);
-        }
-      }
-
-      // Read device info for Droplet immediately after connection
-      if (deviceType === 'Droplet') {
-        try {
-          console.log('[Factory Testing Service] Reading Droplet device info...');
-          const dropletDeviceInfo = await this.readDropletDeviceInfo();
-          if (dropletDeviceInfo.success) {
-            deviceInfo = dropletDeviceInfo.data;
-            console.log('[Factory Testing Service] Droplet device info:', deviceInfo);
-          }
-        } catch (err) {
-          console.warn('[Factory Testing Service] Failed to read Droplet device info:', err.message);
-        }
       }
 
       console.log('[Factory Testing Service] === END CONNECT (SUCCESS) ===');
@@ -1007,10 +996,10 @@ class FactoryTestingService {
         deviceInfo.deviceMake = 'ERROR';
       }
 
-      // 3. FW Version: AT+FWVERSION? → +HWVERSION:v0.1
+      // 3. FW Version: AT+FWVERSION? → +FWVERSION:0001
       try {
-        const fwResponse = await this.sendATCommand('AT+FWVERSION?', '+HWVERSION:', timeout, false);
-        deviceInfo.fwVersion = fwResponse.replace('+HWVERSION:', '').trim();
+        const fwResponse = await this.sendATCommand('AT+FWVERSION?', '+FWVERSION:', timeout, false);
+        deviceInfo.fwVersion = fwResponse.replace('+FWVERSION:', '').trim();
         console.log('[Factory Testing] FW Version:', deviceInfo.fwVersion);
       } catch (error) {
         console.error('[Factory Testing] Failed to read FW version:', error.message);
