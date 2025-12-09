@@ -520,9 +520,15 @@ class FactoryTestingService {
       // Add our specific listener
       this.parser.on('data', onData);
 
-      // Send command
-      const commandStr = command + '\r\n';
-      console.log(`[Factory Testing] TX: ${command}`);
+      // // Send command
+      // this.port.flush(() => {
+      //   console.log('[Factory Testing] Port flushed, writing command...');
+      // });
+      
+      const commandStr = command.trim() + '\r\n';
+      console.log(`[Factory Testing] TX:${commandStr}`);
+
+
       this.port.write(commandStr, (err) => {
         if (err) {
           clearTimeout(timeout);
@@ -888,11 +894,23 @@ class FactoryTestingService {
         console.error('[Factory Testing] Failed to read Device Make:', error);
         deviceInfo.deviceMake = 'ERROR';
       }
-
-      // 4. Device Model
+      console.log('[Factory Testing] Device Make:');
+      // 4. Device Model (with retry)
       try {
-        const modelResponse = await this.sendATCommand('AT+DEVICEMODEL?', '+DEVICEMODEL:', null, requireOK);
-        deviceInfo.deviceModel = modelResponse.replace('+DEVICEMODEL:', '').trim();
+        let modelResponse = null;
+        let retries = 3;
+        const timeout = 1000; // 30 seconds timeout per command
+
+        for (let i = 0; i < retries; i++) {
+          try {
+            modelResponse = await this.sendATCommand('AT+DEVICEMODEL?', '+DEVICEMODEL:', timeout, requireOK);
+            // if (modelResponse) break;
+          } catch (err) {
+            console.warn(`[Factory Testing] Device Model attempt ${i + 1}/${retries} failed:`, err.message);
+            if (i < retries - 1) await new Promise(resolve => setTimeout(resolve, 500));
+          }
+        }
+        deviceInfo.deviceModel = modelResponse ? modelResponse.replace('+DEVICEMODEL:', '').trim() : 'ERROR';
       } catch (error) {
         console.error('[Factory Testing] Failed to read Device Model:', error);
         deviceInfo.deviceModel = 'ERROR';
@@ -911,6 +929,8 @@ class FactoryTestingService {
    * Commands: AT+HWVERSION?, AT+UNIQUEID?, AT+DEVICEMAKE?, AT+DEVICEMODEL?
    */
   async readZCLCDDeviceInfo() {
+      console.log('[Factory Testing] AHUHU69Device Make:');
+
     try {
       console.log('[Factory Testing] Reading ZC-LCD device information...');
       
@@ -946,14 +966,25 @@ class FactoryTestingService {
         console.error('[Factory Testing] Failed to read Device Make:', error.message);
         deviceInfo.deviceMake = 'ERROR';
       }
-
-      // 4. Device Model: AT+DEVICEMODEL? → +DEVICEMODEL:1.0
+      console.log('[Factory Testing] Device Make:');
+      // 4. Device Model (with retry)
       try {
-        const modelResponse = await this.sendATCommand('AT+DEVICEMODEL?', '+DEVICEMODEL:', timeout, false);
-        deviceInfo.deviceModel = modelResponse.replace('+DEVICEMODEL:', '').trim();
-        console.log('[Factory Testing] Device Model:', deviceInfo.deviceModel);
+        let modelResponse = null;
+        let retries = 3;
+        const timeout = 1000; // 30 seconds timeout per command
+
+        for (let i = 0; i < retries; i++) {
+          try {
+            modelResponse = await this.sendATCommand('AT+DEVICEMODEL?', '+DEVICEMODEL:', timeout, requireOK);
+            // if (modelResponse) break;
+          } catch (err) {
+            console.warn(`[Factory Testing] Device Model attempt ${i + 1}/${retries} failed:`, err.message);
+            if (i < retries - 1) await new Promise(resolve => setTimeout(resolve, 500));
+          }
+        }
+        deviceInfo.deviceModel = modelResponse ? modelResponse.replace('+DEVICEMODEL:', '').trim() : 'ERROR';
       } catch (error) {
-        console.error('[Factory Testing] Failed to read Device Model:', error.message);
+        console.error('[Factory Testing] Failed to read Device Model:', error);
         deviceInfo.deviceModel = 'ERROR';
       }
 
@@ -971,14 +1002,25 @@ class FactoryTestingService {
    */
   async readDropletDeviceInfo() {
     try {
-      console.log('[Factory Testing] Reading Droplet device information...');
+      console.log('[Factory Testing] Reading Droplet device information AHUHU ...');
       
       const deviceInfo = {};
-      const timeout = 30000; // 30 seconds timeout per command
+      const timeout = 5000; // 30 seconds timeout per command
 
-      // 1. Device Model: AT+DEVICEMODEL? → +DEVICEMODEL:0002
+      // 1. Device Model: AT+ATBUG? → +ATBUG:0002
+      try {
+        const modelResponse = await this.sendATCommand('AT+ATBUG?', '+ATBUG:', 500, false);
+
+        deviceInfo.deviceModel = modelResponse.replace('+DEVICEMODEL:', '').trim();
+        console.log('[Factory Testing] Device Model:', deviceInfo.deviceModel);
+      } catch (error) {
+        console.error('[Factory Testing] Failed to read Device Model:', error.message);
+        deviceInfo.deviceModel = 'ERROR';
+      }
+
       try {
         const modelResponse = await this.sendATCommand('AT+DEVICEMODEL?', '+DEVICEMODEL:', timeout, false);
+
         deviceInfo.deviceModel = modelResponse.replace('+DEVICEMODEL:', '').trim();
         console.log('[Factory Testing] Device Model:', deviceInfo.deviceModel);
       } catch (error) {
