@@ -807,25 +807,27 @@ class FactoryTestingPage {
           this.deviceInfo = result.deviceInfo;
         }
         
-        // ACB-M: Device info already read during connect, just show popup
+        // ACB-M: Device info already read during connect, show popup
         if (this.selectedDevice === 'ACB-M') {
           // Use device info returned from connect
           if (result.deviceInfo) {
             this.deviceInfo = result.deviceInfo;
-            console.log('[Factory Testing Page] Device info from connect:', this.deviceInfo);
+            console.log('[Factory Testing Page] ACB-M device info from connect:', this.deviceInfo);
           }
           this.testProgress = `✅ Connected - Device info retrieved`;
           
-          // Show connection success popup
-          if (!silent) {
+          // Show connection success popup with device information (always show in manual mode)
+          if (!silent || this.mode === 'manual') {
             const infoMsg = [
-              `Connected successfully to ${selectedPort} @ ${selectedBaud} baud`,
+              `✅ Connected successfully to ${selectedPort} @ ${selectedBaud} baud`,
               ``,
               `Device Information:`,
-              `  HW Version: ${this.deviceInfo.hwVersion || 'N/A'}`,
-              `  UID: ${this.deviceInfo.uniqueId || 'N/A'}`,
-              `  Make: ${this.deviceInfo.deviceMake || 'N/A'}`,
-              `  Model: ${this.deviceInfo.deviceModel || 'N/A'}`
+              `  HW Version: ${this.deviceInfo?.hwVersion || 'N/A'}`,
+              `  Unique ID: ${this.deviceInfo?.uniqueId || 'N/A'}`,
+              `  Device Make: ${this.deviceInfo?.deviceMake || 'N/A'}`,
+              `  Device Model: ${this.deviceInfo?.deviceModel || 'N/A'}`,
+              ``,
+              `Ready to run tests!`
             ].join('\n');
             alert(infoMsg);
           }
@@ -902,8 +904,8 @@ class FactoryTestingPage {
           }
           this.testProgress = `✅ Connected - Device info retrieved`;
           
-          // Show connection success popup with device information
-          if (!silent) {
+          // Show connection success popup with device information (always show in manual mode)
+          if (!silent || this.mode === 'manual') {
             const infoMsg = [
               `✅ Connected successfully to ${selectedPort} @ ${selectedBaud} baud`,
               ``,
@@ -955,8 +957,8 @@ class FactoryTestingPage {
           }
           this.testProgress = `✅ Connected - Device info retrieved`;
           
-          // Show connection success popup with device information
-          if (!silent) {
+          // Show connection success popup with device information (always show in manual mode)
+          if (!silent || this.mode === 'manual') {
             const infoMsg = [
               `✅ Connected successfully to ${selectedPort} @ ${selectedBaud} baud`,
               ``,
@@ -1372,6 +1374,14 @@ class FactoryTestingPage {
     } catch (error) {
       console.error('Save results error:', error);
     }
+  }
+
+  clearOutput() {
+    // Clear all test results and progress
+    this.factoryTestResults = this._createEmptyFactoryResults();
+    this.testProgress = '';
+    this.app.render();
+    console.log('[Factory Testing Page] Output cleared');
   }
 
   async checkPrinterConnection(options = {}) {
@@ -1831,6 +1841,18 @@ class FactoryTestingPage {
                   <p class="text-xs text-gray-500 dark:text-gray-400">Complete before running tests</p>
                 </div>
               </div>
+            </div>
+            <div class="mt-4 flex items-center gap-2">
+              <button 
+                onclick="window.factoryTestingPage.saveDefaultsForDevice()" 
+                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                Save defaults
+              </button>
+              <button 
+                onclick="window.factoryTestingPage.resetDefaultsForDevice()" 
+                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                Reset
+              </button>
             </div>
             <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
@@ -2352,6 +2374,12 @@ class FactoryTestingPage {
                   </div>
                 ` : ''}
                 <button
+                  onclick="window.factoryTestingPage.clearOutput()"
+                  class="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                >
+                  Clear Output
+                </button>
+                <button
                   onclick="window.factoryTestingPage.runFactoryTests()"
                   class="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-gray-700 disabled:cursor-not-allowed disabled:bg-gray-400 dark:bg-gray-200 dark:text-gray-900 dark:hover:bg-gray-100"
                   ${(!this.isConnected || this.isTesting || (this.selectedDevice === 'ACB-M' && this.mode === 'auto')) ? 'disabled' : ''}
@@ -2424,11 +2452,7 @@ class FactoryTestingPage {
             <!-- ACB-M Test Controls -->
             ${this.selectedDevice === 'ACB-M' ? `
               <div class="mt-6 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                <div class="grid grid-cols-2 gap-2">
-                  <button onclick="window.factoryTestingModule.acbFullTest()" class="px-4 py-3 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-semibold" ${this.mode === 'auto' ? 'disabled' : ''}>✳️ Run FULL TEST (ACB-M)</button>
-                  <button onclick="window.factoryTestingModule.acbClearOutput()" class="px-4 py-3 bg-orange-500 hover:bg-orange-600 text-white rounded-lg text-sm font-semibold">🧹 Clear Output</button>
-                </div>
-                <div class="mt-6 rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800/60">
+                <div class="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800/60">
                   <div class="flex items-center justify-between">
                     <div class="text-sm font-semibold text-gray-700 dark:text-gray-200">📊 Test Results</div>
                     <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${acbSummaryBadge.className}">${acbSummaryBadge.text}</span>
