@@ -1832,6 +1832,18 @@ class FactoryTestingPage {
                 </div>
               </div>
             </div>
+            <div class="mt-4 flex items-center gap-2">
+              <button 
+                onclick="window.factoryTestingPage.saveDefaultsForDevice()" 
+                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                Save defaults
+              </button>
+              <button 
+                onclick="window.factoryTestingPage.resetDefaultsForDevice()" 
+                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                Reset
+              </button>
+            </div>
             <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label class="text-xs text-gray-600 dark:text-gray-300">Tester Name *</label>
