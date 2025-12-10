@@ -183,8 +183,9 @@ class FactoryTestingService {
       this.baudRate = baudRate;
       this.deviceType = deviceType; // Store device type for later use
 
-      // Skip esptool for ACB-M and other STM32-based devices (not ESP32)
-      const isEsp32Device = deviceType && (deviceType.includes('ZC-') || deviceType === 'Droplet');
+      // Skip esptool for ACB-M, Droplet and ZC-Controller (uses RS485 hex)
+      // Only ZC-LCD uses ESP32 and might need esptool
+      const isEsp32Device = deviceType === 'ZC-LCD';
       
       // If device is non-AT and is ESP32, attempt to read MAC via esptool BEFORE opening the serial port
       let preDeviceInfo = null;
@@ -298,6 +299,30 @@ class FactoryTestingService {
         // If we previously read MAC before opening port, reuse it
         if (preDeviceInfo) {
           deviceInfo = preDeviceInfo;
+        } else if (deviceType === 'ZC-LCD') {
+          // ZC-LCD: Read device info via dedicated method
+          console.log('[Factory Testing Service] Reading ZC-LCD device info...');
+          const zcDeviceInfo = await this.readZCLCDDeviceInfo();
+          if (zcDeviceInfo.success) {
+            deviceInfo = zcDeviceInfo.data;
+            console.log('[Factory Testing Service] ZC-LCD device info:', deviceInfo);
+          }
+        } else if (deviceType === 'ZC-Controller') {
+          // ZC-Controller: Read info via RS485 hex frames (no AT, no esptool)
+          console.log('[Factory Testing Service] Reading ZC-Controller device info via RS485 hex...');
+          const zcCtrlInfo = await this.readZCControllerInfo();
+          if (zcCtrlInfo && zcCtrlInfo.success) {
+            deviceInfo = zcCtrlInfo.data;
+            console.log('[Factory Testing Service] ZC-Controller device info:', deviceInfo);
+          }
+        } else if (deviceType === 'Droplet') {
+          // Droplet: Read device info via dedicated method
+          console.log('[Factory Testing Service] Reading Droplet device info...');
+          const dropletDeviceInfo = await this.readDropletDeviceInfo();
+          if (dropletDeviceInfo.success) {
+            deviceInfo = dropletDeviceInfo.data;
+            console.log('[Factory Testing Service] Droplet device info:', deviceInfo);
+          }
         } else if (useUnlock) {
           // Micro Edge / AT-based devices: do NOT attempt esptool (it will conflict with the open port).
           // Simply read device info via AT commands.
@@ -339,34 +364,6 @@ class FactoryTestingService {
         }
       } catch (e) {
         console.warn('[Factory Testing Service] Failed to read device info after connect:', e.message);
-      }
-
-      // Read device info for ZC-LCD immediately after connection
-      if (deviceType === 'ZC-LCD') {
-        try {
-          console.log('[Factory Testing Service] Reading ZC-LCD device info...');
-          const zcDeviceInfo = await this.readZCLCDDeviceInfo();
-          if (zcDeviceInfo.success) {
-            deviceInfo = zcDeviceInfo.data;
-            console.log('[Factory Testing Service] ZC-LCD device info:', deviceInfo);
-          }
-        } catch (err) {
-          console.warn('[Factory Testing Service] Failed to read ZC-LCD device info:', err.message);
-        }
-      }
-
-      // Read device info for Droplet immediately after connection
-      if (deviceType === 'Droplet') {
-        try {
-          console.log('[Factory Testing Service] Reading Droplet device info...');
-          const dropletDeviceInfo = await this.readDropletDeviceInfo();
-          if (dropletDeviceInfo.success) {
-            deviceInfo = dropletDeviceInfo.data;
-            console.log('[Factory Testing Service] Droplet device info:', deviceInfo);
-          }
-        } catch (err) {
-          console.warn('[Factory Testing Service] Failed to read Droplet device info:', err.message);
-        }
       }
 
       console.log('[Factory Testing Service] === END CONNECT (SUCCESS) ===');
@@ -1007,10 +1004,10 @@ class FactoryTestingService {
         deviceInfo.deviceMake = 'ERROR';
       }
 
-      // 3. FW Version: AT+FWVERSION? → +HWVERSION:v0.1
+      // 3. FW Version: AT+FWVERSION? → +FWVERSION:0001
       try {
-        const fwResponse = await this.sendATCommand('AT+FWVERSION?', '+HWVERSION:', timeout, false);
-        deviceInfo.fwVersion = fwResponse.replace('+HWVERSION:', '').trim();
+        const fwResponse = await this.sendATCommand('AT+FWVERSION?', '+FWVERSION:', timeout, false);
+        deviceInfo.fwVersion = fwResponse.replace('+FWVERSION:', '').trim();
         console.log('[Factory Testing] FW Version:', deviceInfo.fwVersion);
       } catch (error) {
         console.error('[Factory Testing] Failed to read FW version:', error.message);
@@ -1179,6 +1176,158 @@ class FactoryTestingService {
 
         this.updateProgress('ZC-LCD tests completed');
         return { success: true, data: resultsZC };
+      }
+
+      // ZC-Controller device specific tests (RS485 + 20 relays)
+      if (device === 'ZC-Controller') {
+        const resultsZCC = { info: {}, tests: {}, _eval: {}, summary: null };
+        const setEval = (key, state) => { resultsZCC._eval[key] = state === true; };
+
+        this.updateProgress('ZC-Controller: Starting RS485 and relay tests...');
+
+        // Write OFF for 10 relays (group-1)
+        this.updateProgress('ZC-Controller: OFF 10 relays (group-1)...');
+        try {
+          const offCmd1 = '01 10 07 CF 00 0A 14 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 FE 69';
+          const offResp1 = await this.sendRs485Hex(offCmd1);
+          const okWrite = offResp1 && offResp1.startsWith('01 10 07 CF 00 0A');
+          resultsZCC.tests.write_off_1 = { pass: !!okWrite, raw: offResp1 || null, message: okWrite ? 'Write confirmed' : 'Unexpected write response' };
+          setEval('pass_rs485', !!okWrite);
+        } catch (e) {
+          resultsZCC.tests.write_off_1 = { pass: false, raw: null, message: e.message || 'RS485 write failed' };
+          setEval('pass_rs485', false);
+        }
+
+        // Helper: read relay status with 02 02 command and decode
+        const readStatus = async (label) => {
+          const cmd = '02 02 00 00 00 0A F8 3E';
+          const resp = await this.sendRs485Hex(cmd);
+          const parts = String(resp || '').trim().split(/\s+/);
+          const validPrefix = resp && resp.startsWith('02 02 02');
+          const b3 = parts[3] ? parts[3].toUpperCase() : '';
+          const b4 = parts[4] ? parts[4].toUpperCase() : '';
+          const toBits = (hex) => { const v = parseInt(hex || '0', 16); return Array.from({length:8}, (_,i)=>((v>>i)&1)); };
+          const bits = validPrefix ? [...toBits(b3), ...toBits(b4)].slice(0,10) : null;
+          const onCount = bits ? bits.filter(b => b === 1).length : null;
+          const offCount = bits ? bits.filter(b => b === 0).length : null;
+          const msg = `Status ${label}: ${b3} ${b4} · bits=${bits ? bits.join('') : 'N/A'} · on=${onCount ?? 'N/A'} · off=${offCount ?? 'N/A'}`;
+          return { pass: !!validPrefix, raw: resp || null, message: msg, validPrefix, b3, b4, bits, onCount, offCount };
+        };
+
+        // Status after OFF group-1 (expect FF 03)
+        this.updateProgress('ZC-Controller: Status after OFF (group-1)...');
+        try {
+          const st1 = await readStatus('OFF-1');
+          resultsZCC.tests.status_off_1 = st1;
+          const expected = st1.validPrefix && st1.b3 === 'FF' && st1.b4 === '03';
+          // Relay mismatch list for OFF should be bits=1111111111 (1=OFF)
+          resultsZCC.tests.status_off_1.mismatches = st1.bits ? st1.bits.map((b, idx) => (b !== 1 ? idx+1 : null)).filter(v => v !== null) : [];
+          setEval('pass_relay_off_1', !!expected);
+        } catch (e) {
+          resultsZCC.tests.status_off_1 = { pass: false, raw: null, message: e.message || 'Status read failed' };
+          setEval('pass_relay_off_1', false);
+        }
+
+        // ON 10 relays (group-1)
+        this.updateProgress('ZC-Controller: ON 10 relays (group-1)...');
+        try {
+          const onCmd1 = '01 10 07 CF 00 0A 14 00 01 00 01 00 01 00 01 00 01 00 01 00 01 00 01 00 01 00 01 E5 E8';
+          const onResp1 = await this.sendRs485Hex(onCmd1);
+          const okWrite = onResp1 && onResp1.startsWith('01 10 07 CF 00 0A');
+          resultsZCC.tests.write_on_1 = { pass: !!okWrite, raw: onResp1 || null, message: okWrite ? 'Write confirmed' : 'Unexpected write response' };
+          setEval('pass_rs485_on1', !!okWrite);
+        } catch (e) {
+          resultsZCC.tests.write_on_1 = { pass: false, raw: null, message: e.message || 'RS485 write failed' };
+          setEval('pass_rs485_on1', false);
+        }
+
+        // Status after ON group-1 (expect 00 00)
+        this.updateProgress('ZC-Controller: Status after ON (group-1)...');
+        try {
+          const stOn1 = await readStatus('ON-1');
+          resultsZCC.tests.status_on_1 = stOn1;
+          const expected = stOn1.validPrefix && stOn1.b3 === '00' && stOn1.b4 === '00';
+          // Relay mismatch list for ON should be bits=0000000000 (0=ON)
+          resultsZCC.tests.status_on_1.mismatches = stOn1.bits ? stOn1.bits.map((b, idx) => (b !== 0 ? idx+1 : null)).filter(v => v !== null) : [];
+          setEval('pass_relay_on_1', !!expected);
+        } catch (e) {
+          resultsZCC.tests.status_on_1 = { pass: false, raw: null, message: e.message || 'Status read failed' };
+          setEval('pass_relay_on_1', false);
+        }
+
+        // OFF again group-1 and status check (expect FF 03)
+        this.updateProgress('ZC-Controller: OFF again (group-1)...');
+        try {
+          const offCmd2 = '01 10 07 CF 00 0A 14 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 FE 69';
+          const offResp2 = await this.sendRs485Hex(offCmd2);
+          const okWrite2 = offResp2 && offResp2.startsWith('01 10 07 CF 00 0A');
+          resultsZCC.tests.write_off_1_again = { pass: !!okWrite2, raw: offResp2 || null, message: okWrite2 ? 'Write confirmed' : 'Unexpected write response' };
+          setEval('pass_rs485_off2', !!okWrite2);
+        } catch (e) {
+          resultsZCC.tests.write_off_1_again = { pass: false, raw: null, message: e.message || 'RS485 write failed' };
+          setEval('pass_rs485_off2', false);
+        }
+        this.updateProgress('ZC-Controller: Status after OFF again (group-1)...');
+        try {
+          const stOff2 = await readStatus('OFF-1-again');
+          resultsZCC.tests.status_off_1_again = stOff2;
+          const expected = stOff2.validPrefix && stOff2.b3 === 'FF' && stOff2.b4 === '03';
+          resultsZCC.tests.status_off_1_again.mismatches = stOff2.bits ? stOff2.bits.map((b, idx) => (b !== 1 ? idx+1 : null)).filter(v => v !== null) : [];
+          setEval('pass_relay_off_1_again', !!expected);
+        } catch (e) {
+          resultsZCC.tests.status_off_1_again = { pass: false, raw: null, message: e.message || 'Status read failed' };
+          setEval('pass_relay_off_1_again', false);
+        }
+
+        // ON 10 relays (group-2) and status
+        this.updateProgress('ZC-Controller: ON 10 relays (group-2)...');
+        try {
+          const onCmd2 = '01 10 07 CF 00 0A 14 00 02 00 02 00 02 00 02 00 02 00 02 00 02 00 02 00 02 00 02 CB 2B';
+          const onResp2 = await this.sendRs485Hex(onCmd2);
+          const okWrite2 = onResp2 && onResp2.startsWith('01 10 07 CF 00 0A');
+          resultsZCC.tests.write_on_2 = { pass: !!okWrite2, raw: onResp2 || null, message: okWrite2 ? 'Write confirmed' : 'Unexpected write response' };
+          setEval('pass_rs485_on2', !!okWrite2);
+        } catch (e) {
+          resultsZCC.tests.write_on_2 = { pass: false, raw: null, message: e.message || 'RS485 write failed' };
+          setEval('pass_rs485_on2', false);
+        }
+        this.updateProgress('ZC-Controller: Status after ON (group-2)...');
+        try {
+          const stOn2 = await readStatus('ON-2');
+          resultsZCC.tests.status_on_2 = stOn2;
+          const expected = stOn2.validPrefix && stOn2.b3 === '00' && stOn2.b4 === '00';
+          resultsZCC.tests.status_on_2.mismatches = stOn2.bits ? stOn2.bits.map((b, idx) => (b !== 0 ? idx+1 : null)).filter(v => v !== null) : [];
+          setEval('pass_relay_on_2', !!expected);
+        } catch (e) {
+          resultsZCC.tests.status_on_2 = { pass: false, raw: null, message: e.message || 'Status read failed' };
+          setEval('pass_relay_on_2', false);
+        }
+
+        const allPass = Object.keys(resultsZCC._eval).length > 0 && Object.values(resultsZCC._eval).every(Boolean);
+        // Summarize command-level success (all writes confirmed and all status reads valid)
+        const commandsOk = [
+          resultsZCC.tests.write_off_1?.pass,
+          resultsZCC.tests.status_off_1?.pass,
+          resultsZCC.tests.write_on_1?.pass,
+          resultsZCC.tests.status_on_1?.pass,
+          resultsZCC.tests.write_off_1_again?.pass,
+          resultsZCC.tests.status_off_1_again?.pass,
+          resultsZCC.tests.write_on_2?.pass,
+          resultsZCC.tests.status_on_2?.pass
+        ].every(Boolean);
+        const relayMismatches = {
+          off_1: resultsZCC.tests.status_off_1?.mismatches || [],
+          on_1: resultsZCC.tests.status_on_1?.mismatches || [],
+          off_1_again: resultsZCC.tests.status_off_1_again?.mismatches || [],
+          on_2: resultsZCC.tests.status_on_2?.mismatches || []
+        };
+        resultsZCC.summary = {
+          passAll: allPass && commandsOk && relayMismatches.on_1.length === 0 && relayMismatches.off_1.length === 0 && relayMismatches.off_1_again.length === 0 && relayMismatches.on_2.length === 0,
+          commandsOk,
+          relayMismatches
+        };
+        this.updateProgress('ZC-Controller tests completed');
+        return { success: true, data: resultsZCC };
       }
 
       // ACB-M device specific tests
@@ -2313,6 +2462,128 @@ class FactoryTestingService {
       return { success: false, error: error.message };
     }
   }
+
+  // ===== ZC-Controller RS485 info (no AT, no esptool) =====
+  async readZCControllerInfo() {
+    try {
+      const info = {};
+
+      // Decode helpers based on provided structure:
+      // Addr | Func(0x03) | ByteCount(N*2) | [Hi Lo]*N | CRCLo | CRCHi
+      const parseAscii = (rxHex, expectedLenBytes) => {
+        const hex = String(rxHex || '').trim().replace(/\s+/g, '').toUpperCase();
+        if (hex.length < 8) return 'ERROR';
+        const buf = Buffer.from(hex, 'hex');
+        const byteCount = buf[2];
+        const dataLen = Math.min(byteCount, expectedLenBytes);
+        const data = buf.slice(3, 3 + dataLen);
+        return data.toString('ascii').trim();
+      };
+      const parseUID = (rxHex) => {
+        const hex = String(rxHex || '').trim().replace(/\s+/g, '').toUpperCase();
+        const buf = Buffer.from(hex, 'hex');
+        if (buf.length < 3 + 12) return 'ERROR';
+        const data = buf.slice(3, 15); // 12 bytes UID
+        return data.toString('hex').toUpperCase();
+      };
+
+      // Use exact commands with CRC from your spec/logs
+      const CMD_UID = '01 03 00 00 00 06 C5 C8';
+      const CMD_MODEL = '01 03 00 13 00 03 F4 0E';
+      // Use CRC from device logs for MAKE
+      const CMD_MAKE = '01 03 00 1D 00 0B 94 0B';
+      const CMD_FW = '01 03 00 31 00 03 54 04';
+
+      // Send and log each frame
+      try {
+        const rx = await this.sendRs485Hex(CMD_UID);
+        console.log('[RS485] 001-Tx:', CMD_UID);
+        console.log('[RS485] 002-Rx:', rx);
+        info.uniqueId = parseUID(rx);
+      } catch (e) { info.uniqueId = 'ERROR'; }
+      await new Promise(res => setTimeout(res, 100));
+
+      try {
+        const rx = await this.sendRs485Hex(CMD_MODEL);
+        console.log('[RS485] 005-Tx:', CMD_MODEL);
+        console.log('[RS485] 006-Rx:', rx);
+        info.deviceModel = parseAscii(rx, 6); // e.g., '1.0' (6 bytes incl. spaces per sample)
+      } catch (e) { info.deviceModel = 'ERROR'; }
+      await new Promise(res => setTimeout(res, 100));
+
+      try {
+        const rx = await this.sendRs485Hex(CMD_MAKE);
+        console.log('[RS485] 015-Tx:', CMD_MAKE);
+        console.log('[RS485] 016-Rx:', rx);
+        info.deviceMake = parseAscii(rx, 22); // 'ZC-Controller'
+      } catch (e) { info.deviceMake = 'ERROR'; }
+      await new Promise(res => setTimeout(res, 100));
+
+      try {
+        const rx = await this.sendRs485Hex(CMD_FW);
+        console.log('[RS485] 013-Tx:', CMD_FW);
+        console.log('[RS485] 014-Rx:', rx);
+        info.firmwareVersion = parseAscii(rx, 6); // '1.0'
+      } catch (e) { info.firmwareVersion = 'ERROR'; }
+
+      return { success: true, data: info };
+    } catch (error) {
+      console.error('[Factory Testing] Error reading ZC-Controller info:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Send RS485 raw hex string (space-separated) and return response as uppercase spaced hex.
+   */
+  async sendRs485Hex(hexStr) {
+    if (!this.port || !this.isConnected) throw new Error('Not connected');
+    const bytes = hexStr.trim().split(/\s+/).map(h => parseInt(h, 16));
+    const buf = Buffer.from(bytes);
+    return new Promise((resolve, reject) => {
+      const toUpperHexSpaced = (buffer) => Array.from(buffer).map(v => v.toString(16).toUpperCase().padStart(2,'0')).join(' ');
+      let accum = Buffer.alloc(0);
+      let settleTimer = null;
+      let timeout = null;
+
+      const cleanup = () => {
+        if (timeout) clearTimeout(timeout);
+        if (settleTimer) clearTimeout(settleTimer);
+        this.port.removeListener('data', onRaw);
+      };
+
+      const finish = () => {
+        cleanup();
+        const rx = toUpperHexSpaced(accum);
+        console.log('[RS485] RX:', rx);
+        resolve(rx);
+      };
+
+      const onRaw = (data) => {
+        const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
+        accum = Buffer.concat([accum, chunk]);
+        // settle briefly to allow complete frame to arrive
+        if (settleTimer) clearTimeout(settleTimer);
+        settleTimer = setTimeout(() => finish(), 50);
+      };
+
+      // Listen to raw port bytes (not line parser) to avoid UTF-8 mangling and interleaving
+      this.port.on('data', onRaw);
+      timeout = setTimeout(() => {
+        cleanup();
+        reject(new Error('Timeout waiting for RS485 response'));
+      }, 3000);
+
+      console.log('[RS485] TX:', hexStr);
+      this.port.write(buf, (err) => {
+        if (err) {
+          cleanup();
+          reject(new Error('Failed to send RS485 frame: ' + err.message));
+        }
+      });
+    });
+  }
+
 }
 
 module.exports = FactoryTestingService;

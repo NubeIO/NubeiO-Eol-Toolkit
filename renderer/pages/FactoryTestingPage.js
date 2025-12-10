@@ -54,6 +54,7 @@ class FactoryTestingPage {
     this.zcStep = 'main';
     this.microEdgeStep = 'main';
     this.dropletStep = 'main';
+    this.zcControllerStep = 'main';
     
     // Printer state
     this.printerConnected = false;
@@ -161,6 +162,10 @@ class FactoryTestingPage {
       this.mode = 'auto';
       this.microEdgeStep = 'pre';
       console.log('[Factory Testing Page] Micro Edge selected, waiting for Proceed to Testing...');
+    } else if (this.selectedDevice === 'ZC-Controller') {
+      this.mode = 'auto';
+      this.zcControllerStep = 'pre';
+      console.log('[Factory Testing Page] ZC-Controller selected, waiting for Proceed to Testing...');
     }
     this.app.render();
     
@@ -222,6 +227,25 @@ class FactoryTestingPage {
     // If auto mode, kick off detection and connection
     if (this.selectedDevice === 'ZC-LCD' && this.mode === 'auto') {
       console.log('[Factory Testing Page] ZC-LCD Auto mode: starting auto workflow...');
+      setTimeout(() => this._startAutoWorkflow(), 150);
+    }
+  }
+
+  goToZcControllerMain() {
+    // Validate required pre-testing info
+    if (!this.validatePreTestingInfo()) {
+      return;
+    }
+    // Stop printer polling when entering main testing page
+    if (this._printerPollTimer) {
+      clearTimeout(this._printerPollTimer);
+      this._printerPollTimer = null;
+    }
+    this.zcControllerStep = 'main';
+    this.app.render();
+    // If auto mode, kick off detection and connection
+    if (this.selectedDevice === 'ZC-Controller' && this.mode === 'auto') {
+      console.log('[Factory Testing Page] ZC-Controller Auto mode: starting auto workflow...');
       setTimeout(() => this._startAutoWorkflow(), 150);
     }
   }
@@ -371,6 +395,10 @@ class FactoryTestingPage {
     // ZC-LCD: only auto-connect when in main step (after clicking Proceed to Testing) and auto mode
     if (this.selectedDevice === 'ZC-LCD') {
       return this.zcStep === 'main' && this.mode === 'auto';
+    }
+    // ZC-Controller: only auto-connect when in main step (after clicking Proceed to Testing) and auto mode
+    if (this.selectedDevice === 'ZC-Controller') {
+      return this.zcControllerStep === 'main' && this.mode === 'auto';
     }
     // Micro Edge: only auto-connect when in main step (after clicking Proceed to Testing) and auto mode
     if (this.selectedDevice === 'Micro Edge') {
@@ -534,6 +562,8 @@ class FactoryTestingPage {
       if (this.selectedDevice === 'ACB-M' && this.acbStep === 'main') {
         this._startAutoWorkflow();
       } else if (this.selectedDevice === 'ZC-LCD' && this.zcStep === 'main') {
+        this._startAutoWorkflow();
+      } else if (this.selectedDevice === 'ZC-Controller' && this.zcControllerStep === 'main') {
         this._startAutoWorkflow();
       } else if (this.selectedDevice === 'Micro Edge' && this.microEdgeStep === 'main') {
         this._startAutoWorkflow();
@@ -871,8 +901,20 @@ class FactoryTestingPage {
           
           // Show popup: "Connected successfully, please press button 5 times"
           // Always show for Micro Edge, even in auto mode
-          const connectedMsg = `Connected successfully to ${selectedPort}.\n\nPlease press the button 5 times to proceed with testing.`;
-          alert(connectedMsg);
+          const di = this.deviceInfo || {};
+          const hasError = ['uniqueId','deviceModel','deviceMake','firmwareVersion'].some(k => String(di[k] || '').toUpperCase() === 'ERROR');
+          const infoMsg = [
+            `✅ Connected successfully to ${selectedPort} @ ${selectedBaud} baud`,
+            '',
+            'Device Information:',
+            `  Unique ID: ${di.uniqueId || 'N/A'}`,
+            `  Device Make: ${di.deviceMake || 'N/A'}`,
+            `  Device Model: ${di.deviceModel || 'N/A'}`,
+            `  FW Version: ${di.firmwareVersion || di.fwVersion || 'N/A'}`,
+            '',
+            hasError ? '❌ Failed to read all fields over RS485' : 'Ready to run tests!'
+          ].join('\n');
+          alert(infoMsg);
           
           // After user closes popup, run tests in auto mode
           if (this.mode === 'auto') {
@@ -1005,8 +1047,20 @@ class FactoryTestingPage {
         } else {
           // Default connect message for other devices
           if (!silent) {
-            const connectedMsg = `Connected successfully to ${selectedPort}. Please press the button 5 times.`;
-            alert(connectedMsg);
+            const di = this.deviceInfo || {};
+            const hasError = ['uniqueId','deviceModel','deviceMake','firmwareVersion'].some(k => String(di[k] || '').toUpperCase() === 'ERROR');
+            const infoMsg = [
+              `✅ Connected successfully to ${selectedPort} @ ${selectedBaud} baud`,
+              '',
+              'Device Information:',
+              `  Unique ID: ${di.uniqueId || 'N/A'}`,
+              `  Device Make: ${di.deviceMake || 'N/A'}`,
+              `  Device Model: ${di.deviceModel || 'N/A'}`,
+              `  FW Version: ${di.firmwareVersion || di.fwVersion || 'N/A'}`,
+              '',
+              hasError ? '❌ Failed to read all fields over RS485' : 'Ready to run tests!'
+            ].join('\n');
+            alert(infoMsg);
           }
         }
       } else {
@@ -1248,6 +1302,13 @@ class FactoryTestingPage {
         } else if (this.selectedDevice === 'ZC-LCD') {
           const success = !!(this.factoryTestResults.summary && this.factoryTestResults.summary.passAll);
           this.testProgress = success ? 'ZC-LCD factory tests passed' : 'ZC-LCD factory tests reported failures';
+        } else if (this.selectedDevice === 'ZC-Controller') {
+          // Merge device info if provided by service
+          if (this.factoryTestResults.info) {
+            this.deviceInfo = Object.assign({}, this.deviceInfo, this.factoryTestResults.info);
+          }
+          const success = !!(this.factoryTestResults.summary && this.factoryTestResults.summary.passAll);
+          this.testProgress = success ? 'ZC-Controller factory tests passed' : 'ZC-Controller factory tests reported failures';
         } else {
           this.testProgress = 'Factory tests completed successfully';
         }
@@ -1364,6 +1425,13 @@ class FactoryTestingPage {
           } else if (this.selectedDevice === 'ZC-LCD') {
             const evals = (this.factoryTestResults && this.factoryTestResults._eval) ? this.factoryTestResults._eval : null;
             const allPass = evals ? ['pass_wifi','pass_rs485','pass_i2c','pass_lcd'].every(k => evals[k] === true) : false;
+            if (allPass) {
+              this.allowPrint = true;
+              this.testProgress += '\n✅ All tests passed - Print Label enabled';
+            }
+          } else if (this.selectedDevice === 'ZC-Controller') {
+            const summary = this.factoryTestResults && this.factoryTestResults.summary;
+            const allPass = !!(summary && summary.passAll);
             if (allPass) {
               this.allowPrint = true;
               this.testProgress += '\n✅ All tests passed - Print Label enabled';
@@ -1603,7 +1671,7 @@ class FactoryTestingPage {
 
     // Testing interface: enable Gen1 Micro Edge and Gen2 ZC-LCD/ACB-M
     const isTestingEnabled = (this.selectedVersion === 'v1' && this.selectedDevice === 'Micro Edge') ||
-                 (this.selectedVersion === 'v2' && (this.selectedDevice === 'ZC-LCD' || this.selectedDevice === 'ACB-M' || this.selectedDevice === 'Droplet'));
+           (this.selectedVersion === 'v2' && (this.selectedDevice === 'ZC-LCD' || this.selectedDevice === 'ACB-M' || this.selectedDevice === 'Droplet' || this.selectedDevice === 'ZC-Controller'));
     
     // Schedule port dropdown update after render
     if (isTestingEnabled && window.factoryTestingModule && !this._postRenderTicket) {
@@ -1988,6 +2056,95 @@ class FactoryTestingPage {
           </div>
         ` : ''}
 
+        <!-- ZC-Controller Pre Page (Mode + Pre-Testing) -->
+        ${this.selectedDevice === 'ZC-Controller' && this.zcControllerStep === 'pre' ? `
+          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">🧭</div>
+                <div>
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 1 · Select Mode</h3>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">Auto will detect COM and run tests (enabled after Proceed)</p>
+                </div>
+              </div>
+              <div class="inline-flex items-center rounded-lg border border-gray-300 bg-gray-50 p-0.5 dark:border-gray-600 dark:bg-gray-900/40">
+                <button onclick="window.factoryTestingPage.toggleMode('auto')" class="px-4 py-2 text-sm font-medium ${this.mode === 'auto' ? 'bg-gray-900 text-white dark:bg-gray-200 dark:text-gray-900' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'} rounded-md">Auto</button>
+                <button onclick="window.factoryTestingPage.toggleMode('manual')" class="px-4 py-2 text-sm font-medium ${this.mode === 'manual' ? 'bg-gray-900 text-white dark:bg-gray-200 dark:text-gray-900' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'} rounded-md">Manual</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">📝</div>
+                <div>
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 2 · Pre-Testing Information</h3>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">Complete before running tests</p>
+                </div>
+              </div>
+            </div>
+            <div class="mt-4 flex items-center gap-2">
+              <button 
+                onclick="window.factoryTestingPage.saveDefaultsForDevice()" 
+                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                Save defaults
+              </button>
+              <button 
+                onclick="window.factoryTestingPage.resetDefaultsForDevice()" 
+                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                Reset
+              </button>
+            </div>
+            <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Tester Name *</label>
+                <input type="text" data-field="testerName" value="${this.preTesting.testerName || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Firmware Version *</label>
+                <input type="text" data-field="firmwareVersion" value="${this.preTesting.firmwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Hardware Version *</label>
+                <input type="text" data-field="hardwareVersion" value="${this.preTesting.hardwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Batch ID</label>
+                <input type="text" data-field="batchId" value="${this.preTesting.batchId || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Work Order Serial</label>
+                <input type="text" data-field="workOrderSerial" value="${this.preTesting.workOrderSerial || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+              </div>
+            </div>
+          </div>
+
+          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">🖨️</div>
+                <div>
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 3 · Connect Brother PT-P900W</h3>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">Ensure USB printer is connected</p>
+                </div>
+              </div>
+              <div>
+                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${this.printerConnected ? 'text-green-600 border-green-300' : 'text-red-600 border-red-300'}">${this.printerConnected ? 'Connected' : 'Not Connected'}</span>
+              </div>
+            </div>
+            <div class="mt-3 flex items-center gap-2">
+              <button onclick="window.factoryTestingPage.checkPrinterConnection({ force: true })" class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">Check Printer</button>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-end">
+            <button onclick="window.factoryTestingPage.goToZcControllerMain()" class="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-gray-700 disabled:cursor-not-allowed disabled:bg-gray-400 dark:bg-gray-200 dark:text-gray-900 dark:hover:bg-gray-100">
+              Proceed to Testing
+            </button>
+          </div>
+        ` : ''}
+
         <!-- Droplet Pre Page (Mode + Pre-Testing + Printer) -->
         ${this.selectedDevice === 'Droplet' && this.dropletStep === 'pre' ? `
           <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
@@ -2077,7 +2234,7 @@ class FactoryTestingPage {
           </div>
         ` : ''}
 
-        ${isTestingEnabled && ((this.selectedDevice === 'ACB-M' && this.acbStep === 'main') || (this.selectedDevice === 'ZC-LCD' && this.zcStep === 'main') || (this.selectedDevice === 'Micro Edge' && this.microEdgeStep === 'main') || (this.selectedDevice === 'Droplet' && this.dropletStep === 'main') || (this.selectedDevice !== 'ACB-M' && this.selectedDevice !== 'ZC-LCD' && this.selectedDevice !== 'Micro Edge' && this.selectedDevice !== 'Droplet')) ? `
+        ${isTestingEnabled && ((this.selectedDevice === 'ACB-M' && this.acbStep === 'main') || (this.selectedDevice === 'ZC-LCD' && this.zcStep === 'main') || (this.selectedDevice === 'Micro Edge' && this.microEdgeStep === 'main') || (this.selectedDevice === 'Droplet' && this.dropletStep === 'main') || (this.selectedDevice === 'ZC-Controller' && this.zcControllerStep === 'main')) ? `
           <!-- Connection Section (hidden in Auto mode) -->
           ${this.mode === 'manual' ? `
           <div class="mb-6 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
@@ -2334,8 +2491,8 @@ class FactoryTestingPage {
             </div>
             <div class="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
               <div class="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-200">
-                <span class="text-xs uppercase tracking-wide text-gray-500">HW</span>
-                <span>${this.deviceInfo.hwVersion || '—'}</span>
+                <span class="text-xs uppercase tracking-wide text-gray-500">FW</span>
+                <span>${this.deviceInfo.firmwareVersion || '—'}</span>
               </div>
               <div class="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-xs text-gray-700 dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-200">
                 <span class="text-xs uppercase tracking-wide text-gray-500">UID</span>
@@ -2405,6 +2562,19 @@ class FactoryTestingPage {
                                   this.factoryTestResults._eval.pass_eth && 
                                   this.factoryTestResults._eval.pass_rs4852;
                   return allPass ? `
+                    <div class="mt-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700 dark:border-green-800 dark:bg-green-900/20 dark:text-green-200">
+                      Device passed all checks.
+                    </div>
+                  ` : `
+                    <div class="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+                      Device failed one or more checks. Review the results below.
+                    </div>
+                  `;
+                }
+                // For ZC-Controller: use summary.passAll (commandsOk + mismatches)
+                if (this.selectedDevice === 'ZC-Controller') {
+                  const ok = !!(this.factoryTestResults.summary && this.factoryTestResults.summary.passAll);
+                  return ok ? `
                     <div class="mt-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700 dark:border-green-800 dark:bg-green-900/20 dark:text-green-200">
                       Device passed all checks.
                     </div>
@@ -2692,6 +2862,133 @@ class FactoryTestingPage {
               </div>
             ` : ''}
 
+            ${this.selectedDevice === 'ZC-Controller' ? `
+              <div class="mt-6 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                <div class="flex items-center justify-between mb-3">
+                  <h4 class="text-sm font-semibold">🔌 Test Results - ZC-Controller</h4>
+                  <button onclick="window.factoryTestingModule.acbClearOutput()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg text-sm font-medium">🧹 Clear Output</button>
+                </div>
+
+                
+
+                <div class="grid grid-cols-2 gap-3">
+                  <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
+                    <div class="flex items-center justify-between mb-2">
+                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300">🟢 Status OFF-1</div>
+                      ${this.factoryTestResults?.tests?.status_off_1 ? (() => { const t = this.factoryTestResults.tests.status_off_1; const ok = (t.b3 || '').toUpperCase() === 'FF' && (t.b4 || '').toUpperCase() === '03'; return `<div class=\"text-xl\">${ok ? '✅' : '❌'}</div>`; })() : ''}
+                    </div>
+                    <div class="text-xs text-gray-600 dark:text-gray-400 space-y-1">
+                      <div><span class="font-medium">Expected:</span> <span class="font-mono">FF 03</span></div>
+                      <div><span class="font-medium">Bytes:</span> <span class="font-mono">${(this.factoryTestResults?.tests?.status_off_1?.b3 || '—')} ${(this.factoryTestResults?.tests?.status_off_1?.b4 || '')}</span></div>
+                      <div><span class="font-medium">Bits:</span> <span class="font-mono">${this.factoryTestResults?.tests?.status_off_1?.bits ? this.factoryTestResults.tests.status_off_1.bits.join('') : '—'}</span></div>
+                      <div><span class="font-medium">Mismatches:</span> <span class="font-mono">${(this.factoryTestResults?.tests?.status_off_1?.mismatches || []).length ? this.factoryTestResults.tests.status_off_1.mismatches.join(', ') : 'None'}</span></div>
+                      ${(this.factoryTestResults?.tests?.status_off_1?.mismatches || []).length ? `
+                        <div class=\"mt-1 flex flex-wrap gap-1\">${(() => { const map=[1,2,3,4,5,6,7,8,9,10]; return this.factoryTestResults.tests.status_off_1.mismatches.map(n => `<span class=\"px-2 py-0.5 rounded text-xs bg-red-100 text-red-700 border border-red-300\">Relay ${map[n-1] || n}</span>`).join(' '); })()}</div>
+                      ` : ''}
+                      ${this.factoryTestResults?.tests?.status_off_1?.message ? `<div class="mt-2 text-xs italic text-gray-500">${this.factoryTestResults.tests.status_off_1.message}</div>` : ''}
+                    </div>
+                  </div>
+
+                  <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
+                    <div class="flex items-center justify-between mb-2">
+                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300">🟢 Status Relay Close</div>
+                      ${this.factoryTestResults?.tests?.status_on_1 ? (() => { const t = this.factoryTestResults.tests.status_on_1; const ok = (t.b3 || '').toUpperCase() === '00' && (t.b4 || '').toUpperCase() === '00'; return `<div class=\"text-xl\">${ok ? '✅' : '❌'}</div>`; })() : ''}
+                    </div>
+                    <div class="text-xs text-gray-600 dark:text-gray-400 space-y-1">
+                      <div><span class="font-medium">Expected:</span> <span class="font-mono">00 00</span></div>
+                      <div><span class="font-medium">Bytes:</span> <span class="font-mono">${(this.factoryTestResults?.tests?.status_on_1?.b3 || '—')} ${(this.factoryTestResults?.tests?.status_on_1?.b4 || '')}</span></div>
+                      <div><span class="font-medium">Bits:</span> <span class="font-mono">${this.factoryTestResults?.tests?.status_on_1?.bits ? this.factoryTestResults.tests.status_on_1.bits.join('') : '—'}</span></div>
+                      ${(() => {
+                        const t = this.factoryTestResults?.tests?.status_on_1;
+                        const bits = t?.bits || null;
+                        const expectedOn = [1,3,5,7,9,19,17,15,13,11];
+                        if (!Array.isArray(bits)) return '';
+                        // Map bits to relay IDs following send order grouping
+                        // Group-1 (bits 0..9) → 1,3,5,7,9,19,17,15,13,11
+                        const g1 = [1,3,5,7,9,19,17,15,13,11];
+                        // Group-2 (bits 10..19) → 2,4,6,8,10,20,18,16,14,12
+                        const g2 = [2,4,6,8,10,20,18,16,14,12];
+                        const failing = [];
+                        bits.slice(0,10).forEach((b, idx) => {
+                          const relayId = g1[idx];
+                          const shouldOn = expectedOn.includes(relayId);
+                          if ((shouldOn && b !== 0) || (!shouldOn && b !== 1)) failing.push(relayId);
+                        });
+                        bits.slice(10,20).forEach((b, idx) => {
+                          const relayId = g2[idx];
+                          const shouldOn = expectedOn.includes(relayId);
+                          if ((shouldOn && b !== 0) || (!shouldOn && b !== 1)) failing.push(relayId);
+                        });
+                        return `
+                          <div><span class=\"font-medium\">Expected ON (send order):</span> <span class=\"font-mono\">${expectedOn.join(', ')}</span></div>
+                          <div><span class=\"font-medium\">Fail Relays:</span> <span class=\"font-mono\">${failing.length ? failing.join(', ') : 'None'}</span></div>
+                          ${failing.length ? `<div class=\"mt-1 flex flex-wrap gap-1\">${failing.map(n => `<span class=\"px-2 py-0.5 rounded text-xs bg-red-100 text-red-700 border border-red-300\">Relay ${n}</span>`).join(' ')}</div>` : ''}
+                        `;
+                      })()}
+                      ${this.factoryTestResults?.tests?.status_on_1?.message ? `<div class="mt-2 text-xs italic text-gray-500">${this.factoryTestResults.tests.status_on_1.message}</div>` : ''}
+                    </div>
+                  </div>
+
+                  <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
+                    <div class="flex items-center justify-between mb-2">
+                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300">🟢 Status OFF-1-again</div>
+                      ${this.factoryTestResults?.tests?.status_off_1_again ? (() => { const t = this.factoryTestResults.tests.status_off_1_again; const ok = (t.b3 || '').toUpperCase() === 'FF' && (t.b4 || '').toUpperCase() === '03'; return `<div class=\"text-xl\">${ok ? '✅' : '❌'}</div>`; })() : ''}
+                    </div>
+                    <div class="text-xs text-gray-600 dark:text-gray-400 space-y-1">
+                      <div><span class="font-medium">Expected:</span> <span class="font-mono">FF 03</span></div>
+                      <div><span class="font-medium">Bytes:</span> <span class="font-mono">${(this.factoryTestResults?.tests?.status_off_1_again?.b3 || '—')} ${(this.factoryTestResults?.tests?.status_off_1_again?.b4 || '')}</span></div>
+                      <div><span class="font-medium">Bits:</span> <span class="font-mono">${this.factoryTestResults?.tests?.status_off_1_again?.bits ? this.factoryTestResults.tests.status_off_1_again.bits.join('') : '—'}</span></div>
+                      <div><span class="font-medium">Mismatches:</span> <span class="font-mono">${(this.factoryTestResults?.tests?.status_off_1_again?.mismatches || []).length ? this.factoryTestResults.tests.status_off_1_again.mismatches.join(', ') : 'None'}</span></div>
+                      ${(this.factoryTestResults?.tests?.status_off_1_again?.mismatches || []).length ? `
+                        <div class=\"mt-1 flex flex-wrap gap-1\">${(() => { const map=[1,2,3,4,5,6,7,8,9,10]; return this.factoryTestResults.tests.status_off_1_again.mismatches.map(n => `<span class=\"px-2 py-0.5 rounded text-xs bg-red-100 text-red-700 border border-red-300\">Relay ${map[n-1] || n}</span>`).join(' '); })()}</div>
+                      ` : ''}
+                      ${this.factoryTestResults?.tests?.status_off_1_again?.message ? `<div class="mt-2 text-xs italic text-gray-500">${this.factoryTestResults.tests.status_off_1_again.message}</div>` : ''}
+                    </div>
+                  </div>
+
+                  <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
+                    <div class="flex items-center justify-between mb-2">
+                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300">🟢 Status Relay Open</div>
+                      ${this.factoryTestResults?.tests?.status_on_2 ? (() => { const t = this.factoryTestResults.tests.status_on_2; const ok = (t.b3 || '').toUpperCase() === '00' && (t.b4 || '').toUpperCase() === '00'; return `<div class=\"text-xl\">${ok ? '✅' : '❌'}</div>`; })() : ''}
+                    </div>
+                    <div class="text-xs text-gray-600 dark:text-gray-400 space-y-1">
+                      <div><span class="font-medium">Expected:</span> <span class="font-mono">00 00</span></div>
+                      <div><span class="font-medium">Bytes:</span> <span class="font-mono">${(this.factoryTestResults?.tests?.status_on_2?.b3 || '—')} ${(this.factoryTestResults?.tests?.status_on_2?.b4 || '')}</span></div>
+                      <div><span class="font-medium">Bits:</span> <span class="font-mono">${this.factoryTestResults?.tests?.status_on_2?.bits ? this.factoryTestResults.tests.status_on_2.bits.join('') : '—'}</span></div>
+                      ${(() => {
+                        const t = this.factoryTestResults?.tests?.status_on_2;
+                        const bits = t?.bits || null;
+                        const expectedOn = [2,4,6,8,10,20,18,16,14,12];
+                        if (!Array.isArray(bits)) return '';
+                        // For ON-2, swap mapping so first 10 bits align to even relays (send order)
+                        // Group-1 (bits 0..9) → 2,4,6,8,10,20,18,16,14,12
+                        const g1 = [2,4,6,8,10,20,18,16,14,12];
+                        // Group-2 (bits 10..19) → 1,3,5,7,9,19,17,15,13,11
+                        const g2 = [1,3,5,7,9,19,17,15,13,11];
+                        const failing = [];
+                        bits.slice(0,10).forEach((b, idx) => {
+                          const relayId = g1[idx];
+                          const shouldOn = expectedOn.includes(relayId);
+                          if ((shouldOn && b !== 0) || (!shouldOn && b !== 1)) failing.push(relayId);
+                        });
+                        bits.slice(10,20).forEach((b, idx) => {
+                          const relayId = g2[idx];
+                          const shouldOn = expectedOn.includes(relayId);
+                          if ((shouldOn && b !== 0) || (!shouldOn && b !== 1)) failing.push(relayId);
+                        });
+                        return `
+                          <div><span class=\"font-medium\">Expected ON (send order):</span> <span class=\"font-mono\">${expectedOn.join(', ')}</span></div>
+                          <div><span class=\"font-medium\">Fail Relays:</span> <span class=\"font-mono\">${failing.length ? failing.join(', ') : 'None'}</span></div>
+                          ${failing.length ? `<div class=\"mt-1 flex flex-wrap gap-1\">${failing.map(n => `<span class=\"px-2 py-0.5 rounded text-xs bg-red-100 text-red-700 border border-red-300\">Relay ${n}</span>`).join(' ')}</div>` : ''}
+                        `;
+                      })()}
+                      ${this.factoryTestResults?.tests?.status_on_2?.message ? `<div class="mt-2 text-xs italic text-gray-500">${this.factoryTestResults.tests.status_on_2.message}</div>` : ''}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ` : ''}
+
             ${this.selectedDevice === 'Droplet' ? `
               <div class="mt-6 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
                 <!-- Header with Clear Output Button -->
@@ -2811,10 +3108,37 @@ RS485: ${JSON.stringify((this.factoryTestResults.rs485 && this.factoryTestResult
           <div class="absolute inset-0 bg-black opacity-40"></div>
           <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl z-10 w-11/12 max-w-lg p-6">
             <h3 class="text-lg font-semibold mb-3">Connected</h3>
-            <p class="text-sm text-gray-700 dark:text-gray-300 mb-4">Connected successfully to ${this._lastAutoConnectedPort}. Please press the device button 5 times, then press OK to begin the tests.</p>
+            <p class="text-sm text-gray-700 dark:text-gray-300 mb-2">Connected successfully to ${this._lastAutoConnectedPort}.</p>
+            ${(() => {
+              const di = this.deviceInfo || {};
+              const hasError = ['uniqueId','deviceModel','deviceMake','firmwareVersion'].some(k => String(di[k] || '').toUpperCase() === 'ERROR');
+              return hasError ? `
+                <div class="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+                  Failed to read device information over RS485. Please check connection and try again.
+                </div>
+              ` : '';
+            })()}
+            <div class="mb-4 grid grid-cols-2 gap-2 text-xs">
+              <div class="p-2 rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60">
+                <div class="text-gray-500">UID</div>
+                <div class="font-mono text-gray-800 dark:text-gray-100">${(this.deviceInfo.uniqueId || '—').substring(0,24)}</div>
+              </div>
+              <div class="p-2 rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60">
+                <div class="text-gray-500">Model</div>
+                <div class="font-mono text-gray-800 dark:text-gray-100">${this.deviceInfo.deviceModel || '—'}</div>
+              </div>
+              <div class="p-2 rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60">
+                <div class="text-gray-500">Make</div>
+                <div class="font-mono text-gray-800 dark:text-gray-100">${this.deviceInfo.deviceMake || '—'}</div>
+              </div>
+              <div class="p-2 rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60">
+                <div class="text-gray-500">FW Version</div>
+                <div class="font-mono text-gray-800 dark:text-gray-100">${this.deviceInfo.firmwareVersion || '—'}</div>
+              </div>
+            </div>
             <div class="flex justify-end gap-2">
               <button onclick="window.factoryTestingPage.cancelConnectConfirm()" class="px-4 py-2 bg-gray-200 rounded">Cancel</button>
-              <button onclick="window.factoryTestingPage.confirmConnectOk()" class="px-4 py-2 bg-green-500 text-white rounded">OK</button>
+              ${(() => { const di = this.deviceInfo || {}; const hasError = ['uniqueId','deviceModel','deviceMake','firmwareVersion'].some(k => String(di[k] || '').toUpperCase() === 'ERROR'); return hasError ? '<button onclick="window.factoryTestingPage.confirmConnectOk()" class="px-4 py-2 bg-red-500 text-white rounded">Close</button>' : '<button onclick="window.factoryTestingPage.confirmConnectOk()" class="px-4 py-2 bg-green-500 text-white rounded">OK</button>'; })()}
             </div>
           </div>
         </div>
