@@ -59,7 +59,7 @@ class OpenOCDSTM32Service {
                 const where = spawnSync('where', ['openocd.exe'], { shell: true });
                 const out = where.stdout ? where.stdout.toString().trim() : '';
                 if (out) systemOpenOcd = out.split('\r\n')[0];
-            } catch (e) {}
+            } catch (e) { }
 
             if (envOpenOcd && fs.existsSync(envOpenOcd)) {
                 openocdBinary = envOpenOcd;
@@ -131,32 +131,24 @@ class OpenOCDSTM32Service {
      * @returns {Object} Detection result or null if failed
      */
     async detectSTLinkOnce(speed = 4000) {
-        // If CubeProgrammer CLI is available, prefer a quick probe-list check
-        try {
-            const probes = await this.listCubeProbes();
-            if (probes && probes.found) {
-                return { success: true, detected: true, info: { interface: 'ST-Link', raw: probes.raw }, output: probes.raw };
-            }
-        } catch (e) {
-            // ignore, fallback to OpenOCD below
-        }
-
         if (!this.checkOpenOCD()) {
             throw new Error('OpenOCD binary not found');
         }
 
         const deviceConfig = this.getDeviceConfig();
 
-        // Quick detection attempt for Micro Edge - match STM32CubeProgrammer settings
-        // STM32CubeProgrammer uses: SWD, 4000 kHz, Software reset
+        // All devices use the same detection mechanism
         const args = [
             '-s', this.scriptsPath,
             '-f', 'interface/stlink.cfg',
-            '-c', 'transport select hla_swd',
+            '-f', `target/${deviceConfig.target}`,
             '-c', `adapter speed ${speed}`,
-            '-c', 'source [find target/stm32l4x.cfg]',
+            '-c', 'reset_config none separate',
             '-c', 'init',
             '-c', 'targets',
+            '-c', 'reset halt',
+            '-c', 'mdw 0x40015800',  // Try F0/L0/L4 address
+            '-c', 'mdw 0x58000400',  // Try WL address
             '-c', 'shutdown'
         ];
 
@@ -179,549 +171,126 @@ class OpenOCDSTM32Service {
                 return { success: true, detected: true, info, output };
             }
 
-            // If OpenOCD timed out or returned no target, try STM32CubeProgrammer CLI fallback
-            const cubeResult = await this.detectViaCubeProgrammer();
-            if (cubeResult && cubeResult.detected) {
-                return { success: true, detected: true, info: cubeResult.info, output: cubeResult.output };
-            }
-
             return { success: false, detected: false, output };
         } catch (error) {
-            // Attempt fallback via STM32CubeProgrammer if OpenOCD crashed
-            const cubeResult = await this.detectViaCubeProgrammer();
-            if (cubeResult && cubeResult.detected) {
-                return { success: true, detected: true, info: cubeResult.info, output: cubeResult.output };
-            }
             return { success: false, detected: false, output: error.message };
         }
     }
 
     /**
-     * Attempt to detect the STM32 using STM32CubeProgrammer CLI as a fallback
+     * Probe connect using OpenOCD (for Micro Edge and other devices)
+     * Returns a connect token for compatibility with existing UI flow
      */
-    async detectViaCubeProgrammer() {
-        const possiblePaths = [
-            'C:\\Program Files (x86)\\STMicroelectronics\\STM32Cube\\STM32CubeProgrammer\\bin\\STM32_Programmer_CLI.exe',
-            'C:\\Program Files\\STMicroelectronics\\STM32Cube\\STM32CubeProgrammer\\bin\\STM32_Programmer_CLI.exe',
-            'C:\\Program Files (x86)\\STMicroelectronics\\stlink_server\\STM32_Programmer_CLI.exe'
-        ];
-
-        let cliPath = null;
-        for (const p of possiblePaths) {
-            if (fs.existsSync(p)) { cliPath = p; break; }
+    async probeConnect_via_OpenOCD() {
+        if (!this.checkOpenOCD()) {
+            return { success: false, error: 'OpenOCD binary not found' };
         }
 
-        if (!cliPath) {
-            // Try PATH lookup
-            try {
-                const which = spawnSync('where', ['STM32_Programmer_CLI.exe'], { shell: true });
-                const out = which.stdout ? which.stdout.toString().trim() : '';
-                if (out) cliPath = out.split('\r\n')[0];
-            } catch (e) {}
+        // Prevent concurrent calls
+        if (this._isProbeConnecting) {
+            console.log('[probeConnect] Already in progress, skipping duplicate call');
+            return { success: false, error: 'Probe connect already in progress' };
         }
 
-        if (!cliPath) return null;
+        this._isProbeConnecting = true;
 
         try {
-            const permutations = [
-                ['-c', 'connect port=SWD'],
-                ['-c', 'connect port=SWD mode=UR'],
-                ['-c', 'connect port=SWD frequency=4000'],
-                ['-c', 'connect port=SWD frequency=4000 mode=UR']
-            ];
+            const deviceConfig = this.getDeviceConfig();
 
-            for (const args of permutations) {
+            // Try to detect the device using OpenOCD
+            const speeds = [4000, 480, 100];
+
+            for (const speed of speeds) {
                 try {
-                    const proc = spawn(cliPath, args);
-                    let out = '';
-                    let err = '';
-                    proc.stdout.on('data', d => out += d.toString());
-                    proc.stderr.on('data', d => err += d.toString());
+                    let args;
 
-                    const exit = await new Promise((resolve) => proc.on('close', (c) => resolve(c)));
-                    const combined = (out + err).trim();
+                    // All devices (Droplet, Zone Controller, Micro Edge) use the same detection mechanism
+                    args = [
+                        '-s', this.scriptsPath,
+                        '-f', 'interface/stlink.cfg',
+                        '-f', `target/${deviceConfig.target}`,
+                        '-c', `adapter speed ${speed}`,
+                        '-c', 'reset_config none separate',
+                        '-c', 'init',
+                        '-c', 'targets',
+                        '-c', 'shutdown'
+                    ];
 
-                    // Parse common success markers and device id
-                    const devIdMatch = combined.match(/Device ID\s*:?\s*0x([0-9a-fA-F]+)/i) || combined.match(/Device\s*name\s*:\s*(STM32[\w\-\d]+)/i);
-                    const connected = /connected|device id|device name|Device ID/i.test(combined);
+                    console.log(`[probeConnect] Trying speed ${speed} kHz...`);
+                    const result = await this.executeOpenOCD(args);
+                    const output = result.output || '';
 
-                    if (connected && devIdMatch) {
-                        const info = { chip: devIdMatch[1] ? `DeviceID: 0x${devIdMatch[1]}` : devIdMatch[0], output: combined };
-                        return { detected: true, info, output: combined };
+                    // Check if we got valid output (processor or device ID found)
+                    const processorMatch = output.match(/Cortex-(M\d+)/i);
+                    const deviceIdMatch = output.match(/device id\s*=\s*0x([0-9a-fA-F]+)/i);
+
+                    // If we got valid output, consider it successful
+                    if (processorMatch || deviceIdMatch) {
+                        let chip = deviceConfig.mcu;
+                        if (deviceIdMatch) {
+                            const deviceId = deviceIdMatch[1].toLowerCase();
+                            if (deviceId.includes('435')) {
+                                chip = 'STM32L432KBU6';
+                            } else if (deviceId.includes('497') || deviceId.includes('10036497')) {
+                                chip = 'STM32WLE5';
+                            } else if (deviceId.includes('440') || deviceId.includes('444') || deviceId.includes('445')) {
+                                chip = 'STM32F030C8T6';
+                            }
+                        }
+
+                        const info = {
+                            chip: chip,
+                            flashSize: deviceConfig.flashSize,
+                            raw: output
+                        };
+
+                        // Return a simple token for compatibility (not used by OpenOCD)
+                        const connectToken = `port=SWD speed=${speed}`;
+                        console.log(`[probeConnect] ✅ Success at speed ${speed} kHz`);
+                        return { success: true, connectToken, info, output: output };
+                    } else {
+                        console.log(`[probeConnect] ⚠️ Speed ${speed} kHz: No processor/device ID found, trying next speed...`);
                     }
-
-                    // If the CLI reported 'Unable to get core ID' but also printed Device ID earlier, accept it
-                    if (/Unable to get core ID/i.test(combined) && /Device ID/i.test(combined)) {
-                        const info = { chip: 'STM32 (partial)', output: combined };
-                        return { detected: true, info, output: combined };
-                    }
-
-                    // otherwise try next permutation
-                } catch (e) {
-                    // try next permutation
+                } catch (error) {
+                    console.log(`[probeConnect] ⚠️ Speed ${speed} kHz failed: ${error.message}, trying next speed...`);
+                    // Try next speed
+                    continue;
                 }
             }
 
-            return { detected: false, output: '' };
-        } catch (e) {
-            return null;
+            console.log(`[probeConnect] ❌ All speeds failed`);
+            return { success: false, error: 'Failed to connect via OpenOCD - no valid device detected' };
+        } catch (error) {
+            console.error(`[probeConnect] ❌ Error: ${error.message}`);
+            return { success: false, error: error.message || 'OpenOCD probe connect failed' };
+        } finally {
+            this._isProbeConnecting = false;
         }
     }
 
     /**
-     * Helper: run STM32CubeProgrammer CLI with args and return combined output and exit code
+     * Probe connect - uses OpenOCD for all devices (including Micro Edge)
      */
-    async runCubeCLI(args, timeoutMs = 15000) {
-        const spawn = require('child_process').spawn;
-        const cliPath = this._findCubeCLI();
-        if (!cliPath) return null;
-
-        return await new Promise((resolve) => {
-            try {
-                const proc = spawn(cliPath, args);
-                let out = '';
-                let err = '';
-                proc.stdout.on('data', d => out += d.toString());
-                proc.stderr.on('data', d => err += d.toString());
-
-                const timeout = setTimeout(() => {
-                    try { proc.kill(); } catch (e) {}
-                    const combined = out + err;
-                    try {
-                        const logPath = path.join(__dirname, '..', 'cubecli-diagnostics.log');
-                        fs.appendFileSync(logPath, `\n=== CubeCLI TIMEOUT (${new Date().toISOString()}) ===\n` + cliPath + ' ' + args.join(' ') + '\n' + combined + '\n');
-                    } catch (e) {}
-                    resolve({ exit: null, output: combined, timedOut: true });
-                }, timeoutMs);
-
-                proc.on('close', (code) => {
-                    clearTimeout(timeout);
-                    const combined = (out + err).trim();
-                    try {
-                        const logPath = path.join(__dirname, '..', 'cubecli-diagnostics.log');
-                        fs.appendFileSync(logPath, `\n=== CubeCLI EXIT code=${code} (${new Date().toISOString()}) ===\n` + cliPath + ' ' + args.join(' ') + '\n' + combined + '\n');
-                    } catch (e) {}
-                    resolve({ exit: code, output: combined, timedOut: false });
-                });
-            } catch (e) {
-                resolve(null);
-            }
-        });
-    }
-
-    _findCubeCLI() {
-        const possiblePaths = [
-            'C:\\Program Files (x86)\\STMicroelectronics\\STM32Cube\\STM32CubeProgrammer\\bin\\STM32_Programmer_CLI.exe',
-            'C:\\Program Files\\STMicroelectronics\\STM32Cube\\STM32CubeProgrammer\\bin\\STM32_Programmer_CLI.exe',
-            'C:\\Program Files (x86)\\STMicroelectronics\\stlink_server\\STM32_Programmer_CLI.exe'
-        ];
-
-        for (const p of possiblePaths) {
-            if (fs.existsSync(p)) return p;
-        }
-
-        try {
-            const { spawnSync } = require('child_process');
-            const which = spawnSync('where', ['STM32_Programmer_CLI.exe'], { shell: true });
-            const out = which.stdout ? which.stdout.toString().trim() : '';
-            if (out) return out.split('\r\n')[0];
-        } catch (e) {}
-
-        return null;
+    async probeConnect() {
+        return await this.probeConnect_via_OpenOCD();
     }
 
     /**
-     * List connected probes via STM32CubeProgrammer CLI (-l)
-     * Returns parsed info or null
+     * Flash using OpenOCD (token is ignored, used for compatibility with existing UI flow)
      */
-    async listCubeProbes() {
-        const cli = this._findCubeCLI();
-        if (!cli) return null;
-
-        try {
-            const res = await this.runCubeCLI(['-l'], 5000);
-            if (!res) return null;
-            const out = res.output || '';
-            // Look for ST-Link probe section
-            const stlinkMatch = out.match(/ST-Link Probe\s*\d+\s*:[\s\S]*?ST-LINK SN\s*:\s*([0-9A-Fa-f]+)/i);
-            if (stlinkMatch) {
-                return { found: true, raw: out, serial: stlinkMatch[1] };
-            }
-            // If probe list exists but no ST-Link, still return raw
-            if (/ST-Link Probe/i.test(out) || /STLINK/i.test(out)) {
-                return { found: true, raw: out };
-            }
-            return null;
-        } catch (e) {
-            return null;
-        }
+    async flashWithToken_via_OpenOCD(connectToken, firmwarePath, progressCallback = null) {
+        // Token is ignored - OpenOCD doesn't need it
+        // Just use the standard flashFirmware function
+        return await this.flashFirmware(firmwarePath, progressCallback);
     }
 
     /**
-     * Use STM32CubeProgrammer CLI to read UID for Micro Edge
+     * Flash with token - uses OpenOCD for all devices (including Micro Edge)
      */
-    async readUID_via_CubeCLI() {
-        const deviceConfig = this.getDeviceConfig();
-        const cli = this._findCubeCLI();
-        if (!cli) throw new Error('STM32_Programmer_CLI not found');
-
-        // Use text memory read command. CLI syntax: -c "connect port=SWD [frequency=<kHz>]" -c "memory read <addr> <size>"
-        const addr = deviceConfig.uidAddress;
-        // read 12 bytes (3 words)
-        const connectToken = `connect port=SWD frequency=4000`;
-        const args = ['-c', connectToken, '-c', `memory read ${addr} 12`, '-c', 'disconnect'];
-        const res = await this.runCubeCLI(args, 10000);
-        if (!res) throw new Error('Failed to run CubeProg CLI');
-
-        const combined = res.output || '';
-        // Parse hex bytes from output lines like: "0x1FFF7590 : 0x12345678 0x9ABCDEF0 0x00000000"
-        const match = combined.match(/0x[0-9a-fA-F]+\s*:\s*0x([0-9a-fA-F]{8})\s*0x([0-9a-fA-F]{8})\s*0x([0-9a-fA-F]{8})/i);
-        if (match) {
-            const uid0 = parseInt(match[1], 16);
-            const uid1 = parseInt(match[2], 16);
-            const uid2 = parseInt(match[3], 16);
-            return { success: true, uid0, uid1, uid2, raw: combined };
-        }
-
-        // try alternative parsing for space-separated words
-        const words = combined.match(/([0-9a-fA-F]{8})/g);
-        if (words && words.length >= 3) {
-            const uid0 = parseInt(words[0], 16);
-            const uid1 = parseInt(words[1], 16);
-            const uid2 = parseInt(words[2], 16);
-            return { success: true, uid0, uid1, uid2, raw: combined };
-        }
-
-        throw new Error('Failed to parse UID from CubeProg CLI output');
+    async flashWithToken(connectToken, firmwarePath, progressCallback = null) {
+        return await this.flashWithToken_via_OpenOCD(connectToken, firmwarePath, progressCallback);
     }
 
-    /**
-     * Use CubeProgrammer CLI to flash firmware (for Micro Edge)
-     */
-    async flashFirmware_via_CubeCLI(firmwarePath, progressCallback = null) {
-        const cli = this._findCubeCLI();
-        if (!cli) throw new Error('STM32_Programmer_CLI not found');
-        const normalized = firmwarePath.replace(/\\/g, '/');
-        // Try multiple connect variants and retries to handle timing/reset modes
-        const probes = await this.listCubeProbes().catch(() => null);
-        let apIndex = null;
-        if (probes && probes.raw) {
-            const m = probes.raw.match(/Access Port Number\s*:\s*(\d+)/i);
-            if (m) apIndex = parseInt(m[1], 10);
-        }
-
-        // prefer simple connect tokens (avoid frequency which some CLI rejects)
-        const connectVariants = [];
-        if (apIndex != null) {
-            connectVariants.push(`port=SWD index=${apIndex}`);
-            connectVariants.push(`port=SWD index=${apIndex} mode=UR`);
-        }
-        connectVariants.push('port=SWD');
-
-        let lastErrOutput = '';
-        const timeoutMs = 3 * 60 * 1000; // 3 minutes for flash
-
-        // Try each connect variant, and for each variant perform a few connect attempts
-        for (const connectToken of connectVariants) {
-            if (progressCallback) progressCallback({ stage: 'connect', message: `Trying connect: ${connectToken}` });
-
-            // Try a small number of connect attempts to cope with reset timing
-            const attempts = [300, 800, 1500]; // ms delays between connect and flash
-            let connected = false;
-            let connectOutput = '';
-
-            for (let i = 0; i < attempts.length && !connected; i++) {
-                // 1) Try a plain connect to probe the core (separate process)
-                try {
-                    const connArgs = ['--connect', connectToken];
-                    const connRes = await this.runCubeCLI(connArgs, 8000);
-                    connectOutput = connRes ? connRes.output || '' : '';
-
-                    // If connect returned device info, consider it a success
-                    if (connRes && connRes.exit === 0 && /Device ID|Device name|Device\s*:|Device ID/i.test(connectOutput)) {
-                        connected = true;
-                        break;
-                    }
-
-                    // Some CLI runs return non-zero but still print device info; accept that too
-                    if (connRes && /Device ID|Device name/i.test(connectOutput)) {
-                        connected = true;
-                        break;
-                    }
-                } catch (e) {
-                    connectOutput = e.message || '';
-                }
-
-                // 2) Try a score check which may be slightly different internally
-                try {
-                    const scoreArgs = ['--connect', connectToken, '--score'];
-                    const scoreRes = await this.runCubeCLI(scoreArgs, 8000);
-                    const scoreOut = scoreRes ? scoreRes.output || '' : '';
-                    if (scoreRes && scoreRes.exit === 0 && !/Unable to get core ID|No STM32 target found/i.test(scoreOut)) {
-                        connected = true;
-                        connectOutput = scoreOut;
-                        break;
-                    }
-                } catch (e) {
-                    // ignore and continue to next attempt
-                }
-
-                // wait before next attempt to allow hardware reset/release timing
-                await new Promise(r => setTimeout(r, attempts[i]));
-            }
-
-            lastErrOutput = connectOutput || lastErrOutput;
-
-            if (!connected) {
-                // try next connect variant
-                continue;
-            }
-
-            // Proceed to erase/download/verify using the connectToken
-            if (progressCallback) progressCallback({ stage: 'flash', message: `Flashing using ${connectToken}` });
-
-            const args = [
-                '--connect', connectToken,
-                '--erase', 'all',
-                '--download', normalized, '0x08000000',
-                '--verify'
-            ];
-
-            const res = await this.runCubeCLI(args, timeoutMs);
-            const out = res ? res.output || '' : '';
-            lastErrOutput = out || lastErrOutput;
-
-            if (res && res.exit === 0 && /Download verified successfully/i.test(out)) {
-                if (progressCallback) progressCallback({ stage: 'complete', message: 'Flash completed successfully' });
-                return { success: true, output: out, connectToken };
-            }
-
-            // If this attempt failed, continue to next variant
-            await new Promise(r => setTimeout(r, 300));
-        }
-
-        throw new Error(`CubeProg flash failed: ${lastErrOutput || 'no output'}`);
-    }
-
-    /**
-     * Probe connect-only via CubeCLI: try multiple connect variants and return the working token
-     */
-    async probeConnect_via_CubeCLI() {
-        const cli = this._findCubeCLI();
-        if (!cli) return { success: false, error: 'STM32_Programmer_CLI not found' };
-
-        const probes = await this.listCubeProbes().catch(() => null);
-        let apIndex = null;
-        if (probes && probes.raw) {
-            const m = probes.raw.match(/Access Port Number\s*:\s*(\d+)/i);
-            if (m) apIndex = parseInt(m[1], 10);
-        }
-
-        const connectVariants = [];
-        if (apIndex != null) {
-            connectVariants.push(`port=SWD index=${apIndex}`);
-            connectVariants.push(`port=SWD index=${apIndex} mode=UR`);
-        }
-        connectVariants.push('port=SWD mode=UR');
-        connectVariants.push('port=SWD');
-
-        for (const connectToken of connectVariants) {
-            try {
-                // Try simple connect
-                const conn = await this.runCubeCLI(['--connect', connectToken], 8000);
-                const out = conn ? conn.output || '' : '';
-                if (conn && (conn.exit === 0 || /Device ID|Device name/i.test(out))) {
-                    // parse basic info
-                    const chipMatch = out.match(/Device name\s*:\s*(STM32[\w\-\d]+)/i) || out.match(/Device\s*:\s*(STM32[\w\-\d]+)/i);
-                    const devIdMatch = out.match(/Device ID\s*:?\s*0x([0-9a-fA-F]+)/i);
-                    const flashMatch = out.match(/Flash size\s*:?\s*(\d+\s*kB)/i);
-
-                    const info = {
-                        chip: chipMatch ? chipMatch[1] : (devIdMatch ? `DeviceID: 0x${devIdMatch[1]}` : undefined),
-                        flashSize: flashMatch ? flashMatch[1] : undefined,
-                        raw: out
-                    };
-
-                    return { success: true, connectToken, info, output: out };
-                }
-
-                // Try score check
-                const score = await this.runCubeCLI(['--connect', connectToken, '--score'], 7000);
-                const scoreOut = score ? score.output || '' : '';
-                if (score && score.exit === 0 && !/Unable to get core ID|No STM32 target found/i.test(scoreOut)) {
-                    const chipMatch = scoreOut.match(/Device name\s*:\s*(STM32[\w\-\d]+)/i) || scoreOut.match(/Device\s*:\s*(STM32[\w\-\d]+)/i);
-                    const devIdMatch = scoreOut.match(/Device ID\s*:?\s*0x([0-9a-fA-F]+)/i);
-                    const flashMatch = scoreOut.match(/Flash size\s*:?\s*(\d+\s*kB)/i);
-
-                    const info = {
-                        chip: chipMatch ? chipMatch[1] : (devIdMatch ? `DeviceID: 0x${devIdMatch[1]}` : undefined),
-                        flashSize: flashMatch ? flashMatch[1] : undefined,
-                        raw: scoreOut
-                    };
-
-                    return { success: true, connectToken, info, output: scoreOut };
-                }
-            } catch (e) {
-                // ignore and try next
-            }
-        }
-
-        return { success: false, error: 'No connect variant succeeded' };
-    }
-
-    /**
-     * Flash using an already-established connect token (from probeConnect)
-     */
-    async flashWithToken_via_CubeCLI(connectToken, firmwarePath, progressCallback = null) {
-        const cli = this._findCubeCLI();
-        if (!cli) throw new Error('STM32_Programmer_CLI not found');
-
-        const normalized = firmwarePath.replace(/\\/g, '/');
-        const timeoutMs = 3 * 60 * 1000;
-
-        if (progressCallback) progressCallback({ stage: 'flash', message: `Flashing using ${connectToken}` });
-        // Build a set of token variants to try (some CLI versions are picky)
-        const tokenVariants = [connectToken, `${connectToken} mode=UR`, `${connectToken} frequency=4000`, `${connectToken} frequency=4000 mode=UR`];
-
-        let lastErr = null;
-        // Try each token variant with a small number of retries to handle timing issues
-        for (const token of tokenVariants) {
-            if (progressCallback) progressCallback({ stage: 'connect', message: `Trying token variant: ${token}` });
-
-            // 1) Try a connect-only to ensure the CLI can see the device
-            let connected = false;
-            let connOut = '';
-            for (let attempt = 0; attempt < 4 && !connected; attempt++) {
-                try {
-                    const connArgs = ['--connect', token];
-                    const connRes = await this.runCubeCLI(connArgs, 8000);
-                    connOut = connRes ? connRes.output || '' : '';
-                    if (connRes && (connRes.exit === 0 || /Device ID|Device name|connected/i.test(connOut))) {
-                        connected = true;
-                        break;
-                    }
-                    if (/Unable to get core ID|No STM32 target found/i.test(connOut)) {
-                        // Wait a bit and retry - often RESET timing causes this
-                        await new Promise(r => setTimeout(r, 300));
-                        continue;
-                    }
-                } catch (e) {
-                    connOut = e.message || '';
-                    await new Promise(r => setTimeout(r, 300));
-                }
-            }
-
-            if (!connected) {
-                lastErr = connOut || 'Connect failed';
-                continue; // try next token variant
-            }
-
-            // 2) Perform an explicit erase step to ensure chip is cleared before download
-            try {
-                if (progressCallback) progressCallback({ stage: 'erase', message: `Erasing chip using ${token}` });
-                const eraseArgs = ['--connect', token, '--erase', 'all'];
-                const eraseRes = await this.runCubeCLI(eraseArgs, 60000);
-                const eraseOut = eraseRes ? eraseRes.output || '' : '';
-                if (eraseRes && eraseRes.exit === 0 && /Mass erase successfully|Erase successful|Erasing finished/i.test(eraseOut)) {
-                    // proceed
-                } else {
-                    // Some CLI versions print different messages; if we see error lines, treat accordingly
-                    if (/Unable to get core ID|No STM32 target found/i.test(eraseOut)) {
-                        lastErr = eraseOut;
-                        continue; // try next token variant
-                    }
-                }
-            } catch (e) {
-                lastErr = e.message || String(e);
-                continue; // try next token variant
-            }
-
-            // 3) Download and verify
-            try {
-                if (progressCallback) progressCallback({ stage: 'flash', message: `Downloading ${normalized} using ${token}` });
-                const flashArgs = ['--connect', token, '--download', normalized, '0x08000000', '--verify'];
-                const flashRes = await this.runCubeCLI(flashArgs, timeoutMs);
-                const out = flashRes ? flashRes.output || '' : '';
-                if (flashRes && flashRes.exit === 0 && /Download verified successfully|Download completed successfully/i.test(out)) {
-                    if (progressCallback) progressCallback({ stage: 'complete', message: 'Flash completed successfully' });
-                    return { success: true, output: out };
-                }
-                lastErr = out || lastErr;
-            } catch (e) {
-                lastErr = e.message || String(e);
-            }
-
-            // If we reach here, try next token variant
-        }
-
-        throw new Error(`CubeProg flash failed: ${lastErr || 'no output'}`);
-    }
-
-    /**
-     * Attempt to disconnect any active CubeProgrammer CLI connection
-     */
-    async disconnectCubeCLI() {
-        const cli = this._findCubeCLI();
-        if (!cli) return { success: false, error: 'STM32_Programmer_CLI not found' };
-
-        // Try a few disconnect forms; vendor CLI accepts --disconnect or -c disconnect in some forms
-        const variants = [
-            ['--disconnect'],
-            ['--connect', 'port=SWD', '--disconnect'],
-            ['--connect', 'port=SWD', 'mode=UR', '--disconnect'],
-            ['-c', 'disconnect']
-        ];
-
-        for (const args of variants) {
-            try {
-                const res = await this.runCubeCLI(args, 5000);
-                const out = res ? res.output || '' : '';
-                // Consider success if exit code 0 or no error text
-                if (res && res.exit === 0) return { success: true, output: out };
-                if (out && !/Error|Unable|Wrong connect parameter/i.test(out)) {
-                    return { success: true, output: out };
-                }
-            } catch (e) {
-                // continue to next variant
-            }
-        }
-
-        // If CLI variants failed, attempt to forcibly kill lingering STM32_Programmer_CLI processes
-        try {
-            const logPath = path.join(__dirname, '..', 'cubecli-diagnostics.log');
-            if (this.platform === 'win32') {
-                try {
-                    const { spawnSync } = require('child_process');
-                    const kill = spawnSync('taskkill', ['/F', '/IM', 'STM32_Programmer_CLI.exe']);
-                    const combined = (kill.stdout ? kill.stdout.toString() : '') + (kill.stderr ? kill.stderr.toString() : '');
-                    fs.appendFileSync(logPath, `\n=== CubeCLI KILL ATTEMPT (${new Date().toISOString()}) ===\n` + combined + '\n');
-                    if (kill.status === 0) {
-                        return { success: true, killed: true, method: 'taskkill', output: combined };
-                    }
-                } catch (e) {
-                    // ignore and try fallback
-                    fs.appendFileSync(logPath, `\n=== CubeCLI KILL ERROR (${new Date().toISOString()}) ===\n` + e.message + '\n');
-                }
-            } else {
-                try {
-                    const { spawnSync } = require('child_process');
-                    const kill = spawnSync('pkill', ['-f', 'STM32_Programmer_CLI']);
-                    const combined = (kill.stdout ? kill.stdout.toString() : '') + (kill.stderr ? kill.stderr.toString() : '');
-                    fs.appendFileSync(logPath, `\n=== CubeCLI KILL ATTEMPT (${new Date().toISOString()}) ===\n` + combined + '\n');
-                    // pkill exit code 0 -> succeeded
-                    if (kill.status === 0) {
-                        return { success: true, killed: true, method: 'pkill', output: combined };
-                    }
-                } catch (e) {
-                    fs.appendFileSync(logPath, `\n=== CubeCLI KILL ERROR (${new Date().toISOString()}) ===\n` + e.message + '\n');
-                }
-            }
-        } catch (e) {
-            // ignore logging failures
-        }
-
-        return { success: false, error: 'CubeCLI disconnect did not succeed' };
-    }
 
     /**
      * Check if OpenOCD binary exists
@@ -735,21 +304,7 @@ class OpenOCDSTM32Service {
      * @returns {Object} Detection result or null if failed
      */
     async detectSTLinkOnce(speed = 1800) {
-        // For Micro Edge, prefer vendor CLI which was observed to successfully connect
-        if (this.currentDeviceType === 'MICRO_EDGE') {
-            try {
-                const cube = await this.detectViaCubeProgrammer();
-                if (cube && cube.detected) {
-                    return { success: true, detected: true, info: cube.info, output: cube.output };
-                }
-                // fallthrough to OpenOCD if CLI didn't detect
-            } catch (e) {
-                // ignore and fallback to OpenOCD
-            }
-        }
-
         if (!this.checkOpenOCD()) {
-            // No OpenOCD available and CLI didn't detect
             return { success: false, detected: false, output: 'OpenOCD binary not found' };
         }
 
@@ -759,12 +314,14 @@ class OpenOCDSTM32Service {
         const args = [
             '-s', this.scriptsPath,
             '-f', 'interface/stlink.cfg',
+            '-f', `target/${deviceConfig.target}`,
             '-c', `adapter speed ${speed}`,
-            '-c', 'transport select hla_swd',
-            '-c', 'source [find target/stm32l4x.cfg]',
+            '-c', 'reset_config none separate',
             '-c', 'init',
             '-c', 'targets',
-            '-c', 'halt',
+            '-c', 'reset halt',
+            '-c', 'mdw 0x40015800',  // Try F0/L0/L4 address
+            '-c', 'mdw 0x58000400',  // Try WL address
             '-c', 'shutdown'
         ];
 
@@ -781,34 +338,24 @@ class OpenOCDSTM32Service {
      * @returns {Object} Detection result with MCU info
      */
     async detectSTLink() {
-        // Fast-path: if CubeProgrammer CLI is available and lists a probe, return early
-        try {
-            const probes = await this.listCubeProbes();
-            if (probes && probes.found) {
-                return {
-                    success: true,
-                    detected: true,
-                    mismatch: false,
-                    detectedType: null,
-                    selectedType: this.currentDeviceType,
-                    info: {
-                        chip: this.getDeviceConfig().mcu,
-                        deviceType: DEVICE_TYPES[this.currentDeviceType].name,
-                        flashSize: this.getDeviceConfig().flashSize,
-                        interface: 'ST-Link (via STM32CubeProgrammer CLI)'
-                    },
-                    rawOutput: probes.raw
-                };
-            }
-        } catch (e) {
-            // ignore and continue with OpenOCD path
-        }
+        console.log(`[DEBUG] ========================================`);
+        console.log(`[DEBUG] detectSTLink() called`);
+        console.log(`[DEBUG] Current device type: ${this.currentDeviceType}`);
+        console.log(`[DEBUG] ========================================`);
+
+        // Get device config first
+        const deviceConfig = this.getDeviceConfig();
+
+        // All devices now use OpenOCD for detection (including Micro Edge)
+        console.log(`[DEBUG] Using OpenOCD for detection (device: ${this.currentDeviceType})`);
 
         if (!this.checkOpenOCD()) {
+            console.log(`[DEBUG] ❌ OpenOCD binary not found`);
             throw new Error('OpenOCD binary not found');
         }
 
-        const deviceConfig = this.getDeviceConfig();
+        console.log(`[DEBUG] Device config: ${deviceConfig.name} (${deviceConfig.mcu}), target: ${deviceConfig.target}`);
+
         let result = null;
         let detectedMCUType = null;
         let detectedChip = null;
@@ -816,81 +363,66 @@ class OpenOCDSTM32Service {
         try {
             // First attempt: Use selected device config
             // console.log(`=== Attempting detection with ${deviceConfig.name} config ===`);
-            
-            // Try multiple speeds and reset strategies
-            // STM32L432: Match STM32CubeProgrammer settings (4000 kHz, SWD, Software reset)
-            const speeds = deviceConfig.name === 'Micro Edge' ? [4000, 1800, 480] : [480, 100];
-            
+
+            // All devices (Droplet, Zone Controller, Micro Edge) use the same detection mechanism
+            const speeds = [480, 100];
+
             let detectionResult = null;
             let detectionSucceeded = false;
-            
+
             console.log(`[OpenOCD] Trying detection for ${deviceConfig.name}...`);
-            
-            // Try all speeds
+
+            // Try all speeds - but stop early if we get useful info
             for (const speed of speeds) {
                 if (detectionSucceeded) break;
-                
-                // Special sequence for Micro Edge (STM32L432) - match STM32CubeProgrammer
-                if (deviceConfig.name === 'Micro Edge') {
-                    // STM32CubeProgrammer settings: SWD, 4000 kHz, Software reset, Normal mode
+
+                // All devices use the same detection sequence
+                // Reduced reset configs - only try the most common ones first
+                const resetConfigs = [
+                    'reset_config none separate',
+                    'reset_config srst_only srst_nogate connect_assert_srst'
+                ];
+
+                for (const resetConfig of resetConfigs) {
                     const args = [
                         '-s', this.scriptsPath,
                         '-f', 'interface/stlink.cfg',
-                        '-c', 'transport select hla_swd',
+                        '-f', `target/${deviceConfig.target}`,
                         '-c', `adapter speed ${speed}`,
-                        '-c', 'source [find target/stm32l4x.cfg]',
+                        '-c', resetConfig,
                         '-c', 'init',
                         '-c', 'targets',
+                        '-c', 'reset halt',
+                        // Read Device ID register to identify the actual chip
+                        // DBGMCU_IDCODE register addresses:
+                        // - STM32F0/L0: 0x40015800
+                        // - STM32L4: 0x40015800  
+                        // - STM32WL: 0x58000400
+                        '-c', 'mdw 0x40015800',  // Try F0/L0/L4 address first
+                        '-c', 'mdw 0x58000400',  // Try WL address
                         '-c', 'shutdown'
                     ];
 
-                    console.log(`[OpenOCD] Trying Micro Edge: ${speed} kHz (SWD mode)`);
+                    console.log(`[OpenOCD] Trying: ${speed} kHz, ${resetConfig}`);
 
                     try {
                         detectionResult = await this.executeOpenOCD(args);
                         result = detectionResult;
                         detectionSucceeded = true;
-                        console.log(`✓ Detection succeeded at ${speed} kHz`);
+                        console.log(`✓ Detection succeeded at ${speed} kHz with ${resetConfig}`);
                         break;
                     } catch (error) {
-                        console.log(`✗ Failed at ${speed} kHz`);
-                        detectionResult = { output: error.message || '' };
+                        console.log(`✗ Failed at ${speed} kHz with ${resetConfig}`);
+                        detectionResult = { output: error.output || error.message || '' };
                         result = detectionResult;
-                    }
-                } else {
-                    // Normal detection for other devices
-                    const resetConfigs = [
-                        'reset_config none separate',
-                        'reset_config none',
-                        'reset_config srst_only',
-                        'reset_config srst_only srst_nogate connect_assert_srst'
-                    ];
-                    
-                    for (const resetConfig of resetConfigs) {
-                        const args = [
-                            '-s', this.scriptsPath,
-                            '-f', 'interface/stlink.cfg',
-                            '-f', `target/${deviceConfig.target}`,
-                            '-c', `adapter speed ${speed}`,
-                            '-c', resetConfig,
-                            '-c', 'init',
-                            '-c', 'targets',
-                            '-c', 'reset halt',
-                            '-c', 'shutdown'
-                        ];
 
-                        console.log(`[OpenOCD] Trying: ${speed} kHz, ${resetConfig}`);
-
-                        try {
-                            detectionResult = await this.executeOpenOCD(args);
-                            result = detectionResult;
-                            detectionSucceeded = true;
-                            console.log(`✓ Detection succeeded at ${speed} kHz with ${resetConfig}`);
+                        // Quick check: if we got DPIDR or processor info from output, we can stop retrying
+                        // Even if OpenOCD exit code is 1, we might have useful info
+                        const quickCheck = detectionResult.output || '';
+                        if (quickCheck.includes('DPIDR') || quickCheck.includes('Cortex-M')) {
+                            console.log(`[DEBUG] Got useful info from failed attempt (DPIDR/Processor), stopping retries`);
+                            detectionSucceeded = true; // Mark as succeeded to stop retries, but we'll still check alternative config
                             break;
-                        } catch (error) {
-                            console.log(`✗ Failed at ${speed} kHz with ${resetConfig}`);
-                            detectionResult = { output: error.message || '' };
-                            result = detectionResult;
                         }
                     }
                 }
@@ -903,17 +435,28 @@ class OpenOCDSTM32Service {
             // Parse MCU info from output to detect actual chip type
             let processorMatch = result.output.match(/Cortex-(M\d+)/i);
             let deviceIdMatch = result.output.match(/device id\s*=\s*0x([0-9a-fA-F]+)/i);
+            // Parse DPIDR (Debug Port ID Register) to distinguish between Droplet and Micro Edge
+            // Format: "Info : SWD DPIDR 0x2ba01477" or "SWD DPIDR 0x6ba02477"
+            let dpidrMatch = result.output.match(/SWD\s+DPIDR\s+0x([0-9a-fA-F]+)/i);
             const flashMatch = result.output.match(/flash size = (\d+)/i) ||
                 result.output.match(/(\d+)\s*kbytes/i);
 
-            // If no processor or device ID found, try with alternative config
-            if (!processorMatch && !deviceIdMatch) {
-                console.log('No device info detected, trying alternative config...');
+            console.log(`[DEBUG] Parsing results:`);
+            console.log(`[DEBUG] processorMatch:`, processorMatch ? processorMatch[0] : 'null');
+            console.log(`[DEBUG] deviceIdMatch:`, deviceIdMatch ? `0x${deviceIdMatch[1]}` : 'null');
+            console.log(`[DEBUG] dpidrMatch:`, dpidrMatch ? `0x${dpidrMatch[1]}` : 'null');
+            console.log(`[DEBUG] flashMatch:`, flashMatch ? flashMatch[1] : 'null');
+
+            // If no processor, device ID, or DPIDR found, try with alternative config
+            // DPIDR is enough to identify device, so if we have it, skip alternative config
+            if (!processorMatch && !deviceIdMatch && !dpidrMatch) {
+                console.log(`[DEBUG] No device info detected in primary config, trying alternative config...`);
+                console.log(`[DEBUG] Current selection: ${this.currentDeviceType}`);
 
                 const altConfig = this.currentDeviceType === 'DROPLET' ?
                     DEVICE_TYPES.ZONE_CONTROLLER : DEVICE_TYPES.DROPLET;
 
-                console.log(`Trying ${altConfig.name} config...`);
+                console.log(`[DEBUG] Trying alternative config: ${altConfig.name} (${altConfig.mcu})`);
 
                 const altArgs = [
                     '-s', this.scriptsPath,
@@ -929,26 +472,45 @@ class OpenOCDSTM32Service {
 
                 try {
                     const altResult = await this.executeOpenOCD(altArgs);
-                    console.log('Alternative config output:', altResult.output);
+                    console.log(`[DEBUG] Alternative config succeeded! Output length: ${altResult.output.length}`);
+                    console.log(`[DEBUG] Alternative config output (first 500 chars):`, altResult.output.substring(0, 500));
 
                     processorMatch = altResult.output.match(/Cortex-(M\d+)/i);
                     deviceIdMatch = altResult.output.match(/device id\s*=\s*0x([0-9a-fA-F]+)/i);
+                    dpidrMatch = altResult.output.match(/SWD\s+DPIDR\s+0x([0-9a-fA-F]+)/i);
+
+                    console.log(`[DEBUG] After alternative config - processorMatch:`, processorMatch ? processorMatch[0] : 'null');
+                    console.log(`[DEBUG] After alternative config - deviceIdMatch:`, deviceIdMatch ? `0x${deviceIdMatch[1]}` : 'null');
+                    console.log(`[DEBUG] After alternative config - dpidrMatch:`, dpidrMatch ? `0x${dpidrMatch[1]}` : 'null');
 
                     if (processorMatch || deviceIdMatch) {
                         result.output = altResult.output;
-                        console.log('Alternative config succeeded!');
+                        console.log(`[DEBUG] ✅ Alternative config found device info!`);
+                    } else {
+                        console.log(`[DEBUG] ⚠️ Alternative config succeeded but no device info found`);
                     }
                 } catch (altError) {
-                    console.log('Alternative config also failed');
+                    console.log(`[DEBUG] Alternative config failed, checking error output...`);
                     const altErrorOutput = altError.message || '';
+                    console.log(`[DEBUG] Alternative error output (first 500 chars):`, altErrorOutput.substring(0, 500));
+
                     processorMatch = altErrorOutput.match(/Cortex-(M\d+)/i);
                     deviceIdMatch = altErrorOutput.match(/device id\s*=\s*0x([0-9a-fA-F]+)/i);
+                    dpidrMatch = altErrorOutput.match(/SWD\s+DPIDR\s+0x([0-9a-fA-F]+)/i);
+
+                    console.log(`[DEBUG] After alternative error - processorMatch:`, processorMatch ? processorMatch[0] : 'null');
+                    console.log(`[DEBUG] After alternative error - deviceIdMatch:`, deviceIdMatch ? `0x${deviceIdMatch[1]}` : 'null');
+                    console.log(`[DEBUG] After alternative error - dpidrMatch:`, dpidrMatch ? `0x${dpidrMatch[1]}` : 'null');
 
                     if (processorMatch || deviceIdMatch) {
                         result.output = altErrorOutput;
-                        console.log('Got info from alternative config error');
+                        console.log(`[DEBUG] ✅ Got device info from alternative config error!`);
+                    } else {
+                        console.log(`[DEBUG] ❌ Alternative config also failed - no device info found`);
                     }
                 }
+            } else {
+                console.log(`[DEBUG] Device info found in primary config - skipping alternative config`);
             }
 
             // Determine actual MCU type from multiple sources
@@ -975,35 +537,120 @@ class OpenOCDSTM32Service {
                 }
             }
 
-            // Method 2: Check Processor Type (backup method)
-            if (!detectedMCUType && processorMatch) {
-                const processor = processorMatch[1];
-                console.log(`Detected Processor: Cortex-${processor}`);
+            // Method 2: Check DPIDR (Debug Port ID Register) to distinguish Droplet vs Micro Edge
+            // DPIDR is more reliable than processor type for M4 devices
+            // STM32WLE5 (Droplet): DPIDR 0x6ba02477 (Cortex-M4 + Sub-GHz radio)
+            // STM32L432 (Micro Edge): DPIDR 0x2ba01477 (Cortex-M4 standard)
+            if (!detectedMCUType && dpidrMatch) {
+                const dpidr = dpidrMatch[1].toLowerCase();
+                console.log(`[DEBUG] Using DPIDR to detect device: 0x${dpidr}`);
 
-                if (processor === 'M0') {
-                    detectedMCUType = 'ZONE_CONTROLLER';
-                    detectedChip = 'STM32F030C8T6';
-                } else if (processor === 'M4') {
-                    // Could be Droplet (STM32WLE5) or Micro Edge (STM32L432)
-                    // Default to current selection if M4
-                    if (this.currentDeviceType === 'MICRO_EDGE') {
-                        detectedMCUType = 'MICRO_EDGE';
-                        detectedChip = 'STM32L432KBU6';
-                    } else {
-                        detectedMCUType = 'DROPLET';
-                        detectedChip = 'STM32WLE5';
-                    }
+                // Check for Droplet (STM32WLE5) - DPIDR 0x6ba02477
+                if (dpidr === '6ba02477') {
+                    detectedMCUType = 'DROPLET';
+                    detectedChip = 'STM32WLE5';
+                    console.log(`[DEBUG] DPIDR 0x6ba02477 detected - setting to DROPLET (STM32WLE5)`);
+                }
+                // Check for Micro Edge (STM32L432) - DPIDR 0x2ba01477
+                else if (dpidr === '2ba01477') {
+                    detectedMCUType = 'MICRO_EDGE';
+                    detectedChip = 'STM32L432KBU6';
+                    console.log(`[DEBUG] DPIDR 0x2ba01477 detected - setting to MICRO_EDGE (STM32L432)`);
+                } else {
+                    console.log(`[DEBUG] ⚠️ Unknown DPIDR value: 0x${dpidr} - cannot determine device type`);
                 }
             }
 
-            console.log(`Detected MCU Type: ${detectedMCUType}`);
-            console.log(`Current Selected Type: ${this.currentDeviceType}`);
+            // Method 3: Check Processor Type (backup method)
+            // Only use processor type if we can definitively identify the device
+            // Don't default to current selection - that can hide mismatches
+            if (!detectedMCUType && processorMatch) {
+                const processor = processorMatch[1];
+                console.log(`[DEBUG] Using processor type to detect device: Cortex-${processor}`);
+
+                if (processor === 'M0') {
+                    // M0 is always Zone Controller (STM32F030)
+                    detectedMCUType = 'ZONE_CONTROLLER';
+                    detectedChip = 'STM32F030C8T6';
+                    console.log(`[DEBUG] M0 processor detected - setting to ZONE_CONTROLLER`);
+                } else if (processor === 'M4') {
+                    // M4 could be Droplet (STM32WLE5) or Micro Edge (STM32L432)
+                    // If we have DPIDR, we should have already identified it above
+                    // If not, we need to use Device ID or fall back to current selection
+                    // But this is less reliable, so we'll be conservative
+                    if (this.currentDeviceType === 'MICRO_EDGE') {
+                        detectedMCUType = 'MICRO_EDGE';
+                        detectedChip = 'STM32L432KBU6';
+                        console.log(`[DEBUG] M4 processor + Micro Edge selected - setting to MICRO_EDGE (fallback)`);
+                    } else if (this.currentDeviceType === 'DROPLET') {
+                        // If user selected Droplet and we see M4, assume it's Droplet
+                        detectedMCUType = 'DROPLET';
+                        detectedChip = 'STM32WLE5';
+                        console.log(`[DEBUG] M4 processor + Droplet selected - setting to DROPLET (fallback)`);
+                    } else {
+                        // User selected Zone Controller but we see M4 - this is definitely a mismatch
+                        // Default to Droplet (most common M4 device)
+                        detectedMCUType = 'DROPLET';
+                        detectedChip = 'STM32WLE5';
+                        console.log(`[DEBUG] M4 processor + Zone Controller selected - MISMATCH! Setting to DROPLET`);
+                    }
+                }
+            } else if (!detectedMCUType) {
+                console.log(`[DEBUG] ⚠️ No detectedMCUType set - no processorMatch, deviceIdMatch, or dpidrMatch found`);
+            }
+
+            console.log(`[DEBUG] ===== Device Type Detection Summary =====`);
+            console.log(`[DEBUG] Detected MCU Type: ${detectedMCUType || 'null/undefined'}`);
+            console.log(`[DEBUG] Current Selected Type: ${this.currentDeviceType}`);
+            console.log(`[DEBUG] processorMatch:`, processorMatch ? processorMatch[0] : 'null');
+            console.log(`[DEBUG] deviceIdMatch:`, deviceIdMatch ? `0x${deviceIdMatch[1]}` : 'null');
+            console.log(`[DEBUG] dpidrMatch:`, dpidrMatch ? `0x${dpidrMatch[1]}` : 'null');
 
             // Check if detected MCU matches selected device type
-            const mismatch = detectedMCUType && detectedMCUType !== this.currentDeviceType;
+            // Mismatch is true if we detected a device type AND it doesn't match the selected type
+            // If detectedMCUType is null/undefined, mismatch should be false (we can't determine mismatch)
+            const mismatch = detectedMCUType ? (detectedMCUType !== this.currentDeviceType) : false;
 
-            console.log(`Mismatch: ${mismatch}`);
-            console.log(`=== Detection Complete ===`);
+            console.log(`[DEBUG] Mismatch calculation: detectedMCUType=${detectedMCUType}, currentDeviceType=${this.currentDeviceType}`);
+            console.log(`[DEBUG] Mismatch result: ${mismatch} (${detectedMCUType ? `${detectedMCUType} !== ${this.currentDeviceType}` : 'no detected type, so false'})`);
+            console.log(`[DEBUG] ===========================================`);
+
+            // Check flash protection status if device was detected
+            let protectionStatus = null;
+            if (processorMatch || deviceIdMatch) {
+                try {
+                    console.log(`[Detect] Checking flash protection status...`);
+                    protectionStatus = await this.checkFlashProtection();
+                    console.log(`[Detect] Protection status:`, JSON.stringify(protectionStatus, null, 2));
+                } catch (protectionError) {
+                    console.log(`[Detect] Failed to check protection: ${protectionError.message}`);
+                    // Continue without protection info
+                }
+            }
+
+            console.log(`[DEBUG] === Detection Complete - Final Checks ===`);
+            console.log(`[DEBUG] processorMatch exists: ${!!processorMatch}`);
+            console.log(`[DEBUG] deviceIdMatch exists: ${!!deviceIdMatch}`);
+            console.log(`[DEBUG] mismatch: ${mismatch}`);
+            console.log(`[DEBUG] detectedMCUType: ${detectedMCUType || 'null'}`);
+
+            // Only return success if we actually detected a device
+            // If no processor or device ID found, throw error instead of returning success: false
+            if (!processorMatch && !deviceIdMatch) {
+                console.log(`[DEBUG] ❌ No processor or device ID found - throwing error`);
+                throw new Error(`ST-Link not detected: No processor or device ID found in OpenOCD output`);
+            }
+
+            // Return success with mismatch flag - let frontend handle the mismatch
+            // This matches the reference implementation behavior
+            console.log(`[DEBUG] ✅ Device detected - returning result with mismatch flag`);
+            if (mismatch && detectedMCUType) {
+                const detectedDevice = DEVICE_TYPES[detectedMCUType];
+                const selectedDevice = DEVICE_TYPES[this.currentDeviceType];
+                console.log(`[DEBUG] ⚠️ MISMATCH DETECTED - returning with mismatch: true`);
+                console.log(`[DEBUG] Detected device: ${detectedDevice.name} (${detectedDevice.mcu})`);
+                console.log(`[DEBUG] Selected device: ${selectedDevice.name} (${selectedDevice.mcu})`);
+            }
 
             return {
                 success: true,
@@ -1022,8 +669,11 @@ class OpenOCDSTM32Service {
             };
         } catch (error) {
             // Even if OpenOCD fails, try to parse if ST-Link was detected
-            console.log('=== OpenOCD Error, attempting to parse ===');
-            console.log(error.message);
+            console.log(`[DEBUG] ========================================`);
+            console.log(`[DEBUG] ❌ OpenOCD detection failed - entering catch block`);
+            console.log(`[DEBUG] Error message: ${error.message}`);
+            console.log(`[DEBUG] Attempting to parse error output for device info...`);
+            console.log(`[DEBUG] ========================================`);
 
             const errorOutput = error.message || '';
 
@@ -1031,11 +681,19 @@ class OpenOCDSTM32Service {
             detectedMCUType = null;
             detectedChip = null;
 
-            // Check Device ID in error output
+            // Parse processor and device ID from error output (declare at catch block scope)
             const deviceIdMatch = errorOutput.match(/device id\s*=\s*0x([0-9a-fA-F]+)/i);
+            const processorMatch = errorOutput.match(/Cortex-(M\d+)/i);
+
+            console.log(`[DEBUG] ===== Error Block - Device Type Detection =====`);
+            console.log(`[DEBUG] Error output length: ${errorOutput.length}`);
+            console.log(`[DEBUG] processorMatch from error:`, processorMatch ? processorMatch[0] : 'null');
+            console.log(`[DEBUG] deviceIdMatch from error:`, deviceIdMatch ? `0x${deviceIdMatch[1]}` : 'null');
+
+            // Check Device ID in error output (already declared above)
             if (deviceIdMatch) {
                 const deviceId = deviceIdMatch[1].toLowerCase();
-                console.log(`Device ID from error: 0x${deviceId}`);
+                console.log(`[DEBUG] Device ID from error: 0x${deviceId}`);
 
                 if (deviceId.includes('497') || deviceId.includes('10036497')) {
                     detectedMCUType = 'DROPLET';
@@ -1050,44 +708,72 @@ class OpenOCDSTM32Service {
             }
 
             // Check Processor type in error output
-            if (!detectedMCUType) {
-                const processorMatch = errorOutput.match(/Cortex-(M\d+)/i);
-                if (processorMatch) {
-                    const processor = processorMatch[1];
-                    console.log(`Processor from error: Cortex-${processor}`);
+            if (!detectedMCUType && processorMatch) {
+                const processor = processorMatch[1];
+                console.log(`[DEBUG] Processor from error: Cortex-${processor}`);
 
-                    if (processor === 'M0') {
-                        detectedMCUType = 'ZONE_CONTROLLER';
-                        detectedChip = 'STM32F030C8T6';
-                    } else if (processor === 'M4') {
-                        // Could be Droplet or Micro Edge
-                        if (this.currentDeviceType === 'MICRO_EDGE') {
-                            detectedMCUType = 'MICRO_EDGE';
-                            detectedChip = 'STM32L432KBU6';
-                        } else {
-                            detectedMCUType = 'DROPLET';
-                            detectedChip = 'STM32WLE5';
-                        }
+                if (processor === 'M0') {
+                    // M0 is always Zone Controller (STM32F030)
+                    detectedMCUType = 'ZONE_CONTROLLER';
+                    detectedChip = 'STM32F030C8T6';
+                    console.log(`[DEBUG] M0 processor detected - setting to ZONE_CONTROLLER`);
+                } else if (processor === 'M4') {
+                    // M4 could be Droplet (STM32WLE5) or Micro Edge (STM32L432)
+                    // If user selected Zone Controller but we see M4, this is definitely a mismatch
+                    // Default to Droplet (most common M4 device) to trigger mismatch detection
+                    if (this.currentDeviceType === 'MICRO_EDGE') {
+                        detectedMCUType = 'MICRO_EDGE';
+                        detectedChip = 'STM32L432KBU6';
+                        console.log(`[DEBUG] M4 processor + Micro Edge selected - setting to MICRO_EDGE`);
+                    } else if (this.currentDeviceType === 'DROPLET') {
+                        detectedMCUType = 'DROPLET';
+                        detectedChip = 'STM32WLE5';
+                        console.log(`[DEBUG] M4 processor + Droplet selected - setting to DROPLET`);
+                    } else {
+                        // User selected Zone Controller but we see M4 - this is a mismatch
+                        // Set to Droplet to trigger mismatch detection
+                        detectedMCUType = 'DROPLET';
+                        detectedChip = 'STM32WLE5';
+                        console.log(`[DEBUG] M4 processor + Zone Controller selected - MISMATCH! Setting to DROPLET`);
                     }
                 }
             }
 
-            console.log(`Detected from error: ${detectedMCUType}`);
-            console.log(`Selected: ${this.currentDeviceType}`);
+            console.log(`[DEBUG] Detected from error: ${detectedMCUType || 'null/undefined'}`);
+            console.log(`[DEBUG] Selected: ${this.currentDeviceType}`);
 
-            const mismatch = detectedMCUType && detectedMCUType !== this.currentDeviceType;
-            console.log(`Mismatch: ${mismatch}`);
+            // Check if detected MCU matches selected device type
+            // Mismatch is true if we detected a device type AND it doesn't match the selected type
+            const mismatch = detectedMCUType ? (detectedMCUType !== this.currentDeviceType) : false;
+            console.log(`[DEBUG] Mismatch calculation: detectedMCUType=${detectedMCUType}, currentDeviceType=${this.currentDeviceType}`);
+            console.log(`[DEBUG] Mismatch result: ${mismatch} (${detectedMCUType ? `${detectedMCUType} !== ${this.currentDeviceType}` : 'no detected type, so false'})`);
+            console.log(`[DEBUG] ================================================`);
 
-            if (errorOutput.includes('stm32') || errorOutput.includes('ST-Link') || errorOutput.includes('STLINK')) {
+            // Only return detected: true if we actually found processor or device ID in error output
+            // Just having "stm32" or "ST-Link" in error message is not enough - need actual device info
+            // Match reference implementation: return success with mismatch flag, let frontend handle it
+            if (processorMatch || deviceIdMatch) {
+                console.log(`[DEBUG] Found processor or device ID in error output`);
+                console.log(`[DEBUG] Returning result with mismatch flag - frontend will handle mismatch`);
+
+                if (mismatch && detectedMCUType) {
+                    const detectedDevice = DEVICE_TYPES[detectedMCUType];
+                    const selectedDevice = DEVICE_TYPES[this.currentDeviceType];
+                    console.log(`[DEBUG] ⚠️ MISMATCH detected - returning with mismatch: true`);
+                    console.log(`[DEBUG] Detected device: ${detectedDevice.name} (${detectedDevice.mcu})`);
+                    console.log(`[DEBUG] Selected device: ${selectedDevice.name} (${selectedDevice.mcu})`);
+                }
+
                 // Try to check protection status
                 let protectionStatus = null;
                 try {
                     protectionStatus = await this.checkFlashProtection();
-                    console.log(`Protection status:`, protectionStatus);
+                    console.log(`[DEBUG] Protection status:`, protectionStatus);
                 } catch (protectionError) {
-                    console.log(`Failed to check protection: ${protectionError.message}`);
+                    console.log(`[DEBUG] Failed to check protection: ${protectionError.message}`);
                 }
 
+                console.log(`[DEBUG] ✅ Returning success from error block with mismatch flag`);
                 return {
                     success: true,
                     detected: true,
@@ -1104,6 +790,7 @@ class OpenOCDSTM32Service {
                     rawOutput: errorOutput
                 };
             }
+            console.log(`[DEBUG] ❌ No processor or device ID in error output - throwing final error`);
             throw new Error(`ST-Link not detected: ${error.message}`);
         }
     }
@@ -1538,6 +1225,10 @@ class OpenOCDSTM32Service {
             'reset_config srst_only'
         ];
 
+        // For STM32L4 (Micro Edge), OPTR reading often fails, so skip Method 1 and go straight to Method 2 (flash probe)
+        // Flash probe is more reliable and faster for STM32L4
+        const skipMethod1 = deviceConfig.mcu.includes('L4');
+
         let lastError = null;
         let protectionDetected = false;
         let rdpLevel = 0;
@@ -1545,15 +1236,182 @@ class OpenOCDSTM32Service {
         // Method 1: Try to read option bytes register (FLASH_OPTR) to check RDP level
         // For STM32WLx, option bytes are at 0x1FFF7800
         // For STM32F0x, option bytes are at 0x1FFFF800
-        const optrAddress = deviceConfig.mcu.includes('WL') ? '0x1FFF7800' : '0x1FFFF800';
+        // For STM32L4x, option bytes are at 0x1FFF7800 but reading often fails, so we skip to Method 2
+        if (!skipMethod1) {
+            const optrAddress = deviceConfig.mcu.includes('WL') ? '0x1FFF7800' : '0x1FFFF800';
+            console.log(`[Protection Check] Method 1: Trying to read OPTR at ${optrAddress}`);
 
-        console.log(`[Protection Check] Method 1: Trying to read OPTR at ${optrAddress}`);
+            for (const speed of speeds) {
+                if (rdpLevel >= 0 && (protectionDetected || rdpLevel === 0)) break; // Stop if we already got a result
+                for (const resetConfig of resetConfigs) {
+                    if (rdpLevel >= 0 && (protectionDetected || rdpLevel === 0)) break; // Stop if we already got a result
+                    try {
+                        // Try to read option bytes register
+                        const args = [
+                            '-s', this.scriptsPath,
+                            '-f', 'interface/stlink.cfg',
+                            '-f', `target/${deviceConfig.target}`,
+                            '-c', `adapter speed ${speed}`,
+                            '-c', resetConfig,
+                            '-c', 'init',
+                            '-c', 'reset halt',
+                            '-c', `mdw ${optrAddress} 1`, // Read option bytes register
+                            '-c', 'shutdown'
+                        ];
+
+                        console.log(`[Protection Check] Method 1: Attempting to read OPTR...`);
+                        const result = await this.executeOpenOCD(args);
+                        const output = result.output;
+
+                        console.log(`[Protection Check] Method 1: OPTR read output (first 300 chars):`, output.substring(0, 300));
+
+                        // Parse RDP level from option bytes
+                        // RDP bits are in the lower byte of OPTR register
+                        // According to STM32 documentation:
+                        // - 0xAA = Level 0 (no protection)
+                        // - 0xBB or any value other than 0xAA and 0xCC = Level 1 (read protection, can unlock)
+                        // - 0xCC = Level 2 (chip protection, permanently protected, CANNOT unlock)
+                        const optrMatch = output.match(new RegExp(`${optrAddress}:\\s*([0-9a-fA-F]+)`, 'i'));
+                        if (optrMatch) {
+                            const optrValue = parseInt(optrMatch[1], 16);
+                            const rdpByte = optrValue & 0xFF;
+
+                            if (rdpByte === 0xAA) {
+                                rdpLevel = 0;
+                                protectionDetected = false;
+                            } else if (rdpByte === 0xCC) {
+                                // 0xCC = Level 2 (permanently protected, CANNOT unlock)
+                                rdpLevel = 2;
+                                protectionDetected = true;
+                            } else {
+                                // 0xBB or any other value (except 0xAA and 0xCC) = Level 1 (read protection, can unlock)
+                                rdpLevel = 1;
+                                protectionDetected = true;
+                            }
+
+                            console.log(`[Protection Check] Method 1: OPTR: 0x${optrValue.toString(16)}, RDP byte: 0x${rdpByte.toString(16)}, Level: ${rdpLevel}`);
+
+                            // If OPTR shows Level 0, verify with flash probe to check for mismatch
+                            // If OPTR = 0xAA but flash probe still shows RDP level 1, power cycle is required
+                            if (rdpLevel === 0) {
+                                console.log(`[Protection Check] Method 1: OPTR shows Level 0 (0xAA) - device is unprotected`);
+                                console.log(`[Protection Check] Method 1: Verifying with flash probe to check for mismatch...`);
+
+                                // Verify with flash probe to check if flash controller has reloaded OPTR
+                                try {
+                                    const probeArgs = [
+                                        '-s', this.scriptsPath,
+                                        '-f', 'interface/stlink.cfg',
+                                        '-f', `target/${deviceConfig.target}`,
+                                        '-c', `adapter speed ${speed}`,
+                                        '-c', resetConfig,
+                                        '-c', 'init',
+                                        '-c', 'reset halt',
+                                        '-c', 'flash probe 0',
+                                        '-c', 'shutdown'
+                                    ];
+                                    const probeResult = await this.executeOpenOCD(probeArgs);
+                                    const probeOutput = probeResult.output;
+
+                                    // Check if flash probe shows RDP level
+                                    const probeRdpMatch = probeOutput.match(/RDP level (\d+)/i);
+                                    if (probeRdpMatch) {
+                                        const probeRdpLevel = parseInt(probeRdpMatch[1]);
+                                        console.log(`[Protection Check] Method 1: Flash probe shows RDP Level ${probeRdpLevel}`);
+
+                                        // If flash probe shows RDP Level > 0, there's a mismatch - power cycle required
+                                        if (probeRdpLevel > 0) {
+                                            console.log(`[Protection Check] Method 1: ⚠️ MISMATCH: OPTR=0xAA but flash probe shows RDP Level ${probeRdpLevel}`);
+                                            console.log(`[Protection Check] Method 1: Power cycle required to reload OPTR in flash controller`);
+                                            return {
+                                                success: true,
+                                                isProtected: true, // Still protected until power cycle
+                                                rdpLevel: probeRdpLevel,
+                                                canUnlock: false,
+                                                rawOutput: output + '\n--- Flash Probe Verification ---\n' + probeOutput,
+                                                note: 'OPTR shows 0xAA but flash probe indicates protection. Power cycle required.'
+                                            };
+                                        }
+                                    }
+                                    // Flash probe confirms unprotected
+                                    console.log(`[Protection Check] Method 1: ✅ Both OPTR and flash probe confirm RDP Level 0 - fully unlocked!`);
+                                } catch (probeError) {
+                                    console.log(`[Protection Check] Method 1: Flash probe verification failed: ${probeError.message}`);
+                                    // If probe fails, trust OPTR
+                                }
+
+                                // OPTR = 0xAA and flash probe confirms (or probe failed)
+                                return {
+                                    success: true,
+                                    isProtected: false,
+                                    rdpLevel: 0,
+                                    canUnlock: false,
+                                    rawOutput: output
+                                };
+                            }
+
+                            return {
+                                success: true,
+                                isProtected: protectionDetected,
+                                rdpLevel: rdpLevel,
+                                canUnlock: rdpLevel === 1,
+                                rawOutput: output
+                            };
+                        } else {
+                            console.log(`[Protection Check] Method 1: Could not parse OPTR value, continuing to Method 2`);
+                        }
+                    } catch (error) {
+                        const errorMsg = error.message || '';
+                        console.log(`[Protection Check] Method 1: Failed to read OPTR: ${errorMsg}`);
+
+                        // Check if voltage is too low - if so, stop retrying immediately
+                        if (errorMsg.includes('target voltage') && errorMsg.includes('too low')) {
+                            // Extract voltage value if present from error message or try to get from output
+                            let voltageMatch = errorMsg.match(/Target voltage:\s*([\d.]+)/i);
+                            if (!voltageMatch && error.output) {
+                                voltageMatch = error.output.match(/Target voltage:\s*([\d.]+)/i);
+                            }
+
+                            if (voltageMatch) {
+                                const voltage = parseFloat(voltageMatch[1]);
+                                if (voltage < 1.0) {
+                                    console.log(`[Protection Check] ⚠️ Target voltage too low (${voltage}V) - device may be disconnected or powered off`);
+                                    console.log(`[Protection Check] Stopping protection check - device needs power`);
+                                    throw new Error(`Target voltage too low (${voltage}V). Please check device power connection. Device may be disconnected or powered off.`);
+                                }
+                            } else {
+                                // If we can't parse voltage but error says "too low", still throw
+                                console.log(`[Protection Check] ⚠️ Target voltage too low - device may be disconnected or powered off`);
+                                throw new Error(`Target voltage too low. Please check device power connection. Device may be disconnected or powered off.`);
+                            }
+                        }
+
+                        lastError = error;
+                        // Continue to next method only if not voltage-related error
+                    }
+                }
+            }
+        } // End of if (!skipMethod1)
+
+        if (!skipMethod1) {
+            console.log(`[Protection Check] Method 1: All attempts failed, trying Method 2...`);
+        } else {
+            console.log(`[Protection Check] Skipping Method 1 (OPTR read) for ${deviceConfig.mcu}, using Method 2 (flash probe) directly...`);
+        }
+
+        // Method 2: Try to probe flash and read flash info to detect protection (most reliable)
+        // This method works for all devices and is faster than OPTR reading
+        // For STM32F0 (Zone Controller), flash probe may not show RDP level, so we'll try fewer configs
+        const isF0 = deviceConfig.mcu.includes('F0');
+        const method2ResetConfigs = isF0 ?
+            ['reset_config none separate'] : // F0 only needs one config
+            resetConfigs; // Other devices try all configs
 
         for (const speed of speeds) {
-            for (const resetConfig of resetConfigs) {
+            for (const resetConfig of method2ResetConfigs) {
                 try {
-                    // Try to read option bytes register
-                    const args = [
+                    // First, try to probe flash (this is required before flash list)
+                    const probeArgs = [
                         '-s', this.scriptsPath,
                         '-f', 'interface/stlink.cfg',
                         '-f', `target/${deviceConfig.target}`,
@@ -1561,126 +1419,64 @@ class OpenOCDSTM32Service {
                         '-c', resetConfig,
                         '-c', 'init',
                         '-c', 'reset halt',
-                        '-c', `mdw ${optrAddress} 1`, // Read option bytes register
+                        '-c', 'flash probe 0', // Probe flash first
                         '-c', 'shutdown'
                     ];
 
-                    console.log(`[Protection Check] Method 1: Attempting to read OPTR...`);
-                    const result = await this.executeOpenOCD(args);
-                    const output = result.output;
+                    console.log(`[Protection Check] Method 2: Attempting flash probe at ${speed} kHz with ${resetConfig}...`);
+                    const probeResult = await this.executeOpenOCD(probeArgs);
+                    const probeOutput = probeResult.output;
 
-                    console.log(`[Protection Check] Method 1: OPTR read output (first 300 chars):`, output.substring(0, 300));
+                    console.log(`[Protection Check] Method 2: Flash probe output (first 500 chars):`, probeOutput.substring(0, 500));
 
-                    // Parse RDP level from option bytes
-                    // RDP bits are in the lower byte of OPTR register
-                    // According to STM32 documentation:
-                    // - 0xAA = Level 0 (no protection)
-                    // - 0xBB or any value other than 0xAA and 0xCC = Level 1 (read protection, can unlock)
-                    // - 0xCC = Level 2 (chip protection, permanently protected, CANNOT unlock)
-                    const optrMatch = output.match(new RegExp(`${optrAddress}:\\s*([0-9a-fA-F]+)`, 'i'));
-                    if (optrMatch) {
-                        const optrValue = parseInt(optrMatch[1], 16);
-                        const rdpByte = optrValue & 0xFF;
+                    // Check for RDP level in probe output (most reliable)
+                    const probeRdpMatch = probeOutput.match(/RDP level (\d+)/i);
+                    if (probeRdpMatch) {
+                        const probeRdpLevel = parseInt(probeRdpMatch[1]);
+                        console.log(`[Protection Check] Method 2: ✅ Flash probe shows RDP Level ${probeRdpLevel}`);
 
-                        if (rdpByte === 0xAA) {
-                            rdpLevel = 0;
-                            protectionDetected = false;
-                        } else if (rdpByte === 0xCC) {
-                            // 0xCC = Level 2 (permanently protected, CANNOT unlock)
-                            rdpLevel = 2;
-                            protectionDetected = true;
+                        if (probeRdpLevel > 0) {
+                            return {
+                                success: true,
+                                isProtected: true,
+                                rdpLevel: probeRdpLevel,
+                                canUnlock: probeRdpLevel === 1,
+                                rawOutput: probeOutput
+                            };
                         } else {
-                            // 0xBB or any other value (except 0xAA and 0xCC) = Level 1 (read protection, can unlock)
-                            rdpLevel = 1;
-                            protectionDetected = true;
-                        }
-
-                        console.log(`[Protection Check] Method 1: OPTR: 0x${optrValue.toString(16)}, RDP byte: 0x${rdpByte.toString(16)}, Level: ${rdpLevel}`);
-
-                        // If OPTR shows Level 0, verify with flash probe to check for mismatch
-                        // If OPTR = 0xAA but flash probe still shows RDP level 1, power cycle is required
-                        if (rdpLevel === 0) {
-                            console.log(`[Protection Check] Method 1: OPTR shows Level 0 (0xAA) - device is unprotected`);
-                            console.log(`[Protection Check] Method 1: Verifying with flash probe to check for mismatch...`);
-
-                            // Verify with flash probe to check if flash controller has reloaded OPTR
-                            try {
-                                const probeArgs = [
-                                    '-s', this.scriptsPath,
-                                    '-f', 'interface/stlink.cfg',
-                                    '-f', `target/${deviceConfig.target}`,
-                                    '-c', `adapter speed ${speed}`,
-                                    '-c', resetConfig,
-                                    '-c', 'init',
-                                    '-c', 'reset halt',
-                                    '-c', 'flash probe 0',
-                                    '-c', 'shutdown'
-                                ];
-                                const probeResult = await this.executeOpenOCD(probeArgs);
-                                const probeOutput = probeResult.output;
-
-                                // Check if flash probe shows RDP level
-                                const probeRdpMatch = probeOutput.match(/RDP level (\d+)/i);
-                                if (probeRdpMatch) {
-                                    const probeRdpLevel = parseInt(probeRdpMatch[1]);
-                                    console.log(`[Protection Check] Method 1: Flash probe shows RDP Level ${probeRdpLevel}`);
-
-                                    // If flash probe shows RDP Level > 0, there's a mismatch - power cycle required
-                                    if (probeRdpLevel > 0) {
-                                        console.log(`[Protection Check] Method 1: ⚠️ MISMATCH: OPTR=0xAA but flash probe shows RDP Level ${probeRdpLevel}`);
-                                        console.log(`[Protection Check] Method 1: Power cycle required to reload OPTR in flash controller`);
-                                        return {
-                                            success: true,
-                                            isProtected: true, // Still protected until power cycle
-                                            rdpLevel: probeRdpLevel,
-                                            canUnlock: false,
-                                            rawOutput: output + '\n--- Flash Probe Verification ---\n' + probeOutput,
-                                            note: 'OPTR shows 0xAA but flash probe indicates protection. Power cycle required.'
-                                        };
-                                    }
-                                }
-                                // Flash probe confirms unprotected
-                                console.log(`[Protection Check] Method 1: ✅ Both OPTR and flash probe confirm RDP Level 0 - fully unlocked!`);
-                            } catch (probeError) {
-                                console.log(`[Protection Check] Method 1: Flash probe verification failed: ${probeError.message}`);
-                                // If probe fails, trust OPTR
-                            }
-
-                            // OPTR = 0xAA and flash probe confirms (or probe failed)
+                            // RDP Level 0 confirmed by flash probe
+                            console.log(`[Protection Check] Method 2: ✅ Flash probe confirms RDP Level 0 - device is unprotected`);
                             return {
                                 success: true,
                                 isProtected: false,
                                 rdpLevel: 0,
                                 canUnlock: false,
-                                rawOutput: output
+                                rawOutput: probeOutput
                             };
                         }
-
-                        return {
-                            success: true,
-                            isProtected: protectionDetected,
-                            rdpLevel: rdpLevel,
-                            canUnlock: rdpLevel === 1,
-                            rawOutput: output
-                        };
                     } else {
-                        console.log(`[Protection Check] Method 1: Could not parse OPTR value, continuing to Method 2`);
+                        // For F0 devices, if no RDP level found and flash probe succeeded, assume unprotected and stop
+                        if (isF0 && probeOutput.includes('flash') && !probeOutput.includes('Error')) {
+                            console.log(`[Protection Check] Method 2: F0 device - no RDP level in output but flash probe succeeded, assuming unprotected`);
+                            return {
+                                success: true,
+                                isProtected: false,
+                                rdpLevel: 0,
+                                canUnlock: false,
+                                rawOutput: probeOutput
+                            };
+                        }
+                        console.log(`[Protection Check] Method 2: ⚠️ No RDP level found in flash probe output, trying next config...`);
                     }
-                } catch (error) {
-                    console.log(`[Protection Check] Method 1: Failed to read OPTR: ${error.message}`);
-                    lastError = error;
-                    // Continue to next method
-                }
-            }
-        }
 
-        console.log(`[Protection Check] Method 1: All attempts failed, trying Method 2...`);
+                    // If probe didn't show RDP level, try flash list (only for non-F0 devices)
+                    // F0 devices should have already returned above if flash probe succeeded
+                    if (isF0) {
+                        console.log(`[Protection Check] Method 2: F0 device - skipping flash list, continuing to next config if needed`);
+                        continue; // Skip flash list for F0, try next config if available
+                    }
 
-        // Method 2: Try to read flash info or probe flash to detect protection
-        for (const speed of speeds) {
-            for (const resetConfig of resetConfigs) {
-                try {
-                    const args = [
+                    const listArgs = [
                         '-s', this.scriptsPath,
                         '-f', 'interface/stlink.cfg',
                         '-f', `target/${deviceConfig.target}`,
@@ -1688,34 +1484,49 @@ class OpenOCDSTM32Service {
                         '-c', resetConfig,
                         '-c', 'init',
                         '-c', 'reset halt',
-                        '-c', 'flash list', // Try to list flash info
+                        '-c', 'flash probe 0', // Probe first
+                        '-c', 'flash list', // Then list flash info
                         '-c', 'shutdown'
                     ];
 
-                    const result = await this.executeOpenOCD(args);
+                    const result = await this.executeOpenOCD(listArgs);
                     const output = result.output;
 
-                    // Check if flash size is 0 - this strongly indicates protection
-                    // Match patterns: "size       0x0", "size 0x0", "size 0", etc.
-                    // Also check for all zeros: size=0, bus_width=0, chip_width=0
+                    // Check if flash size is 0 - but only if we also see other protection indicators
+                    // Flash size = 0 alone might be a false positive (flash not probed correctly)
                     const hasSizeZero = /size\s+0x0/i.test(output) || /size\s+0\s/i.test(output);
                     const hasAllZeros = /size\s+0x0[\s\S]*bus_width\s+0[\s\S]*chip_width\s+0/i.test(output);
 
-                    console.log(`[Protection Check] Checking flash size in output...`);
-                    console.log(`[Protection Check] Has size=0:`, hasSizeZero);
-                    console.log(`[Protection Check] Has all zeros:`, hasAllZeros);
+                    console.log(`[Protection Check] Method 2: Checking flash size in output...`);
+                    console.log(`[Protection Check] Method 2: Has size=0:`, hasSizeZero);
+                    console.log(`[Protection Check] Method 2: Has all zeros:`, hasAllZeros);
 
-                    if (hasSizeZero || hasAllZeros) {
-                        console.log(`[Protection Check] Flash size is 0 - DEVICE IS PROTECTED (RDP Level 1)`);
-                        // Flash size = 0 is a clear indicator of protection
-                        // No need to probe, return protected immediately
+                    // Check for explicit protection messages in output
+                    const hasProtectionMessage = output.includes('device protected') ||
+                        output.includes('stm32x device protected') ||
+                        output.includes('write protected') ||
+                        output.includes('RDP level 1') ||
+                        output.includes('RDP level 2');
+
+                    // Only report protected if we have size=0 AND protection message, or explicit RDP level
+                    if (hasProtectionMessage) {
+                        const rdpMatch = output.match(/RDP level (\d+)/i);
+                        const detectedRdpLevel = rdpMatch ? parseInt(rdpMatch[1]) : 1;
+                        console.log(`[Protection Check] Method 2: Protection message found - RDP Level ${detectedRdpLevel}`);
                         return {
                             success: true,
                             isProtected: true,
-                            rdpLevel: 1, // Assume Level 1 (can be unlocked)
-                            canUnlock: true,
+                            rdpLevel: detectedRdpLevel,
+                            canUnlock: detectedRdpLevel === 1,
                             rawOutput: output
                         };
+                    } else if (hasSizeZero || hasAllZeros) {
+                        // Size = 0 but no explicit protection message - might be false positive
+                        // Log warning but don't assume protected
+                        console.log(`[Protection Check] Method 2: ⚠️ Flash size is 0 but no explicit protection message found`);
+                        console.log(`[Protection Check] Method 2: This might be a false positive - device may not be protected`);
+                        console.log(`[Protection Check] Method 2: Output sample:`, output.substring(0, 500));
+                        // Continue to next attempt instead of returning protected
                     }
 
                     // Check for protection indicators in output
@@ -1743,6 +1554,28 @@ class OpenOCDSTM32Service {
                     }
                 } catch (error) {
                     const errorMsg = error.message || '';
+
+                    // Check if voltage is too low - if so, stop retrying immediately
+                    if (errorMsg.includes('target voltage') && errorMsg.includes('too low')) {
+                        // Extract voltage value if present from error message or try to get from output
+                        let voltageMatch = errorMsg.match(/Target voltage:\s*([\d.]+)/i);
+                        if (!voltageMatch && error.output) {
+                            voltageMatch = error.output.match(/Target voltage:\s*([\d.]+)/i);
+                        }
+
+                        if (voltageMatch) {
+                            const voltage = parseFloat(voltageMatch[1]);
+                            if (voltage < 1.0) {
+                                console.log(`[Protection Check] ⚠️ Target voltage too low (${voltage}V) - device may be disconnected or powered off`);
+                                console.log(`[Protection Check] Stopping protection check - device needs power`);
+                                throw new Error(`Target voltage too low (${voltage}V). Please check device power connection. Device may be disconnected or powered off.`);
+                            }
+                        } else {
+                            // If we can't parse voltage but error says "too low", still throw
+                            console.log(`[Protection Check] ⚠️ Target voltage too low - device may be disconnected or powered off`);
+                            throw new Error(`Target voltage too low. Please check device power connection. Device may be disconnected or powered off.`);
+                        }
+                    }
 
                     // Check error message for protection indicators
                     const isProtected = errorMsg.includes('device protected') ||
@@ -1805,10 +1638,7 @@ class OpenOCDSTM32Service {
         this.isFlashing = true;
 
         try {
-            // If device is Micro Edge, prefer CLI implementation (vendor tool is more reliable)
-            if (this.currentDeviceType === 'MICRO_EDGE') {
-                return await this.flashFirmware_via_CubeCLI(firmwarePath, progressCallback);
-            }
+            // All devices now use OpenOCD for flashing (including Micro Edge)
             // Check firmware file size
             const firmwareStats = fs.statSync(firmwarePath);
             const firmwareSizeBytes = firmwareStats.size;
@@ -1947,7 +1777,7 @@ class OpenOCDSTM32Service {
                         console.log(`[Flash] Attempt ${attemptCount}/${totalAttempts}: ${speed} kHz, ${strategy.name}`);
 
                         let args;
-                    
+
                         if (strategy.initSequence === null) {
                             // Simple program command (one-shot)
                             args = [
@@ -2062,12 +1892,6 @@ class OpenOCDSTM32Service {
 
             // All attempts failed
             this.isFlashing = false;
-            // Last resort: try CLI if available for Micro Edge
-            if (this.currentDeviceType === 'MICRO_EDGE') {
-                try {
-                    return await this.flashFirmware_via_CubeCLI(firmwarePath, progressCallback);
-                } catch (cliErr) {}
-            }
             throw lastError || new Error('Flash failed with all reset configurations');
         } catch (error) {
             this.isFlashing = false;
@@ -2080,15 +1904,7 @@ class OpenOCDSTM32Service {
      * @returns {Object} UID values (uid0, uid1, uid2)
      */
     async readUID() {
-        // Prefer CLI for Micro Edge
-        if (this.currentDeviceType === 'MICRO_EDGE') {
-            try {
-                return await this.readUID_via_CubeCLI();
-            } catch (e) {
-                // fallback to OpenOCD if CLI fails
-            }
-        }
-
+        // All devices now use OpenOCD for reading UID (including Micro Edge)
         if (!this.checkOpenOCD()) {
             throw new Error('OpenOCD binary not found');
         }
@@ -2258,8 +2074,9 @@ class OpenOCDSTM32Service {
 
             await this.flashFirmware(firmwarePath, progressCallback);
 
-            // For Zone Controller, just return success without reading UID
-            if (!deviceConfig.supportsLoRaID) {
+            // For Zone Controller and Micro Edge, just return success without reading UID
+            // Only Droplet needs UID reading for LoRa ID generation
+            if (this.currentDeviceType === 'ZONE_CONTROLLER' || this.currentDeviceType === 'MICRO_EDGE') {
                 if (progressCallback) {
                     progressCallback({ stage: 'complete', message: 'Flash completed successfully' });
                 }
@@ -2334,14 +2151,14 @@ class OpenOCDSTM32Service {
             const timeout = setTimeout(() => {
                 if (!isResolved) {
                     // console.log('[OpenOCD] Timeout - force killing process');
-                    try { proc.kill(); } catch (e) {}
+                    try { proc.kill(); } catch (e) { }
                     isResolved = true;
                     const combinedOutput = errorOutput + output;
                     // Resolve with timeout flag so caller can inspect output
                     try {
                         const logPath = path.join(__dirname, '..', 'openocd-diagnostics.log');
                         fs.appendFileSync(logPath, `\n=== OpenOCD TIMEOUT (${new Date().toISOString()}) ===\n` + combinedOutput + '\n');
-                    } catch (e) {}
+                    } catch (e) { }
                     resolve({ success: false, timedOut: true, output: combinedOutput, code: null });
                 }
             }, timeoutMs);
@@ -2367,7 +2184,7 @@ class OpenOCDSTM32Service {
                     setTimeout(() => {
                         if (!isResolved) {
                             clearTimeout(timeout);
-                            try { proc.kill(); } catch (e) {}
+                            try { proc.kill(); } catch (e) { }
                             isResolved = true;
                             const combinedOutput = errorOutput + output;
                             resolve({ success: true, output: combinedOutput, code: 0 });
@@ -2386,7 +2203,7 @@ class OpenOCDSTM32Service {
                     setTimeout(() => {
                         if (!isResolved) {
                             clearTimeout(timeout);
-                            try { proc.kill(); } catch (e) {}
+                            try { proc.kill(); } catch (e) { }
                             isResolved = true;
                             const combinedOutput = errorOutput + output;
                             reject(new Error(`OpenOCD flash failed\n${combinedOutput}`));
@@ -2399,7 +2216,7 @@ class OpenOCDSTM32Service {
                     setTimeout(() => {
                         if (!isResolved) {
                             clearTimeout(timeout);
-                            try { proc.kill(); } catch (e) {}
+                            try { proc.kill(); } catch (e) { }
                             isResolved = true;
                             const combinedOutput = errorOutput + output;
 
@@ -2433,7 +2250,7 @@ class OpenOCDSTM32Service {
                     try {
                         const logPath = path.join(__dirname, '..', 'openocd-diagnostics.log');
                         fs.appendFileSync(logPath, `\n=== OpenOCD EXIT code=${code} (${new Date().toISOString()}) ===\n` + combinedOutput + '\n');
-                    } catch (e) {}
+                    } catch (e) { }
 
                     if (code === 0) {
                         resolve({ success: true, output: combinedOutput, code });
@@ -2524,8 +2341,7 @@ class OpenOCDSTM32Service {
             openocdPath: this.openocdPath,
             scriptsPath: this.scriptsPath,
             platform: this.platform,
-            version: this.VERSION,
-            cubeCliAvailable: !!this._findCubeCLI()
+            version: this.VERSION
         };
     }
 
