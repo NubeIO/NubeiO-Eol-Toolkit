@@ -12,7 +12,7 @@ node_modules/
 
 # Go
 *.exe~
-*.dll
+# *.dll
 *.so
 *.dylib
 *.test
