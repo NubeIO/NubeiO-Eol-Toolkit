@@ -12,7 +12,7 @@ node_modules/
 
 # Go
 *.exe~
-*.dll
+# *.dll
 *.so
 *.dylib
 *.test
@@ -41,7 +41,6 @@ electron/
 *.exe
 # Allow printer executable and dependencies
 !embedded/printer-scripts/print_product_label.exe
-!embedded/printer-scripts/libusb-1.0.dll
 !embedded/printer-scripts/dist/print_product_label.exe
 
 # PyInstaller build artifacts
