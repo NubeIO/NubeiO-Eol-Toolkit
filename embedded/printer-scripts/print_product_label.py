@@ -62,12 +62,14 @@ def connect_printer():
     # Configure printer defaults
     printer.quality = brotherlabel.Quality.high_resolution
     printer.tape = brotherlabel.Tape.TZe12mm
-    printer.margin = 3
+    # printer.margin = 3
     printer.auto_cut = True
     printer.half_cut = False
+    printer.no_chain = True
+    printer.special_tape = False
 
-    if hasattr(printer, 'end_feed'):
-        printer.end_feed = 64
+    # if hasattr(printer, 'end_feed'):
+    #     printer.end_feed = 64
 
     return printer
 
@@ -117,6 +119,20 @@ def check_printer_connection(max_attempts: int = 3, retry_delay: float = 0.6):
     if last_error is not None:
         print(f"CHECK_FAILED: {last_error}")
     return False
+
+# def create_dump_label():
+#     """Create a small label with just 'Q' character to trigger cut."""
+#     print("Creating dump label...")
+#     img = Image.new('L', (100, 100), 255)  # Small white canvas
+#     draw = ImageDraw.Draw(img)
+    
+#     try:
+#         font = ImageFont.truetype("arial.ttf", 60)
+#     except:
+#         font = ImageFont.load_default()
+    
+#     draw.text((35, 20), "Q", font=font, fill=0)  # Black "Q"
+#     return img
 
 def create_product_label(barcode_data, mn_text, sw_text, ba_text, product_code, date_text):
     """
@@ -238,6 +254,7 @@ def print_label(barcode_data, mn_text, fw_text, ba_text, uid_text, date_text):
     
     # Create label with matching format (product_code = uid_text for display)
     label_img = create_product_label(barcode_data, mn_text, fw_text, ba_text, uid_text, date_text)
+    # dump_img = create_dump_label()
     
     # Save preview
     preview_path = os.path.join(CURRENT_DIR, 'preview_label.png')
@@ -256,10 +273,15 @@ def print_label(barcode_data, mn_text, fw_text, ba_text, uid_text, date_text):
         except Exception as e:
             print(f"Status warning: {e}")
         
-        # Print
-        print("Sending print job...")
+        # Print main label
+        print("Sending main label...")
         result = printer.print([label_img])
-        print("Print result OK")
+        print("Main label printed OK")
+        
+        # Print dump label to trigger cut (reuse same printer connection)
+        # print("Sending dump label to trigger cut...")
+        # result = printer.print([dump_img])
+        # print("Dump label printed OK")
         
         print("\nPrint succeeded!")
         
