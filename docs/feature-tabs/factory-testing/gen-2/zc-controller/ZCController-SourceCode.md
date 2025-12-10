@@ -90,6 +90,210 @@ graph TB
 
 ---
 
+## Detailed Code Execution Flow
+
+### Complete Execution Trace: Start Test Button Click (ZC-Controller)
+
+This diagram shows the **complete call stack** with exact file locations and line numbers:
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant UI as FactoryTestingPage.js<br/>Line 300-450
+    participant Module as FactoryTestingModule.js<br/>Line 50-100
+    participant IPC as Electron IPC
+    participant Main as main.js<br/>Line 1390-1444
+    participant Service as factory-testing.js<br/>ZC-Controller tests
+    participant Serial as SerialPort
+    participant Device as ZC-Controller Hardware
+    
+    User->>UI: Click "Start Test"
+    UI->>UI: handleRunTests()<br/>Line 300
+    UI->>Module: runTests({ device: 'ZC-Controller' })<br/>Line 330
+    Module->>IPC: invoke('factory-testing:run-tests')<br/>Line 65
+    
+    Note over IPC: Renderer → Main
+    
+    IPC->>Main: Handler triggered<br/>Line 1420
+    Main->>Service: connect(portPath)<br/>Line 1425
+    Service->>Serial: new SerialPort(...)<br/>Line 175
+    Serial-->>Service: 'open' event<br/>Line 189
+    
+    Main->>Service: runFactoryTests('v2', 'ZC-Controller', ...)<br/>Line 1430
+    Note over Service: ZC-Controller branch
+    
+    Service->>Service: Initialize resultsZCC
+    
+    Note over Service,Device: TC-001: WiFi Test
+    Service->>Service: awaitTestJSONResult('test_wifi')
+    Service->>Serial: write('test_wifi\r\n')
+    Serial->>Device: UART TX
+    Device-->>Serial: {"result":"done","networks":8}
+    Service->>Service: _normalizeWifiResult()
+    Service->>Service: resultsZCC.tests.wifi = {...}
+    
+    Note over Service,Device: TC-002: RS485 Test
+    Service->>Service: awaitTestJSONResult('test_rs485')
+    Serial->>Device: UART TX
+    Device-->>Serial: RS485 loopback result
+    Service->>Service: resultsZCC.tests.rs485 = {...}
+    
+    Note over Service,Device: TC-003: Motor Test
+    Service->>Service: awaitTestJSONResult('test_motor')
+    Serial->>Device: UART TX
+    Note over Device: Move motor 0% → 100% → 0%
+    Device-->>Serial: {"position":"OK","steps":200}
+    Service->>Service: resultsZCC.tests.motor = {...}
+    
+    Note over Service,Device: TC-004: Feedback Test
+    Service->>Service: awaitTestJSONResult('test_feedback')
+    Serial->>Device: UART TX
+    Device-->>Serial: ADC readings (0-3.3V)
+    Service->>Service: resultsZCC.tests.feedback = {...}
+    
+    Note over Service,Device: TC-005: Relay Tests
+    Service->>Service: awaitTestJSONResult('test_relay1')
+    Serial->>Device: UART TX (relay ON/OFF)
+    Device-->>Serial: Relay 1 state confirmed
+    Service->>Service: resultsZCC.tests.relay1 = {...}
+    
+    Service->>Service: awaitTestJSONResult('test_relay2')
+    Serial->>Device: UART TX (relay ON/OFF)
+    Device-->>Serial: Relay 2 state confirmed
+    Service->>Service: resultsZCC.tests.relay2 = {...}
+    
+    Service->>Service: Calculate overall pass/fail
+    Service->>Service: return resultsZCC
+    
+    Service-->>Main: { success: true, data: results }
+    Main->>Service: disconnect()<br/>Line 1435
+    Main-->>IPC: return results<br/>Line 1440
+    
+    Note over IPC: Main → Renderer
+    
+    IPC-->>Module: Promise resolved
+    Module-->>UI: results
+    UI->>UI: setState({ results })<br/>Line 380
+    UI->>UI: renderResults()<br/>Line 650
+    UI->>User: Display test results
+```
+
+### Stack Trace: ZC-Controller Test Execution
+
+```
+User clicks "Start Test"
+  ↓
+[UI] FactoryTestingPage.js:300 handleRunTests()
+  ↓
+[UI] FactoryTestingModule.js:65 ipcRenderer.invoke()
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  IPC BOUNDARY
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ↓
+[Main] main.js:1420 ipcMain.handle()
+  ↓
+[Service] factory-testing.js:159 connect()
+  ↓
+[Service] factory-testing.js:1032 runFactoryTests()
+  ↓
+[Service] if (device === 'ZC-Controller')
+  ↓
+[Service] Initialize resultsZCC
+  ↓
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test Sequence: WiFi → RS485 → Motor → Feedback → Relay1 → Relay2
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ↓
+[Service] awaitTestJSONResult('test_wifi')
+  ↓
+[Service] _normalizeWifiResult()
+  ↓
+[Service] awaitTestJSONResult('test_rs485')
+  ↓
+[Service] awaitTestJSONResult('test_motor')
+  ↓
+[Hardware] Motor control sequence:
+  │  - Set position to 0% (fully closed)
+  │  - Move to 100% (fully open)
+  │  - Return to 0%
+  │  - Verify position feedback
+  ↓
+[Service] awaitTestJSONResult('test_feedback')
+  ↓
+[Hardware] Read ADC for position feedback
+  ↓
+[Service] awaitTestJSONResult('test_relay1')
+  ↓
+[Hardware] Toggle relay 1 (ON → OFF)
+  ↓
+[Service] awaitTestJSONResult('test_relay2')
+  ↓
+[Hardware] Toggle relay 2 (ON → OFF)
+  ↓
+[Service] Calculate pass/fail
+  ↓
+[Service] return resultsZCC
+```
+
+### Motor Test - Detailed Flow
+
+```
+[Service] awaitTestJSONResult('test_motor')
+  ↓
+[Service] port.write('test_motor\r\n')
+  ↓
+[Hardware - ZC-Controller] Receive command
+  ↓
+[Hardware - Firmware] Initialize motor driver
+  ↓
+[Hardware - Firmware] Set motor speed (default: medium)
+  ↓
+[Hardware - Firmware] Position: 0% (fully closed)
+  │  - Set target position: 0%
+  │  - Enable motor
+  │  - Wait for completion
+  │  - Read position feedback from ADC
+  │  - Verify: position ≈ 0% (within tolerance)
+  ↓
+[Hardware - Firmware] Position: 100% (fully open)
+  │  - Set target position: 100%
+  │  - Enable motor
+  │  - Step motor forward (e.g., 200 steps)
+  │  - Wait for completion (~2-3 seconds)
+  │  - Read position feedback from ADC
+  │  - Verify: position ≈ 100% (within tolerance)
+  ↓
+[Hardware - Firmware] Position: 0% (return home)
+  │  - Set target position: 0%
+  │  - Enable motor
+  │  - Step motor backward (200 steps)
+  │  - Wait for completion
+  │  - Read position feedback
+  │  - Verify: position ≈ 0%
+  ↓
+[Hardware - Firmware] Disable motor
+  ↓
+[Hardware - Firmware] Build response JSON:
+  │  {
+  │    "result": "done",
+  │    "status": "OK",
+  │    "position": "OK",
+  │    "steps": 200,
+  │    "feedback": [0.05, 3.25, 0.08],
+  │    "duration_ms": 4500
+  │  }
+  ↓
+[Hardware - Firmware] Send via UART
+  ↓
+[Service] JSON.parse(response)
+  ↓
+[Service] Check: parsed.status === 'OK'
+  ↓
+[Service] Store in resultsZCC.tests.motor
+```
+
+---
+
 ## 📊 Class Diagrams
 
 ### Class Diagram: EOL Toolkit (Host PC)

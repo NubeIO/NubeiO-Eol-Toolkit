@@ -316,6 +316,136 @@ if (device === 'ZC-LCD') {
 
 ---
 
+## Detailed Code Execution Flow
+
+### Complete Execution Trace: Start Test Button Click (ZC-LCD)
+
+This diagram shows the **complete call stack** with exact file locations and line numbers:
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant UI as FactoryTestingPage.js<br/>Line 300-450
+    participant Module as FactoryTestingModule.js<br/>Line 50-100
+    participant IPC as Electron IPC
+    participant Main as main.js<br/>Line 1390-1444
+    participant Service as factory-testing.js<br/>Line 1037-1175
+    participant Serial as SerialPort
+    participant Device as ZC-LCD Hardware
+    
+    User->>UI: Click "Start Test"
+    UI->>UI: handleRunTests()<br/>Line 300
+    UI->>Module: runTests({ device: 'ZC-LCD' })<br/>Line 330
+    Module->>IPC: invoke('factory-testing:run-tests')<br/>Line 65
+    
+    Note over IPC: Renderer → Main
+    
+    IPC->>Main: Handler triggered<br/>Line 1420
+    Main->>Service: connect(portPath)<br/>Line 1425
+    Service->>Serial: new SerialPort(...)<br/>Line 175
+    Serial-->>Service: 'open' event<br/>Line 189
+    
+    Main->>Service: runFactoryTests('v2', 'ZC-LCD', ...)<br/>Line 1430
+    Note over Service: Line 1037: ZC-LCD branch
+    
+    Service->>Service: Initialize resultsZCLCD<br/>Line 1043-1050
+    
+    Note over Service,Device: TC-001: WiFi Test
+    Service->>Service: awaitTestJSONResult('test_wifi')<br/>Line 1055
+    Service->>Serial: write('test_wifi\\r\\n')<br/>Line 75
+    Serial->>Device: UART TX
+    Device-->>Serial: {"result":"done","networks":5}
+    Serial-->>Service: JSON parsed<br/>Line 55
+    Service->>Service: _normalizeWifiResult()<br/>Line 90
+    Service->>Service: resultsZCLCD.tests.wifi = {...}<br/>Line 1065
+    
+    Note over Service,Device: TC-002: RS485 Test
+    Service->>Service: awaitTestJSONResult('test_rs485')<br/>Line 1075
+    Serial->>Device: UART TX
+    Device-->>Serial: RS485 loopback result
+    Service->>Service: _normalizeRs485Result()<br/>Line 135
+    Service->>Service: resultsZCLCD.tests.rs485 = {...}<br/>Line 1085
+    
+    Note over Service,Device: TC-003: I2C Sensor Test
+    Service->>Service: awaitTestJSONResult('test_i2c')<br/>Line 1095
+    Serial->>Device: UART TX
+    Device-->>Serial: Temperature & humidity
+    Service->>Service: _normalizeI2cResult()<br/>Line 110
+    Service->>Service: resultsZCLCD.tests.i2c = {...}<br/>Line 1105
+    
+    Note over Service,Device: TC-004: LCD Test
+    Service->>Service: awaitTestJSONResult('test_lcd')<br/>Line 1115
+    Serial->>Device: UART TX
+    Device-->>Serial: LCD status
+    Service->>Service: resultsZCLCD.tests.lcd = {...}<br/>Line 1125
+    
+    Service->>Service: Calculate overall pass/fail<br/>Line 1140
+    Service->>Service: return resultsZCLCD<br/>Line 1170
+    
+    Service-->>Main: { success: true, data: results }
+    Main->>Service: disconnect()<br/>Line 1435
+    Main-->>IPC: return results<br/>Line 1440
+    
+    Note over IPC: Main → Renderer
+    
+    IPC-->>Module: Promise resolved
+    Module-->>UI: results
+    UI->>UI: setState({ results })<br/>Line 380
+    UI->>UI: renderResults()<br/>Line 650
+    UI->>User: Display test results
+```
+
+### Stack Trace: ZC-LCD Test Execution
+
+```
+User clicks "Start Test"
+  ↓
+[UI] FactoryTestingPage.js:300 handleRunTests()
+  ↓
+[UI] FactoryTestingModule.js:65 ipcRenderer.invoke()
+  ═══════════════════════════════════════════════════════════
+  IPC BOUNDARY
+  ═══════════════════════════════════════════════════════════
+  ↓
+[Main] main.js:1420 ipcMain.handle()
+  ↓
+[Service] factory-testing.js:159 connect()
+  ↓
+[Service] factory-testing.js:1032 runFactoryTests()
+  ↓
+[Service] factory-testing.js:1037 if (device === 'ZC-LCD')
+  ↓
+[Service] factory-testing.js:1043-1050 Initialize resultsZCLCD
+  ↓
+═══════════════════════════════════════════════════════════
+Test Sequence: WiFi → RS485 → I2C → LCD
+═══════════════════════════════════════════════════════════
+  ↓
+[Service] factory-testing.js:1055 awaitTestJSONResult('test_wifi')
+  ↓
+[Service] factory-testing.js:30 awaitTestJSONResult()
+  ↓
+[Service] factory-testing.js:75 port.write()
+  ↓
+[Service] factory-testing.js:90 _normalizeWifiResult()
+  ↓
+[Service] factory-testing.js:1075 awaitTestJSONResult('test_rs485')
+  ↓
+[Service] factory-testing.js:135 _normalizeRs485Result()
+  ↓
+[Service] factory-testing.js:1095 awaitTestJSONResult('test_i2c')
+  ↓
+[Service] factory-testing.js:110 _normalizeI2cResult()
+  ↓
+[Service] factory-testing.js:1115 awaitTestJSONResult('test_lcd')
+  ↓
+[Service] factory-testing.js:1140 Calculate pass/fail
+  ↓
+[Service] factory-testing.js:1170 return resultsZCLCD
+```
+
+---
+
 ## Method Documentation
 
 ### Main Test Method: `testDevice(device)`

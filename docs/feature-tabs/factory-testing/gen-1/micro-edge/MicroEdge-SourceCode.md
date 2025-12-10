@@ -336,6 +336,179 @@ class FactoryTestingService {
 
 ---
 
+## Detailed Code Execution Flow
+
+### Complete Execution Trace: Start Test Button Click (Micro Edge)
+
+This diagram shows the **complete call stack** from user click to test completion with exact file locations and line numbers:
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant UI as FactoryTestingPage.js<br/>Line 300-450
+    participant Module as FactoryTestingModule.js<br/>Line 50-100
+    participant IPC as Electron IPC Bridge
+    participant Main as main.js<br/>Line 1390-1444
+    participant Service as factory-testing.js<br/>Line 13-2310
+    participant Serial as SerialPort Library
+    participant Device as Micro Edge Hardware
+    
+    User->>UI: Click "Start Test" button
+    Note over UI: renderer/pages/FactoryTestingPage.js
+    
+    UI->>UI: handleRunTests()<br/>Line 300
+    Note over UI: Validate form data<br/>Check device = 'Micro Edge'
+    
+    UI->>UI: setState({ testing: true })<br/>Line 315
+    
+    UI->>Module: runTests(params)<br/>Line 330
+    Note over Module: renderer/modules/FactoryTestingModule.js
+    
+    Module->>IPC: ipcRenderer.invoke(<br/>'factory-testing:run-tests',<br/>{ device: 'Micro Edge', params })<br/>Line 65
+    
+    Note over IPC: Cross-process boundary<br/>Renderer → Main
+    
+    IPC->>Main: IPC Handler Triggered<br/>Line 1420
+    Note over Main: main.js<br/>ipcMain.handle() callback
+    
+    Main->>Main: Extract device, params<br/>Line 1422-1423
+    
+    Main->>Service: connect(portPath, baudRate)<br/>Line 1425
+    Note over Service: services/factory-testing.js<br/>Line 159-220
+    
+    Service->>Service: Check isConnecting flag<br/>Line 162
+    Service->>Service: this.port = new SerialPort(...)<br/>Line 175
+    Service->>Serial: Open serial port
+    Serial-->>Service: 'open' event<br/>Line 189
+    Service->>Service: this.isConnected = true<br/>Line 191
+    Service-->>Main: resolve({ success: true })<br/>Line 192
+    
+    Main->>Service: runFactoryTests(<br/>version, device, deviceInfo, preTesting)<br/>Line 1430
+    Note over Service: Line 1032-1650<br/>Main test router
+    
+    Service->>Service: Validate parameters<br/>Line 1050-1070
+    
+    Service->>Service: if (device === 'Micro Edge')<br/>Line 1494
+    Note over Service: Micro Edge branch selected
+    
+    Note over Service,Device: Micro Edge Test Sequence
+    
+    Service->>Service: awaitTestJSONResult(<br/>'test_lora')<br/>Line 1510
+    Note over Service: Line 30-88<br/>JSON test result handler
+    
+    Service->>Serial: port.write('test_lora\\r\\n')<br/>Line 75
+    Serial->>Device: UART TX
+    Device-->>Serial: UART RX: {"result":"done","status":"OK"}
+    Serial-->>Service: parser 'data' event<br/>Line 50
+    Service->>Service: JSON.parse(response)<br/>Line 55
+    Service->>Service: Check result === 'done'<br/>Line 60
+    Service-->>Service: resolve({ success: true })
+    
+    Service->>Service: Store LoRa result<br/>Line 1515
+    
+    Service->>Service: awaitTestJSONResult('test_wifi')<br/>Line 1520
+    Serial->>Device: UART TX
+    Device-->>Serial: WiFi scan results
+    Service->>Service: Parse networks & RSSI<br/>Line 1525
+    
+    Service->>Service: awaitTestJSONResult('test_power')<br/>Line 1530
+    Serial->>Device: UART TX
+    Device-->>Serial: VCC & Battery voltages
+    Service->>Service: Store power readings<br/>Line 1535
+    
+    Service->>Service: Calculate overall pass/fail<br/>Line 1540-1545
+    Service->>Service: Return results object<br/>Line 1550
+    
+    Service-->>Main: { success: true, data: results }<br/>Line 1430
+    
+    Main->>Service: disconnect()<br/>Line 1435
+    Note over Service: Line 378-410
+    Service->>Serial: port.close()
+    Serial-->>Service: 'close' callback
+    Service->>Service: this.isConnected = false<br/>Line 393
+    Service-->>Main: Connection closed
+    
+    Main-->>IPC: Return test results<br/>Line 1440
+    
+    Note over IPC: Cross-process boundary<br/>Main → Renderer
+    
+    IPC-->>Module: Promise resolved<br/>Line 65
+    Module-->>UI: Return results<br/>Line 75
+    
+    UI->>UI: setState({ results, testing: false })<br/>Line 380
+    UI->>UI: renderResults()<br/>Line 650-850
+    Note over UI: Display test results table
+    
+    UI->>User: Show results on screen
+```
+
+### Stack Trace: Micro Edge Test Execution
+
+```
+User clicks "Start Test"
+  ↓
+[UI] FactoryTestingPage.js:300 handleRunTests()
+  ↓
+[UI] FactoryTestingModule.js:50 runTests()
+  ↓
+[UI] FactoryTestingModule.js:65 ipcRenderer.invoke('factory-testing:run-tests')
+  ═══════════════════════════════════════════════════════════
+  IPC BOUNDARY (Renderer → Main)
+  ═══════════════════════════════════════════════════════════
+  ↓
+[Main] main.js:1420 ipcMain.handle() callback
+  ↓
+[Main] main.js:1425 factoryTestingService.connect(portPath, baudRate)
+  ↓
+[Service] factory-testing.js:159 connect()
+  ↓
+[Service] factory-testing.js:175 this.port = new SerialPort(...)
+  ↓
+[Service] factory-testing.js:191 this.isConnected = true
+  ↓
+[Main] main.js:1430 factoryTestingService.runFactoryTests(...)
+  ↓
+[Service] factory-testing.js:1032 runFactoryTests()
+  ↓
+[Service] factory-testing.js:1494 if (device === 'Micro Edge')
+  ↓
+═══════════════════════════════════════════════════════════
+Test Sequence: LoRa → WiFi → Power
+═══════════════════════════════════════════════════════════
+  ↓
+[Service] factory-testing.js:1510 awaitTestJSONResult('test_lora')
+  ↓
+[Service] factory-testing.js:30 awaitTestJSONResult()
+  ↓
+[Service] factory-testing.js:75 port.write('test_lora\\r\\n')
+  ↓
+[Hardware] Micro Edge executes LoRa test
+  ↓
+[Service] factory-testing.js:50 parser 'data' event
+  ↓
+[Service] factory-testing.js:55 JSON.parse()
+  ↓
+[Service] factory-testing.js:1515 Store LoRa result
+  ↓
+[Service] factory-testing.js:1520 awaitTestJSONResult('test_wifi')
+  ↓
+[Service] factory-testing.js:1525 Parse WiFi results
+  ↓
+[Service] factory-testing.js:1530 awaitTestJSONResult('test_power')
+  ↓
+[Service] factory-testing.js:1535 Store power readings
+  ↓
+[Service] factory-testing.js:1540 Calculate pass/fail
+  ↓
+[Service] factory-testing.js:1550 return results
+  ↓
+[Main] main.js:1435 disconnect()
+  ↓
+[Main] main.js:1440 return results to renderer
+```
+
+---
+
 ## Method Reference
 
 ### Public Methods

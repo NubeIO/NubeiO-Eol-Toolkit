@@ -327,9 +327,537 @@ flowchart TD
 
 ---
 
-## Method Reference
+## Detailed Code Execution Flow
 
-### ACB-M Helper Methods
+### Complete Execution Trace: Start Test Button Click
+
+This diagram shows the **complete call stack** from user click to test completion with exact file locations and line numbers:
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant UI as FactoryTestingPage.js<br/>Line 300-450
+    participant Module as FactoryTestingModule.js<br/>Line 50-100
+    participant IPC as Electron IPC Bridge
+    participant Main as main.js<br/>Line 1390-1444
+    participant Service as factory-testing.js<br/>Line 13-2310
+    participant Serial as SerialPort Library
+    participant Device as ACB-M Hardware
+    
+    User->>UI: Click "Start Test" button
+    Note over UI: renderer/pages/FactoryTestingPage.js
+    
+    UI->>UI: handleRunTests()<br/>Line 300
+    Note over UI: Validate form data<br/>Check device selection
+    
+    UI->>UI: setState({ testing: true })<br/>Line 315
+    
+    UI->>Module: runTests(params)<br/>Line 330
+    Note over Module: renderer/modules/FactoryTestingModule.js
+    
+    Module->>IPC: ipcRenderer.invoke(<br/>'factory-testing:run-tests',<br/>{ device, params })<br/>Line 65
+    
+    Note over IPC: Cross-process boundary<br/>Renderer → Main
+    
+    IPC->>Main: IPC Handler Triggered<br/>Line 1420
+    Note over Main: main.js<br/>ipcMain.handle() callback
+    
+    Main->>Main: Extract device, params<br/>Line 1422-1423
+    
+    Main->>Service: connect(portPath, baudRate)<br/>Line 1425
+    Note over Service: services/factory-testing.js<br/>Line 159-220
+    
+    Service->>Service: Check isConnecting flag<br/>Line 162
+    Service->>Service: this.port = new SerialPort(...)<br/>Line 175
+    Service->>Serial: Open serial port
+    Serial-->>Service: 'open' event<br/>Line 189
+    Service->>Service: this.isConnected = true<br/>Line 191
+    Service-->>Main: resolve({ success: true })<br/>Line 192
+    
+    Main->>Service: runFactoryTests(<br/>version, device, deviceInfo, preTesting)<br/>Line 1430
+    Note over Service: Line 1032-1650<br/>Main test router
+    
+    Service->>Service: Validate parameters<br/>Line 1050-1070
+    
+    Service->>Service: if (device === 'ACB-M')<br/>Line 1176
+    Note over Service: ACB-M branch selected
+    
+    Service->>Service: Initialize resultsACB<br/>Line 1177-1182
+    
+    Service->>Service: Define helper functions<br/>ensureString(), parseRtcTimestamp(),<br/>withinRtcWindow(), setEval()<br/>Line 1184-1208
+    
+    Note over Service,Device: TC-001: UART Test
+    
+    Service->>Service: updateProgress('UART test...')<br/>Line 1214
+    Service->>Service: sendATCommand(<br/>'AT+TEST=uart',<br/>'+VALUE_UART:',<br/>30000)<br/>Line 1215
+    Note over Service: Line 414-540<br/>sendATCommand method
+    
+    Service->>Serial: port.write('AT+TEST=uart\r\n')<br/>Line 480
+    Serial->>Device: UART TX
+    Device-->>Serial: UART RX: +VALUE_UART: EE
+    Serial-->>Service: parser 'data' event<br/>Line 450
+    Service->>Service: Parse response<br/>Extract 'EE'<br/>Line 1216
+    Service->>Service: Check: value === 'EE'<br/>Line 1217
+    Service->>Service: resultsACB.tests.uart = {...}<br/>Line 1218-1223
+    Service->>Service: setEval('pass_uart', true)<br/>Line 1224
+    
+    Note over Service,Device: TC-002: RTC Test
+    
+    Service->>Service: updateProgress('RTC test...')<br/>Line 1233
+    Service->>Service: sendATCommand('AT+TEST=rtc')<br/>Line 1234
+    Serial->>Device: UART TX
+    Device-->>Serial: UART RX: +RTC: 2001-01-01 12:30:45
+    Serial-->>Service: Response received
+    Service->>Service: parseRtcTimestamp(timeStr)<br/>Line 1236
+    Note over Service: Line 1188-1197<br/>Helper function
+    Service->>Service: withinRtcWindow(parsed.utc)<br/>Line 1237
+    Note over Service: Line 1199-1204<br/>Helper function
+    Service->>Service: resultsACB.tests.rtc = {...}<br/>Line 1238-1243
+    Service->>Service: setEval('pass_rtc', true)<br/>Line 1244
+    
+    Note over Service,Device: TC-003: WiFi Test
+    
+    Service->>Service: updateProgress('WiFi test...')<br/>Line 1254
+    Service->>Service: sendATCommand('AT+TEST=wifi')<br/>Line 1255
+    Serial->>Device: UART TX
+    Device-->>Serial: UART RX: +WIFI: 8,1
+    Serial-->>Service: Response received
+    Service->>Service: Parse: networkCount, connected<br/>Line 1257-1259
+    Service->>Service: Check: networkCount > 1 && connected === 1<br/>Line 1260
+    Service->>Service: resultsACB.tests.wifi = {...}<br/>Line 1261-1268
+    Service->>Service: setEval('pass_wifi', true)<br/>Line 1269
+    
+    Note over Service,Device: TC-004: Ethernet Test
+    
+    Service->>Service: updateProgress('Ethernet test...')<br/>Line 1281
+    Service->>Service: sendATCommand('AT+TEST=eth')<br/>Line 1282
+    Serial->>Device: UART TX
+    Device-->>Serial: UART RX: +ETH: MAC=xx,IP=xx
+    Serial-->>Service: Response received
+    Service->>Service: Parse format (dual format support)<br/>Line 1285-1307
+    Service->>Service: Validate MAC & IP<br/>Line 1309-1310
+    Service->>Service: resultsACB.tests.eth = {...}<br/>Line 1312-1321
+    Service->>Service: setEval('pass_eth', true)<br/>Line 1322
+    
+    Note over Service,Device: TC-005: RS485-2 Test
+    
+    Service->>Service: updateProgress('RS485-2 test...')<br/>Line 1338
+    Service->>Service: sendATCommand('AT+TEST=rs4852')<br/>Line 1339
+    Serial->>Device: UART TX
+    Device-->>Serial: UART RX: +RS485: 30,0
+    Serial-->>Service: Response received
+    Service->>Service: Parse: count, status<br/>Line 1341-1343
+    Service->>Service: Check: status === 0<br/>Line 1344
+    Service->>Service: resultsACB.tests.rs4852 = {...}<br/>Line 1345-1352
+    Service->>Service: setEval('pass_rs4852', true)<br/>Line 1353
+    
+    Note over Service: Overall Evaluation
+    
+    Service->>Service: Calculate allPass<br/>Object.values(_eval).every(Boolean)<br/>Line 1364
+    Service->>Service: Return resultsACB<br/>Line 1368
+    
+    Service-->>Main: { success: true, data: resultsACB }<br/>Line 1430
+    
+    Main->>Service: disconnect()<br/>Line 1435
+    Note over Service: Line 378-410
+    Service->>Serial: port.close()
+    Serial-->>Service: 'close' callback
+    Service->>Service: this.isConnected = false<br/>Line 393
+    Service-->>Main: Connection closed
+    
+    Main-->>IPC: Return test results<br/>Line 1440
+    
+    Note over IPC: Cross-process boundary<br/>Main → Renderer
+    
+    IPC-->>Module: Promise resolved<br/>Line 65
+    Module-->>UI: Return results<br/>Line 75
+    
+    UI->>UI: setState({ results, testing: false })<br/>Line 380
+    UI->>UI: renderResults()<br/>Line 650-850
+    Note over UI: Display test results table<br/>Show pass/fail for each test
+    
+    UI->>User: Show results on screen
+```
+
+### UI Button Click Handler - Detailed Breakdown
+
+**File:** `renderer/pages/FactoryTestingPage.js`
+
+```mermaid
+sequenceDiagram
+    participant DOM as Browser DOM
+    participant React as React Event System
+    participant Handler as handleRunTests()<br/>Line 300-450
+    participant State as Component State
+    participant Module as FactoryTestingModule
+    
+    DOM->>React: User clicks<br/><button onclick={handleRunTests}>
+    React->>Handler: Call handler function
+    
+    Handler->>Handler: Line 302:<br/>const { device, generation } = this.state
+    Handler->>Handler: Line 305-310:<br/>Validate device selected
+    
+    alt Device Not Selected
+        Handler->>State: setState({ error: 'Select device' })<br/>Line 312
+        Handler-->>React: return early
+    end
+    
+    Handler->>Handler: Line 320-330:<br/>Gather form data:<br/>testerName, hwVersion,<br/>batchId, workOrder
+    
+    Handler->>State: setState({<br/>testing: true,<br/>progress: 0,<br/>currentTest: 'Connecting...'<br/>})<br/>Line 340-344
+    
+    Handler->>Module: FactoryTestingModule.runTests({<br/>device: 'ACB-M',<br/>generation: 'Gen-2',<br/>portPath: 'COM3',<br/>preTesting: {...}<br/>})<br/>Line 350
+    
+    Note over Module: IPC call to main process
+    
+    Module-->>Handler: Promise pending...<br/>Line 350
+    
+    Note over Handler: Await result
+    
+    Module-->>Handler: results = { success: true, data: {...} }<br/>Line 350
+    
+    Handler->>Handler: Line 360:<br/>if (results.success)
+    
+    Handler->>State: setState({<br/>testing: false,<br/>results: results.data,<br/>testComplete: true<br/>})<br/>Line 365-369
+    
+    Handler->>React: Trigger re-render
+    React->>DOM: Update UI with results
+```
+
+### IPC Communication Flow - Deep Dive
+
+```mermaid
+sequenceDiagram
+    participant Renderer as Renderer Process<br/>(Chromium)
+    participant IPC_R as ipcRenderer<br/>(Electron API)
+    participant IPC_M as ipcMain<br/>(Electron API)
+    participant Main as Main Process<br/>(Node.js)
+    
+    Note over Renderer: renderer/modules/FactoryTestingModule.js
+    Renderer->>IPC_R: ipcRenderer.invoke(<br/>'factory-testing:run-tests',<br/>{ device: 'ACB-M', params: {...} })<br/>Line 65
+    
+    Note over IPC_R: Serialize data to JSON<br/>Prepare IPC message
+    
+    IPC_R->>IPC_M: Send IPC message<br/>Channel: 'factory-testing:run-tests'
+    
+    Note over IPC_M: Deserialize JSON<br/>Route to registered handler
+    
+    Note over Main: main.js Line 1420-1444
+    IPC_M->>Main: Invoke registered handler<br/>ipcMain.handle() callback
+    
+    Main->>Main: Line 1422:<br/>const { device, params } = event.data
+    
+    Main->>Main: Line 1425-1440:<br/>Execute business logic<br/>(connect, runFactoryTests, disconnect)
+    
+    Main-->>IPC_M: return { success: true, data: {...} }<br/>Line 1440
+    
+    Note over IPC_M: Serialize result to JSON<br/>Prepare response message
+    
+    IPC_M-->>IPC_R: Send response<br/>Resolve promise
+    
+    Note over IPC_R: Deserialize JSON<br/>Resolve promise
+    
+    IPC_R-->>Renderer: Promise resolved<br/>results = { success: true, data: {...} }
+```
+
+---
+
+## Method Call Stack Traces
+
+### Stack Trace #1: Connect to Device
+
+```
+User clicks "Start Test"
+  ↓
+[UI] FactoryTestingPage.js:300 handleRunTests()
+  ↓
+[UI] FactoryTestingModule.js:50 runTests()
+  ↓
+[UI] FactoryTestingModule.js:65 ipcRenderer.invoke('factory-testing:run-tests')
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  IPC BOUNDARY (Renderer → Main)
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ↓
+[Main] main.js:1420 ipcMain.handle() callback
+  ↓
+[Main] main.js:1425 factoryTestingService.connect(portPath, baudRate)
+  ↓
+[Service] factory-testing.js:159 connect()
+  ↓
+[Service] factory-testing.js:162 Check isConnecting flag
+  ↓
+[Service] factory-testing.js:168 if (this.isConnected) await this.disconnect()
+  ↓
+[Service] factory-testing.js:175 this.port = new SerialPort({ path, baudRate, ... })
+  ↓
+[Native] serialport library opens COM port
+  ↓
+[Service] factory-testing.js:189 this.port.on('open', callback)
+  ↓
+[Service] factory-testing.js:191 this.isConnected = true
+  ↓
+[Service] factory-testing.js:192 resolve({ success: true })
+  ↓
+[Main] main.js:1425 await returns
+```
+
+### Stack Trace #2: Run ACB-M Tests
+
+```
+[Main] main.js:1430 factoryTestingService.runFactoryTests(version, device, ...)
+  ↓
+[Service] factory-testing.js:1032 runFactoryTests()
+  ↓
+[Service] factory-testing.js:1050-1070 Validate parameters
+  ↓
+[Service] factory-testing.js:1176 if (device === 'ACB-M')
+  ↓
+[Service] factory-testing.js:1177-1182 Initialize resultsACB object
+  ↓
+[Service] factory-testing.js:1184 Define ensureString() helper
+[Service] factory-testing.js:1188 Define parseRtcTimestamp() helper
+[Service] factory-testing.js:1199 Define withinRtcWindow() helper
+[Service] factory-testing.js:1206 Define setEval() helper
+  ↓
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TC-001: UART Test
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ↓
+[Service] factory-testing.js:1214 this.updateProgress('UART test...')
+  ↓
+[Service] factory-testing.js:1215 await this.sendATCommand('AT+TEST=uart', '+VALUE_UART:', 30000)
+  ↓
+[Service] factory-testing.js:414 sendATCommand(cmd, prefix, timeout)
+  ↓
+[Service] factory-testing.js:425 Check if (this.port && this.isConnected)
+  ↓
+[Service] factory-testing.js:435 Setup timeout = setTimeout(..., 30000)
+  ↓
+[Service] factory-testing.js:480 this.port.write('AT+TEST=uart\r\n')
+  ↓
+[Native] serialport transmits UART bytes
+  ↓
+[Hardware] ACB-M device receives command
+[Hardware] ACB-M processes test
+[Hardware] ACB-M sends response: +VALUE_UART: EE\nOK\n
+  ↓
+[Native] serialport receives UART bytes
+  ↓
+[Service] factory-testing.js:445 this.parser.on('data') event fires
+  ↓
+[Service] factory-testing.js:450 Parse line by line
+  ↓
+[Service] factory-testing.js:455 Check if line starts with '+VALUE_UART:'
+  ↓
+[Service] factory-testing.js:460 responseLines.push(line)
+  ↓
+[Service] factory-testing.js:470 Check if line === 'OK'
+  ↓
+[Service] factory-testing.js:475 clearTimeout(timeout)
+  ↓
+[Service] factory-testing.js:485 resolve(responseLines.join('\n'))
+  ↓
+[Service] factory-testing.js:1215 await returns with response
+  ↓
+[Service] factory-testing.js:1216 const value = resp.replace('+VALUE_UART:', '').trim()
+  ↓
+[Service] factory-testing.js:1217 const pass = value.toUpperCase() === 'EE'
+  ↓
+[Service] factory-testing.js:1218-1223 resultsACB.tests.uart = { pass, value, raw, message }
+  ↓
+[Service] factory-testing.js:1224 setEval('pass_uart', pass)
+  ↓
+[Service] factory-testing.js:1206 resultsACB._eval['pass_uart'] = (pass === true)
+  ↓
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TC-002 through TC-005 follow same pattern
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ↓
+[Service] factory-testing.js:1364 const allPass = Object.values(resultsACB._eval).every(Boolean)
+  ↓
+[Service] factory-testing.js:1368 return resultsACB
+  ↓
+[Main] main.js:1430 await returns with results
+```
+
+### Stack Trace #3: Send AT Command (Deep Dive)
+
+```
+[Caller] factory-testing.js:1215 await this.sendATCommand('AT+TEST=uart', '+VALUE_UART:', 30000)
+  ↓
+[Service] factory-testing.js:414 sendATCommand(cmd, prefix, timeout)
+  ├─ Parameters:
+  │  cmd = 'AT+TEST=uart'
+  │  prefix = '+VALUE_UART:'
+  │  timeout = 30000 (30 seconds)
+  ↓
+[Service] factory-testing.js:420 Log: `Sending AT command: ${cmd}`
+  ↓
+[Service] factory-testing.js:425 if (!this.port || !this.isConnected)
+  ├─ If false → throw new Error('Not connected')
+  └─ If true → continue
+  ↓
+[Service] factory-testing.js:430 return new Promise((resolve, reject) => {...})
+  ↓
+[Service] factory-testing.js:435 Setup timeout timer
+  │
+  │  let timeout = setTimeout(() => {
+  │    this.parser.removeListener('data', onData);
+  │    reject(new Error(`Timeout waiting for response`));
+  │  }, 30000);
+  ↓
+[Service] factory-testing.js:440 const responseLines = []
+[Service] factory-testing.js:441 let gotPrefix = false
+  ↓
+[Service] factory-testing.js:445 Define onData handler:
+  │
+  │  const onData = (data) => {
+  │    const line = data.toString().trim();
+  │    console.log(`RX: ${line}`);
+  │    
+  │    if (line.startsWith(prefix)) {
+  │      gotPrefix = true;
+  │      responseLines.push(line);
+  │    }
+  │    
+  │    if (line === 'OK' || line.startsWith('ERROR')) {
+  │      clearTimeout(timeout);
+  │      this.parser.removeListener('data', onData);
+  │      resolve(responseLines.join('\n'));
+  │    }
+  │  };
+  ↓
+[Service] factory-testing.js:478 this.parser.on('data', onData)
+  ↓
+[Service] factory-testing.js:480 Send command:
+  │
+  │  const commandStr = cmd + '\r\n';
+  │  this.port.write(commandStr, (err) => {
+  │    if (err) {
+  │      clearTimeout(timeout);
+  │      reject(err);
+  │    }
+  │  });
+  ↓
+[Native] serialport.write() sends bytes to COM port
+  ↓
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  WAITING FOR DEVICE RESPONSE (up to 30 seconds)
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ↓
+[Hardware] ACB-M receives UART bytes
+[Hardware] ACB-M processes AT command
+[Hardware] ACB-M executes UART loopback test
+[Hardware] ACB-M sends response:
+  │
+  │  +VALUE_UART: EE\n
+  │  OK\n
+  ↓
+[Native] serialport receives bytes
+  ↓
+[Native] ReadlineParser splits by '\n' delimiter
+  ↓
+[Service] factory-testing.js:445 onData('+VALUE_UART: EE') called
+  ├─ Line 450: console.log('RX: +VALUE_UART: EE')
+  ├─ Line 455: Check if line.startsWith('+VALUE_UART:') → TRUE
+  ├─ Line 456: gotPrefix = true
+  ├─ Line 457: responseLines.push('+VALUE_UART: EE')
+  ├─ Line 460: Check if line === 'OK' → FALSE
+  └─ Handler returns, wait for more data
+  ↓
+[Service] factory-testing.js:445 onData('OK') called
+  ├─ Line 450: console.log('RX: OK')
+  ├─ Line 455: Check if line.startsWith('+VALUE_UART:') → FALSE
+  ├─ Line 460: Check if line === 'OK' → TRUE
+  ├─ Line 470: clearTimeout(timeout)
+  ├─ Line 475: this.parser.removeListener('data', onData)
+  └─ Line 485: resolve(responseLines.join('\n'))
+  ↓
+[Service] factory-testing.js:430 Promise resolves
+  ↓
+[Service] factory-testing.js:1215 await returns with value: '+VALUE_UART: EE'
+```
+
+### Stack Trace #4: Display Results in UI
+
+```
+[Main] main.js:1440 return { success: true, data: resultsACB }
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  IPC BOUNDARY (Main → Renderer)
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ↓
+[UI] FactoryTestingModule.js:65 Promise resolves
+  ↓
+[UI] FactoryTestingModule.js:70 return results to caller
+  ↓
+[UI] FactoryTestingPage.js:350 const results = await FactoryTestingModule.runTests(...)
+  ↓
+[UI] FactoryTestingPage.js:360 if (results.success)
+  ↓
+[UI] FactoryTestingPage.js:365-369 this.setState({
+  │  testing: false,
+  │  results: results.data,
+  │  testComplete: true,
+  │  progress: 100
+  │})
+  ↓
+[React] React detects state change
+  ↓
+[React] React triggers component re-render
+  ↓
+[UI] FactoryTestingPage.js:2800 render()
+  ↓
+[UI] FactoryTestingPage.js:2850 Check if (this.state.testComplete)
+  ↓
+[UI] FactoryTestingPage.js:650 Call this.renderResults()
+  ↓
+[UI] FactoryTestingPage.js:655 const { results } = this.state
+  ↓
+[UI] FactoryTestingPage.js:660-850 Build JSX:
+  │
+  │  <div className="results-container">
+  │    <h3>Test Results: ACB-M</h3>
+  │    <table>
+  │      <thead>
+  │        <tr>
+  │          <th>Test</th>
+  │          <th>Status</th>
+  │          <th>Value</th>
+  │          <th>Message</th>
+  │        </tr>
+  │      </thead>
+  │      <tbody>
+  │        {/* UART Test Row */}
+  │        <tr>
+  │          <td>UART</td>
+  │          <td className={results.tests.uart.pass ? 'pass' : 'fail'}>
+  │            {results.tests.uart.pass ? '✅ PASS' : '❌ FAIL'}
+  │          </td>
+  │          <td>{results.tests.uart.value}</td>
+  │          <td>{results.tests.uart.message}</td>
+  │        </tr>
+  │        {/* RTC, WiFi, Ethernet, RS485 rows... */}
+  │      </tbody>
+  │    </table>
+  │    
+  │    <div className="overall-result">
+  │      {allPass ? '✅ ALL TESTS PASSED' : '❌ SOME TESTS FAILED'}
+  │    </div>
+  │    
+  │    <button onClick={this.handlePrintLabel}>Print Label</button>
+  │    <button onClick={this.handleSaveResults}>Save Results</button>
+  │  </div>
+  ↓
+[React] React commits virtual DOM changes
+  ↓
+[Browser] Browser renders updated UI
+  ↓
+[User] User sees test results on screen
+```
+
+---
+
+## Method Reference
 
 ### ensureString()
 

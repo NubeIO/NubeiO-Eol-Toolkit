@@ -80,6 +80,211 @@ graph LR
 
 ---
 
+## Detailed Code Execution Flow
+
+### Complete Execution Trace: Start Test Button Click (Droplet)
+
+This diagram shows the **complete call stack** with exact file locations and line numbers:
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant UI as FactoryTestingPage.js<br/>Line 300-450
+    participant Module as FactoryTestingModule.js<br/>Line 50-100
+    participant IPC as Electron IPC
+    participant Main as main.js<br/>Line 1390-1444
+    participant Service as factory-testing.js<br/>Line 1375-1493
+    participant Serial as SerialPort
+    participant Device as Droplet Hardware
+    participant Gateway as LoRa Gateway
+    
+    User->>UI: Click "Start Test"
+    UI->>UI: handleRunTests()<br/>Line 300
+    UI->>Module: runTests({ device: 'Droplet' })<br/>Line 330
+    Module->>IPC: invoke('factory-testing:run-tests')<br/>Line 65
+    
+    Note over IPC: Renderer → Main
+    
+    IPC->>Main: Handler triggered<br/>Line 1420
+    Main->>Service: connect(portPath)<br/>Line 1425
+    Service->>Serial: new SerialPort(...)<br/>Line 175
+    Serial-->>Service: 'open' event<br/>Line 189
+    
+    Main->>Service: runFactoryTests('v2', 'Droplet', ...)<br/>Line 1430
+    Note over Service: Line 1375: Droplet branch
+    
+    Service->>Service: Initialize resultsDroplet<br/>Line 1381-1390
+    
+    Note over Service,Device,Gateway: TC-001: LoRa Test
+    Service->>Service: awaitTestJSONResult('test_lora')<br/>Line 1400
+    Service->>Serial: write('test_lora\r\n')<br/>Line 75
+    Serial->>Device: UART TX
+    Device->>Gateway: LoRa RF transmission<br/>868/915 MHz
+    Gateway-->>Device: LoRa RF acknowledgment
+    Device-->>Serial: {"result":"done","rssi":-45}
+    Serial-->>Service: JSON parsed<br/>Line 55
+    Service->>Service: resultsDroplet.tests.lora = {...}<br/>Line 1410
+    
+    Note over Service,Device: TC-002: Battery Test
+    Service->>Service: awaitTestJSONResult('test_bat')<br/>Line 1420
+    Serial->>Device: UART TX
+    Device-->>Serial: {"voltage":4.18,"percent":95}
+    Service->>Service: resultsDroplet.tests.battery = {...}<br/>Line 1430
+    
+    Note over Service,Device: TC-003: I2C Sensor Test (SHT40)
+    Service->>Service: awaitTestJSONResult('test_i2c')<br/>Line 1440
+    Serial->>Device: UART TX
+    Device-->>Serial: {"temp":22.5,"humidity":45}
+    Service->>Service: _normalizeI2cResult()<br/>Line 110
+    Service->>Service: resultsDroplet.tests.sensor = {...}<br/>Line 1450
+    
+    Service->>Service: Calculate overall pass/fail<br/>Line 1465
+    Service->>Service: return resultsDroplet<br/>Line 1488
+    
+    Service-->>Main: { success: true, data: results }
+    Main->>Service: disconnect()<br/>Line 1435
+    Main-->>IPC: return results<br/>Line 1440
+    
+    Note over IPC: Main → Renderer
+    
+    IPC-->>Module: Promise resolved
+    Module-->>UI: results
+    UI->>UI: setState({ results })<br/>Line 380
+    UI->>UI: renderResults()<br/>Line 650
+    UI->>User: Display test results
+```
+
+### Stack Trace: Droplet Test Execution
+
+```
+User clicks "Start Test"
+  ↓
+[UI] FactoryTestingPage.js:300 handleRunTests()
+  ↓
+[UI] FactoryTestingModule.js:65 ipcRenderer.invoke()
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  IPC BOUNDARY
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ↓
+[Main] main.js:1420 ipcMain.handle()
+  ↓
+[Service] factory-testing.js:159 connect()
+  ↓
+[Service] factory-testing.js:1032 runFactoryTests()
+  ↓
+[Service] factory-testing.js:1375 if (device === 'Droplet')
+  ↓
+[Service] factory-testing.js:1381-1390 Initialize resultsDroplet
+  ↓
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test Sequence: LoRa → Battery → I2C Sensor
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ↓
+[Service] factory-testing.js:1400 awaitTestJSONResult('test_lora')
+  ↓
+[Service] factory-testing.js:30 awaitTestJSONResult()
+  ↓
+[Service] factory-testing.js:75 port.write('test_lora\r\n')
+  ↓
+[Hardware] Droplet → LoRa Gateway (RF transmission)
+  ↓
+[Hardware] Gateway → Droplet (RF acknowledgment)
+  ↓
+[Service] factory-testing.js:55 JSON.parse(response)
+  ↓
+[Service] factory-testing.js:1410 Store LoRa result
+  ↓
+[Service] factory-testing.js:1420 awaitTestJSONResult('test_bat')
+  ↓
+[Service] factory-testing.js:1430 Store battery result
+  ↓
+[Service] factory-testing.js:1440 awaitTestJSONResult('test_i2c')
+  ↓
+[Service] factory-testing.js:110 _normalizeI2cResult()
+  ↓
+[Service] factory-testing.js:1450 Store sensor result
+  ↓
+[Service] factory-testing.js:1465 Calculate pass/fail
+  ↓
+[Service] factory-testing.js:1488 return resultsDroplet
+```
+
+### LoRa Test - Detailed Flow
+
+```
+[Service] factory-testing.js:1400 awaitTestJSONResult('test_lora')
+  ↓
+[Service] factory-testing.js:30 awaitTestJSONResult(command, timeout)
+  ├─ command = 'test_lora'
+  ├─ timeout = 10000 (10 seconds)
+  ↓
+[Service] factory-testing.js:35 Setup timeout timer
+  ↓
+[Service] factory-testing.js:40 Define onData handler
+  ↓
+[Service] factory-testing.js:75 port.write('test_lora\r\n')
+  ↓
+[Serial] Transmit UART bytes
+  ↓
+[Hardware - Droplet] Receive command
+  ↓
+[Hardware - Droplet] Initialize LoRa module (SX1276/RFM95)
+  ↓
+[Hardware - Droplet] Set frequency (868 MHz or 915 MHz)
+  ↓
+[Hardware - Droplet] Set spreading factor (SF7-SF12)
+  ↓
+[Hardware - Droplet] Set TX power (14 dBm)
+  ↓
+[Hardware - Droplet] Build test packet:
+  │  {
+  │    "type": "factory_test",
+  │    "device_id": "<MAC>",
+  │    "timestamp": <unix_time>
+  │  }
+  ↓
+[Hardware - Droplet] Transmit LoRa packet (RF)
+  ↓
+[LoRa Gateway] Receive packet
+  ↓
+[LoRa Gateway] Decode packet
+  ↓
+[LoRa Gateway] Send acknowledgment (RF)
+  ↓
+[Hardware - Droplet] Receive acknowledgment
+  ↓
+[Hardware - Droplet] Measure RSSI (signal strength)
+  ↓
+[Hardware - Droplet] Build response JSON:
+  │  {
+  │    "result": "done",
+  │    "status": "OK",
+  │    "rssi": -45,
+  │    "snr": 10.5,
+  │    "frequency": 868100000
+  │  }
+  ↓
+[Hardware - Droplet] Send via UART
+  ↓
+[Serial] Receive bytes
+  ↓
+[Service] factory-testing.js:50 parser 'data' event fires
+  ↓
+[Service] factory-testing.js:55 Try JSON.parse(line)
+  ↓
+[Service] factory-testing.js:60 Check parsed.result === 'done'
+  ↓
+[Service] factory-testing.js:65 clearTimeout(timeout)
+  ↓
+[Service] factory-testing.js:68 resolve({ raw, parsed, success: true })
+  ↓
+[Service] factory-testing.js:1400 await returns
+  ↓
+[Service] factory-testing.js:1410 Store in resultsDroplet.tests.lora
+```
+
+---
+
 ## Class Diagrams
 
 ### FactoryTestingService Class

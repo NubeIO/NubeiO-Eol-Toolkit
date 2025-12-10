@@ -106,6 +106,314 @@ main.js                          ⭐ IPC handlers (50+ lines factory testing)
 
 ---
 
+## Detailed Code Execution Flow
+
+### Complete Execution Trace: Factory Testing Flow (Generic)
+
+This diagram shows the **complete call stack** for the generic factory testing flow with exact file locations and line numbers:
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant UI as FactoryTestingPage.js<br/>Line 1-850
+    participant Module as FactoryTestingModule.js<br/>Line 1-300
+    participant IPC as Electron IPC Bridge
+    participant Main as main.js<br/>Line 1390-1444
+    participant Service as factory-testing.js<br/>Line 1-2310
+    participant Serial as SerialPort Library
+    participant Device as Target Hardware
+    
+    User->>UI: Open Factory Testing tab
+    UI->>UI: render()<br/>Line 50-150
+    Note over UI: Render device dropdown<br/>Port selector<br/>Test parameters
+    
+    User->>UI: Select device type
+    UI->>UI: handleDeviceSelect(device)<br/>Line 200
+    UI->>UI: setState({ selectedDevice })<br/>Line 210
+    UI->>UI: Update UI for device config<br/>Line 220
+    
+    User->>UI: Select serial port
+    UI->>Module: getAvailablePorts()<br/>Line 80
+    Module->>IPC: invoke('factory-testing:list-ports')<br/>Line 85
+    IPC->>Main: Handler: list-ports<br/>Line 1400
+    Main->>Service: listPorts()<br/>Line 1402
+    Service-->>Main: Array of ports
+    Main-->>IPC: Return port list
+    IPC-->>Module: ports[]
+    Module-->>UI: Populate dropdown<br/>Line 90
+    
+    User->>UI: Click "Start Test" button
+    UI->>UI: handleRunTests()<br/>Line 300
+    Note over UI: Validate inputs<br/>Show loading state
+    
+    UI->>UI: setState({ testing: true })<br/>Line 315
+    UI->>Module: runTests({ device, port, params })<br/>Line 330
+    
+    Module->>IPC: ipcRenderer.invoke(<br/>'factory-testing:run-tests',<br/>{ device, port, params })<br/>Line 65
+    
+    Note over IPC: ═══════════════════════════<br/>IPC BOUNDARY<br/>Renderer → Main<br/>═══════════════════════════
+    
+    IPC->>Main: Handler triggered<br/>Line 1420
+    Main->>Main: Extract parameters<br/>Line 1422
+    
+    Main->>Service: connect(portPath, 115200)<br/>Line 1425
+    Note over Service: services/factory-testing.js<br/>Line 159-220
+    
+    Service->>Service: Validate port not busy<br/>Line 162
+    Service->>Service: this.port = new SerialPort({<br/>  path: portPath,<br/>  baudRate: 115200,<br/>  dataBits: 8,<br/>  stopBits: 1,<br/>  parity: 'none'<br/>})<br/>Line 175-182
+    
+    Service->>Serial: Open connection
+    Serial-->>Service: 'open' event<br/>Line 189
+    Service->>Service: this.isConnected = true<br/>Line 191
+    Service->>Service: Setup readline parser<br/>Line 195
+    Service-->>Main: { success: true }<br/>Line 200
+    
+    Main->>Service: runFactoryTests(<br/>  version,<br/>  device,<br/>  deviceInfo,<br/>  preTesting<br/>)<br/>Line 1430
+    
+    Note over Service: Line 1032-1650<br/>Main test orchestrator
+    
+    Service->>Service: Validate parameters<br/>Line 1050
+    
+    Service->>Service: switch(device) {<br/>  case 'Micro Edge':<br/>  case 'ACB-M':<br/>  case 'ZC-LCD':<br/>  case 'Droplet':<br/>  case 'ZC-Controller':<br/>}<br/>Line 1070-1650
+    
+    Note over Service,Device: Device-Specific Test Branch
+    
+    Service->>Service: Initialize results object<br/>Line 1080
+    
+    loop For each test in sequence
+        Service->>Service: awaitTestJSONResult(command)<br/>Line 30
+        Service->>Serial: port.write(command + '\\r\\n')<br/>Line 75
+        Serial->>Device: UART TX
+        Note over Device: Execute test<br/>Collect data<br/>Format JSON response
+        Device-->>Serial: UART RX: JSON result
+        Serial-->>Service: parser 'data' event<br/>Line 50
+        Service->>Service: JSON.parse(line)<br/>Line 55
+        Service->>Service: Validate result.status<br/>Line 60
+        Service->>Service: Store test result<br/>Line 65
+    end
+    
+    Service->>Service: Calculate overall pass/fail<br/>All tests must pass<br/>Line 1640
+    
+    Service->>Service: return {<br/>  success: true,<br/>  data: results,<br/>  timestamp,<br/>  deviceInfo<br/>}<br/>Line 1645
+    
+    Service-->>Main: Test results object<br/>Line 1430
+    
+    Main->>Service: disconnect()<br/>Line 1435
+    Note over Service: Line 378-410
+    Service->>Serial: port.close()
+    Serial-->>Service: 'close' callback<br/>Line 390
+    Service->>Service: this.isConnected = false<br/>Line 393
+    Service-->>Main: Disconnected
+    
+    Main-->>IPC: return results<br/>Line 1440
+    
+    Note over IPC: ═══════════════════════════<br/>IPC BOUNDARY<br/>Main → Renderer<br/>═══════════════════════════
+    
+    IPC-->>Module: Promise resolved<br/>Line 65
+    Module-->>UI: return results<br/>Line 75
+    
+    UI->>UI: setState({<br/>  testing: false,<br/>  results: results<br/>})<br/>Line 380
+    
+    UI->>UI: renderResults()<br/>Line 650-850
+    Note over UI: Display results table<br/>Show pass/fail indicators<br/>Enable "Print Label" button
+    
+    UI->>User: Show test results on screen
+    
+    alt User clicks "Print Label"
+        User->>UI: Click "Print Label"
+        UI->>Module: printLabel(results)<br/>Line 150
+        Module->>IPC: invoke('factory-testing:print-label')<br/>Line 155
+        IPC->>Main: Handler: print-label<br/>Line 1450
+        Main->>Service: printLabel(data)<br/>Line 1452
+        Service->>Service: Run Python script<br/>Line 2250
+        Service-->>Main: { success: true }
+        Main-->>IPC: Print completed
+        IPC-->>Module: Success
+        Module-->>UI: Show success message
+        UI->>User: "Label printed"
+    end
+```
+
+### Stack Trace: Generic Factory Testing Flow
+
+```
+User opens Factory Testing tab
+  ↓
+[UI] FactoryTestingPage.js:50 render()
+  ↓
+User selects device & port
+  ↓
+[UI] FactoryTestingPage.js:300 handleRunTests()
+  ↓
+[UI] FactoryTestingModule.js:50 runTests()
+  ↓
+[UI] FactoryTestingModule.js:65 ipcRenderer.invoke('factory-testing:run-tests')
+  ══════════════════════════════════════════════════════════════
+  IPC BOUNDARY (Renderer → Main Process)
+  ══════════════════════════════════════════════════════════════
+  ↓
+[Main] main.js:1420 ipcMain.handle('factory-testing:run-tests')
+  ↓
+[Main] main.js:1425 factoryTestingService.connect(portPath, 115200)
+  ↓
+[Service] factory-testing.js:159 connect(portPath, baudRate)
+  ├─ Line 162: Check isConnecting flag
+  ├─ Line 175: this.port = new SerialPort(...)
+  ├─ Line 189: 'open' event handler
+  ├─ Line 191: this.isConnected = true
+  ├─ Line 195: Setup ReadlineParser
+  └─ Line 200: resolve({ success: true })
+  ↓
+[Main] main.js:1430 factoryTestingService.runFactoryTests(version, device, ...)
+  ↓
+[Service] factory-testing.js:1032 runFactoryTests(version, device, deviceInfo, preTesting)
+  ↓
+[Service] factory-testing.js:1050 Validate parameters
+  ↓
+[Service] factory-testing.js:1070 switch(device) - Device selection
+  ↓
+══════════════════════════════════════════════════════════════
+Device-Specific Branch (example: ACB-M)
+══════════════════════════════════════════════════════════════
+  ↓
+[Service] factory-testing.js:1150 if (device === 'ACB-M')
+  ↓
+[Service] factory-testing.js:1160 Initialize resultsACBM
+  ↓
+[Service] factory-testing.js:1170 awaitTestJSONResult('test_wifi')
+  ↓
+[Service] factory-testing.js:30 awaitTestJSONResult(command, timeout)
+  ├─ Line 35: Setup 10-second timeout
+  ├─ Line 40: Define onData handler
+  ├─ Line 75: port.write('test_wifi\r\n')
+  │   ↓
+  │  [Hardware] Device receives command
+  │   ↓
+  │  [Hardware] Execute WiFi scan test
+  │   ↓
+  │  [Hardware] Send JSON response: {"result":"done","status":"OK","networks":5}
+  │   ↓
+  ├─ Line 50: parser 'data' event fires
+  ├─ Line 55: JSON.parse(line)
+  ├─ Line 60: Check parsed.result === 'done'
+  ├─ Line 65: clearTimeout(timeout)
+  └─ Line 68: resolve({ raw, parsed, success: true })
+  ↓
+[Service] factory-testing.js:90 _normalizeWifiResult(parsed)
+  ↓
+[Service] factory-testing.js:1180 Store resultsACBM.tests.wifi
+  ↓
+[Service] factory-testing.js:1190 awaitTestJSONResult('test_rs485')
+  ↓
+[Service] factory-testing.js:1200 awaitTestJSONResult('test_motor')
+  ↓
+[Service] factory-testing.js:1210 awaitTestJSONResult('test_feedback')
+  ↓
+[Service] factory-testing.js:1220 awaitTestJSONResult('test_relay1')
+  ↓
+[Service] factory-testing.js:1225 awaitTestJSONResult('test_relay2')
+  ↓
+[Service] factory-testing.js:1240 Calculate overall pass/fail
+  ├─ Check all tests passed
+  ├─ resultsACBM.overallStatus = allTestsPassed ? 'PASS' : 'FAIL'
+  ↓
+[Service] factory-testing.js:1250 return resultsACBM
+  ↓
+[Main] main.js:1435 factoryTestingService.disconnect()
+  ↓
+[Service] factory-testing.js:378 disconnect()
+  ├─ Line 380: Check if connected
+  ├─ Line 385: port.close()
+  ├─ Line 390: 'close' callback
+  ├─ Line 393: this.isConnected = false
+  └─ Line 395: resolve()
+  ↓
+[Main] main.js:1440 return results
+  ══════════════════════════════════════════════════════════════
+  IPC BOUNDARY (Main → Renderer Process)
+  ══════════════════════════════════════════════════════════════
+  ↓
+[UI] FactoryTestingModule.js:65 Promise resolves
+  ↓
+[UI] FactoryTestingModule.js:75 return results
+  ↓
+[UI] FactoryTestingPage.js:330 await returns
+  ↓
+[UI] FactoryTestingPage.js:380 setState({ testing: false, results })
+  ↓
+[UI] FactoryTestingPage.js:650 renderResults()
+  ├─ Line 660: Create results table
+  ├─ Line 700: Map test results to rows
+  ├─ Line 750: Apply pass/fail styling
+  ├─ Line 800: Enable "Print Label" button
+  └─ Line 840: Append to DOM
+  ↓
+[UI] User sees test results displayed
+```
+
+### IPC Communication Deep Dive
+
+```
+Renderer Process (FactoryTestingModule.js:65)
+  ↓
+  ipcRenderer.invoke('factory-testing:run-tests', {
+    device: 'ACB-M',
+    port: 'COM3',
+    baudRate: 115200,
+    deviceInfo: {
+      serialNumber: 'ABC123',
+      hwVersion: 'v2.1',
+      fwVersion: '1.0.5'
+    }
+  })
+  ↓
+═══════════════════════════════════════════════════════════════
+Electron IPC Bridge
+- Serializes arguments
+- Switches process context
+- Deserializes in main process
+═══════════════════════════════════════════════════════════════
+  ↓
+Main Process (main.js:1420)
+  ↓
+  ipcMain.handle('factory-testing:run-tests', async (event, args) => {
+    const { device, port, baudRate, deviceInfo } = args;
+    
+    // Connect to serial port
+    const connectResult = await factoryTestingService.connect(port, baudRate);
+    if (!connectResult.success) {
+      return { success: false, error: connectResult.error };
+    }
+    
+    // Run tests
+    const results = await factoryTestingService.runFactoryTests(
+      'v2',
+      device,
+      deviceInfo,
+      false
+    );
+    
+    // Disconnect
+    await factoryTestingService.disconnect();
+    
+    return results;
+  })
+  ↓
+═══════════════════════════════════════════════════════════════
+Electron IPC Bridge
+- Serializes return value
+- Switches process context
+- Deserializes in renderer
+═══════════════════════════════════════════════════════════════
+  ↓
+Renderer Process (FactoryTestingModule.js:65)
+  ↓
+  const results = await ipcRenderer.invoke(...);
+  // results = { success: true, data: {...}, timestamp: ..., deviceInfo: {...} }
+```
+
+---
+
 ## Core Classes
 
 ### FactoryTestingService Class
