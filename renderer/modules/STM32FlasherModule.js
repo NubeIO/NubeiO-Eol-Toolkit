@@ -109,6 +109,7 @@ class STM32FlasherModule {
       this.protectionInfo = null;
       this.powerCycleRequired = false;
       this._connectionLostWarningShown = false;
+      this.flashResult = null; // Clear previous flash result (e.g., "Flash Successful")
 
       this.render();
 
@@ -171,6 +172,7 @@ class STM32FlasherModule {
           this.flashProtected = false;
           this.protectionInfo = null;
           this._connectionLostWarningShown = false;
+          this.flashResult = null; // Clear previous flash result
 
           // Show alert and force reselection
           setTimeout(() => {
@@ -253,6 +255,7 @@ class STM32FlasherModule {
       this.render();
     } catch (error) {
       this.isDetecting = false;
+      this.flashResult = null; // Clear previous flash result on error
       this.flashProgress = `Detection failed: ${error.message}`;
       this.render();
       // console.error('Detection error:', error);
@@ -315,6 +318,7 @@ class STM32FlasherModule {
       }
       this.render();
     } catch (error) {
+      this.flashResult = null; // Clear previous flash result on error
       this.flashProgress = `Disconnect error: ${error.message}`;
       this.render();
       // console.error('Disconnect error:', error);
@@ -532,18 +536,9 @@ class STM32FlasherModule {
       return;
     }
 
-    // Verify connection before unlock
-    this.flashProgress = 'Checking ST-Link connection...';
-    this.render();
-
-    const isConnected = await this.verifyConnection();
-    if (!isConnected) {
-      this.stlinkDetected = false;
-      this.flashProgress = '❌ ST-Link connection lost! Please reconnect and detect again.';
-      this.render();
-      alert('⚠️ ST-Link connection lost!\n\nPlease:\n1. Check ST-Link USB connection\n2. Click "Detect ST-Link" again\n3. Then try unlock again.');
-      return;
-    }
+    // No need to verify connection before unlock - device is already detected
+    // verifyConnection() calls detectSTM32Once() which executes mdw commands
+    // This can cause disconnect and is unnecessary since device was already detected
 
     // Confirm with user
     const confirmed = confirm(
@@ -568,12 +563,39 @@ class STM32FlasherModule {
       const result = await electronAPI.unlockSTM32Flash();
 
       if (result.success) {
-        // Verify unlock by checking both OPTR and flash probe
+        // Wait for device to stabilize after unlock before verifying
+        // Unlock process may reset device, so we need to wait before checking protection
+        this.flashProgress = 'Waiting for device to stabilize after unlock...';
+        this.render();
+        await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds
+
+        // Verify unlock by checking both OPTR and flash probe with retry logic
         this.flashProgress = 'Verifying unlock status (checking OPTR and flash controller)...';
         this.render();
 
-        try {
-          const protectionCheck = await electronAPI.checkSTM32FlashProtection();
+        let protectionCheck = null;
+        let checkAttempts = 0;
+        const maxCheckAttempts = 3;
+
+        while (checkAttempts < maxCheckAttempts && !protectionCheck) {
+          try {
+            protectionCheck = await electronAPI.checkSTM32FlashProtection();
+            break; // Success, exit retry loop
+          } catch (checkError) {
+            checkAttempts++;
+            if (checkAttempts < maxCheckAttempts) {
+              console.log(`[Unlock] Protection check attempt ${checkAttempts} failed, retrying in 1 second...`);
+              this.flashProgress = `Verifying unlock status (attempt ${checkAttempts + 1}/${maxCheckAttempts})...`;
+              this.render();
+              await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second before retry
+            } else {
+              // All attempts failed, handle error
+              throw checkError;
+            }
+          }
+        }
+
+        if (protectionCheck) {
           this.protectionInfo = protectionCheck;
 
           // Priority 1: Check if there's a mismatch (OPTR=0xAA but flash probe still shows RDP level 1)
@@ -606,24 +628,6 @@ class STM32FlasherModule {
             this.flashProgress = `⚠️ Flash is still protected. RDP Level: ${protectionCheck.rdpLevel || 'unknown'}\n\n` +
               'Please try unlocking again or use ST-Link Utility.';
           }
-        } catch (checkError) {
-          // If check fails, check error message for power cycle requirement
-          if (checkError.message && checkError.message.includes('POWER CYCLE')) {
-            this.powerCycleRequired = true;
-            this.flashProtected = true;
-            this.flashProgress = '⚠️ POWER CYCLE REQUIRED\n\n' +
-              'OPTR has been unlocked (0xAA) but flash controller still shows RDP Level 1.\n\n' +
-              'Please:\n' +
-              '1. Power off STM32 (unplug USB or disconnect power)\n' +
-              '2. Wait 2-3 seconds\n' +
-              '3. Power on again\n' +
-              '4. Click "Detect ST-Link" again to verify';
-          } else {
-            // Assume unlocked if check fails
-            this.flashProtected = false;
-            this.protectionInfo = null;
-            this.flashProgress = '✅ Flash protection unlocked successfully! Flash has been erased. You can now flash new firmware.';
-          }
         }
       } else {
         this.flashProgress = `❌ Failed to unlock flash: ${result.error || 'Unknown error'}`;
@@ -643,26 +647,11 @@ class STM32FlasherModule {
           '3. Power on again\n' +
           '4. Click "Detect ST-Link" again to verify';
       } else {
-        this.flashProgress = `❌ Unlock failed: ${error.message}`;
+        // Don't assume connection lost - unlock may have succeeded even if verification failed
+        this.flashProgress = `⚠️ Unlock completed but verification failed: ${error.message}\n\n` +
+          'Please click "Detect ST-Link" to verify unlock status.';
       }
       this.render();
-      // console.error('Unlock error:', error);
-
-      // Check if error is due to connection loss
-      if (error.message && (
-        error.message.includes('not detected') ||
-        error.message.includes('connection') ||
-        error.message.includes('ST-Link') ||
-        error.message.includes('timeout')
-      )) {
-        // Verify connection again
-        const stillConnected = await this.verifyConnection();
-        if (!stillConnected) {
-          this.stlinkDetected = false;
-          this.flashProgress = '❌ ST-Link connection lost during unlock! Please reconnect and detect again.';
-          this.render();
-        }
-      }
     } finally {
       this.isUnlocking = false;
     }
