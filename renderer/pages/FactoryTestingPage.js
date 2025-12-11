@@ -2247,14 +2247,23 @@ class FactoryTestingPage {
               <div>
                 <label class="block text-sm text-gray-600 dark:text-gray-300 mb-1">Serial Port</label>
                 <div class="flex gap-2">
-                  <select
-                    id="factory-port-select"
-                    class="flex-1 px-3 py-2 border dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
-                    ${this.isConnected ? 'disabled' : ''}
-                    onchange="window.factoryTestingModule.selectedPort = this.value; console.log('Port changed to:', this.value);"
-                  >
-                    <option value="">Select Port</option>
-                  </select>
+                  ${this.isConnected ? `
+                    <input
+                      id="factory-port-connected"
+                      class="flex-1 px-3 py-2 border dark:border-gray-600 rounded-lg text-sm bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                      type="text"
+                      value="${window.factoryTestingModule?.selectedPort || window.factoryTestingPage?.selectedPort || 'Unknown'}"
+                      readonly
+                    />
+                  ` : `
+                    <select
+                      id="factory-port-select"
+                      class="flex-1 px-3 py-2 border dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                      onchange="window.factoryTestingModule.selectedPort = this.value; console.log('Port changed to:', this.value);"
+                    >
+                      <option value="">Select Port</option>
+                    </select>
+                  `}
                   <button
                     onclick="window.factoryTestingPage.refreshSerialPorts()"
                     class="px-3 py-2 bg-gray-500 hover:bg-gray-600 text-white rounded-lg text-sm transition-colors"
@@ -2272,7 +2281,7 @@ class FactoryTestingPage {
                   </button>
                 </div>
                 <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  ${window.factoryTestingModule ? `${window.factoryTestingModule.serialPorts.length} ports available` : 'Loading...'}
+                  ${this.isConnected ? 'Connected' : (window.factoryTestingModule ? `${window.factoryTestingModule.serialPorts.length} ports available` : 'Loading...')}
                 </p>
               </div>
               <div>
