@@ -2482,48 +2482,53 @@ class FactoryTestingService {
       const parseUID = (rxHex) => {
         const hex = String(rxHex || '').trim().replace(/\s+/g, '').toUpperCase();
         const buf = Buffer.from(hex, 'hex');
-        if (buf.length < 3 + 12) return 'ERROR';
+        if (buf.length < 3 + 12) return { rawHex: 'ERROR', short: 'ERROR' };
         const data = buf.slice(3, 15); // 12 bytes UID
-        return data.toString('hex').toUpperCase();
+        const rawHex = data.toString('hex').toUpperCase();
+        // Create a compact display: last 8 hex chars (4 bytes) for brevity
+        const short = rawHex.slice(-8);
+        return { rawHex, short };
       };
 
       // Use exact commands with CRC from your spec/logs
       const CMD_UID = '01 03 00 00 00 06 C5 C8';
-      const CMD_MODEL = '01 03 00 13 00 03 F4 0E';
-      // Use CRC from device logs for MAKE
-      const CMD_MAKE = '01 03 00 1D 00 0B 94 0B';
-      const CMD_FW = '01 03 00 31 00 03 54 04';
+      // Corrected quantities + CRCs per request
+      const CMD_MODEL = '01 03 00 13 00 02 35 CE';
+      const CMD_MAKE = '01 03 00 1D 00 07 94 0E';
+      const CMD_FW = '01 03 00 31 00 02 95 C4';
 
       // Send and log each frame
       try {
         const rx = await this.sendRs485Hex(CMD_UID);
-        console.log('[RS485] 001-Tx:', CMD_UID);
-        console.log('[RS485] 002-Rx:', rx);
-        info.uniqueId = parseUID(rx);
+        console.log('[RS485] 000-Tx:', CMD_UID);
+        console.log('[RS485] 001-Rx:', rx);
+        const uid = parseUID(rx);
+        info.uniqueId = uid.rawHex;
+        info.uniqueIdShort = uid.short;
       } catch (e) { info.uniqueId = 'ERROR'; }
       await new Promise(res => setTimeout(res, 100));
 
       try {
         const rx = await this.sendRs485Hex(CMD_MODEL);
-        console.log('[RS485] 005-Tx:', CMD_MODEL);
-        console.log('[RS485] 006-Rx:', rx);
-        info.deviceModel = parseAscii(rx, 6); // e.g., '1.0' (6 bytes incl. spaces per sample)
+        console.log('[RS485] 002-Tx:', CMD_MODEL);
+        console.log('[RS485] 003-Rx:', rx);
+        info.deviceModel = parseAscii(rx, 4); // e.g., '1.0'
       } catch (e) { info.deviceModel = 'ERROR'; }
       await new Promise(res => setTimeout(res, 100));
 
       try {
         const rx = await this.sendRs485Hex(CMD_MAKE);
-        console.log('[RS485] 015-Tx:', CMD_MAKE);
-        console.log('[RS485] 016-Rx:', rx);
-        info.deviceMake = parseAscii(rx, 22); // 'ZC-Controller'
+        console.log('[RS485] 004-Tx:', CMD_MAKE);
+        console.log('[RS485] 005-Rx:', rx);
+        info.deviceMake = parseAscii(rx, 14); // 'ZC-Controller'
       } catch (e) { info.deviceMake = 'ERROR'; }
       await new Promise(res => setTimeout(res, 100));
 
       try {
         const rx = await this.sendRs485Hex(CMD_FW);
-        console.log('[RS485] 013-Tx:', CMD_FW);
-        console.log('[RS485] 014-Rx:', rx);
-        info.firmwareVersion = parseAscii(rx, 6); // '1.0'
+        console.log('[RS485] 006-Tx:', CMD_FW);
+        console.log('[RS485] 007-Rx:', rx);
+        info.firmwareVersion = parseAscii(rx, 4); // '1.0'
       } catch (e) { info.firmwareVersion = 'ERROR'; }
 
       return { success: true, data: info };
