@@ -92,7 +92,10 @@ class FactoryTestingPage {
     this.app.render();
     // start tests after user confirms
     try {
-      if (!this.isTesting) this.runFactoryTests();
+      // Only auto-run tests in Auto mode; manual waits for user action
+      if (this.mode === 'auto' && !this.isTesting) {
+        this.runFactoryTests();
+      }
     } catch (e) { console.warn('Failed to start tests after confirm:', e && e.message); }
   }
 
@@ -579,6 +582,17 @@ class FactoryTestingPage {
   _startAutoWorkflow() {
     // Begin polling for ports and attempt auto-connect/run
     if (this._autoPollTimer) { clearTimeout(this._autoPollTimer); this._autoPollTimer = null; }
+    // Gate: only start auto workflow if service allows auto-next
+    try {
+      if (window.factoryTestingModule && window.factoryTestingModule.getStatus) {
+        const st = window.factoryTestingModule.getStatus();
+        if (st && st.autoNextEnabled !== true) {
+          this.testProgress = 'Waiting for Next Device...';
+          this.app.render();
+          return;
+        }
+      }
+    } catch (e) { /* ignore */ }
     const attempt = async () => {
       if (!window.factoryTestingModule) return;
       try {
@@ -636,6 +650,21 @@ class FactoryTestingPage {
       }
     };
     attempt();
+  }
+
+  // User action: enable auto-next and start scanning for the next device
+  async startTestNextDevice() {
+    try {
+      if (window.factoryTestingModule && window.factoryTestingModule.setAutoNextEnabled) {
+        window.factoryTestingModule.setAutoNextEnabled(true);
+      }
+      // If currently connected, disconnect first
+      if (this.isConnected) {
+        await this.disconnectDevice();
+      }
+    } catch (e) { /* ignore */ }
+    // kick off auto workflow
+    this._startAutoWorkflow();
   }
 
   // Format AIN display: if value is normalized (0..1) convert to 0..3.3V, otherwise assume already volts
@@ -829,8 +858,19 @@ class FactoryTestingPage {
       
       if (result.success) {
         this.isConnected = true;
+        // Persist selected port/baud from backend result for UI rendering
+        if (result.port) {
+          window.factoryTestingModule.selectedPort = result.port;
+          this.selectedPort = result.port;
+        }
+        if (result.baudRate) {
+          this.selectedBaud = String(result.baudRate);
+        }
+        // Track last auto-connected port/baud for modal display
+        this._lastAutoConnectedPort = result.port || selectedPort;
+        this._lastAutoConnectedBaud = String(result.baudRate || selectedBaud);
         this._autoConnectManualSuppressUntil = 0;
-        this.testProgress = `✅ Connected to ${selectedPort}`;
+        this.testProgress = `✅ Connected to ${result.port || selectedPort}`;
         console.log('[Factory Testing Page] Connection successful');
         // If backend returned device info (unique ID / MAC), set it in page state
         if (result.deviceInfo) {
@@ -946,50 +986,13 @@ class FactoryTestingPage {
           }
           this.testProgress = `✅ Connected - Device info retrieved`;
           
-          // Show connection success popup with device information (always show in manual mode)
-          if (!silent || this.mode === 'manual') {
-            const infoMsg = [
-              `✅ Connected successfully to ${selectedPort} @ ${selectedBaud} baud`,
-              ``,
-              `Device Information:`,
-              `  HW Version: ${this.deviceInfo?.hwVersion || 'N/A'}`,
-              `  Unique ID: ${this.deviceInfo?.uniqueId || 'N/A'}`,
-              `  Device Make: ${this.deviceInfo?.deviceMake || 'N/A'}`,
-              `  Device Model: ${this.deviceInfo?.deviceModel || 'N/A'}`,
-              ``,
-              `Ready to run tests!`
-            ].join('\n');
-            alert(infoMsg);
-          }
-          
+          // Show connection success modal (same style as Droplet) in both modes
+          this._lastAutoConnectedPort = selectedPort;
+          this._lastAutoConnectedBaud = String(selectedBaud);
+          this.showConnectConfirm = true;
           this.app.render();
           
-          // Auto mode: run tests automatically after showing device info
-          if (this.mode === 'auto') {
-            if (!silent) {
-              this._lastAutoConnectedPort = selectedPort;
-              this.showConnectConfirm = true;
-              this.app.render();
-            }
-            try {
-              this.testProgress = 'Starting ZC-LCD auto tests...';
-              this.app.render();
-              
-              const fullRes = await window.factoryTestingModule.runFactoryTests('ZC-LCD');
-              if (fullRes && fullRes.success) {
-                this.factoryTestResults = fullRes.data || this.factoryTestResults;
-                this.testProgress = '✅ ZC-LCD auto tests completed';
-                // Save results to enable Print Label if all tests pass
-                await this.saveResultsToFile();
-              } else {
-                this.testProgress = `❌ ZC-LCD auto tests failed: ${fullRes && fullRes.error ? fullRes.error : 'Unknown error'}`;
-              }
-            } catch (e) {
-              console.warn('[Factory Testing] ZC-LCD auto test error:', e && e.message);
-              this.testProgress = `❌ Auto test error: ${e && e.message}`;
-            }
-            this.app.render();
-          }
+          // Auto mode: pause here; user will press OK then run tests manually
           
         } else if (this.selectedDevice === 'Droplet') {
           // Droplet: Device info already read during connect, show popup
@@ -1017,30 +1020,12 @@ class FactoryTestingPage {
           
           this.app.render();
           
-          // Auto mode: run tests automatically after showing device info
+          // Auto mode: for Droplet, PAUSE after connect and show info only.
+          // Do NOT auto-run tests; require user action.
           if (this.mode === 'auto') {
-            if (!silent) {
-              this._lastAutoConnectedPort = selectedPort;
-              this.showConnectConfirm = true;
-              this.app.render();
-            }
-            try {
-              this.testProgress = 'Starting Droplet auto tests...';
-              this.app.render();
-              
-              const fullRes = await window.factoryTestingModule.runFactoryTests('Droplet');
-              if (fullRes && fullRes.success) {
-                this.factoryTestResults = fullRes.data || this.factoryTestResults;
-                this.testProgress = '✅ Droplet auto tests completed';
-                // Save results to enable Print Label if all tests pass
-                await this.saveResultsToFile();
-              } else {
-                this.testProgress = `❌ Droplet auto tests failed: ${fullRes && fullRes.error ? fullRes.error : 'Unknown error'}`;
-              }
-            } catch (e) {
-              console.warn('[Factory Testing] Droplet auto test error:', e && e.message);
-              this.testProgress = `❌ Auto test error: ${e && e.message}`;
-            }
+            this._lastAutoConnectedPort = selectedPort;
+            this.testProgress = `✅ Connected to ${selectedPort} — review device info, then press Run all tests`;
+            this.showConnectConfirm = true;
             this.app.render();
           }
           
@@ -1092,6 +1077,8 @@ class FactoryTestingPage {
     }
 
     try {
+      // Disable auto-next on user disconnect to prevent immediate auto-reconnect
+      try { if (window.factoryTestingModule.setAutoNextEnabled) { window.factoryTestingModule.setAutoNextEnabled(false); } } catch (e) { /* ignore */ }
       await window.factoryTestingModule.disconnect();
       this.isConnected = false;
       this.testProgress = 'Disconnected';
@@ -1104,10 +1091,7 @@ class FactoryTestingPage {
         }
       } catch (e) { /* ignore */ }
 
-      // If in auto mode, restart the auto workflow to detect new device
-      if (this.mode === 'auto') {
-        setTimeout(() => this._startAutoWorkflow(), 200);
-      }
+      // In auto mode, do not immediately restart. Wait for explicit user action.
 
       this.app.render();
     } catch (error) {
@@ -2321,13 +2305,14 @@ class FactoryTestingPage {
           ` : `
           <div class="mb-6 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg flex items-center justify-between">
             <div>
-              <strong class="text-sm">Auto-detect and connect active</strong>
+              <strong class="text-sm">Auto Mode</strong>
               <div class="text-xs text-gray-500">Ports: ${window.factoryTestingModule ? window.factoryTestingModule.serialPorts.length : '...'} • Selected: ${window.factoryTestingModule ? (window.factoryTestingModule.selectedPort || '—') : '—'}</div>
             </div>
             <div class="flex gap-2">
               ${this.isConnected ? `
                 <button onclick="window.factoryTestingPage.disconnectDevice()" class="px-3 py-1 bg-red-500 text-white rounded">Disconnect</button>
               ` : ''}
+              <button onclick="window.factoryTestingPage.startTestNextDevice()" class="px-3 py-1 bg-green-600 text-white rounded">Test Next Device</button>
               <button onclick="window.factoryTestingPage.stopAuto()" class="px-3 py-1 bg-red-500 text-white rounded">Stop Auto</button>
             </div>
           </div>
@@ -3118,39 +3103,31 @@ RS485: ${JSON.stringify((this.factoryTestResults.rs485 && this.factoryTestResult
       ${this.showConnectConfirm ? `
         <div class="fixed inset-0 z-50 flex items-center justify-center">
           <div class="absolute inset-0 bg-black opacity-40"></div>
-          <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl z-10 w-11/12 max-w-lg p-6">
-            <h3 class="text-lg font-semibold mb-3">Connected</h3>
-            <p class="text-sm text-gray-700 dark:text-gray-300 mb-2">Connected successfully to ${this._lastAutoConnectedPort}.</p>
+          <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl z-10 w-11/12 max-w-md p-4">
+            <h3 class="text-sm font-semibold mb-3">nube-io-toolkit</h3>
             ${(() => {
+              const port = this._lastAutoConnectedPort || '';
+              const baud = this._lastAutoConnectedBaud ? ` @ ${this._lastAutoConnectedBaud} baud` : '';
               const di = this.deviceInfo || {};
-              const hasError = ['uniqueId','deviceModel','deviceMake','firmwareVersion'].some(k => String(di[k] || '').toUpperCase() === 'ERROR');
-              return hasError ? `
-                <div class="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
-                  Failed to read device information over RS485. Please check connection and try again.
-                </div>
-              ` : '';
+              const model = di.deviceModel || '';
+              const make = di.deviceMake || '';
+              const fw = di.firmwareVersion || di.fwVersion || '';
+              const uid = di.uniqueIdShort || di.uniqueId || '';
+              const text = [
+                `☑ Connected successfully to ${port}${baud}`,
+                '',
+                'Device Information:',
+                `Device Model: ${model}`,
+                `Device Make: ${make}`,
+                `FW Version: ${fw}`,
+                `Unique ID: ${uid}`,
+                '',
+                'Ready to run tests!'
+              ].join('\n');
+              return `<pre class="text-xs whitespace-pre-wrap font-sans">${text}</pre>`;
             })()}
-            <div class="mb-4 grid grid-cols-2 gap-2 text-xs">
-              <div class="p-2 rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60">
-                <div class="text-gray-500">UID</div>
-                <div class="font-mono text-gray-800 dark:text-gray-100">${(this.deviceInfo.uniqueId || '—').substring(0,24)}</div>
-              </div>
-              <div class="p-2 rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60">
-                <div class="text-gray-500">Model</div>
-                <div class="font-mono text-gray-800 dark:text-gray-100">${this.deviceInfo.deviceModel || '—'}</div>
-              </div>
-              <div class="p-2 rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60">
-                <div class="text-gray-500">Make</div>
-                <div class="font-mono text-gray-800 dark:text-gray-100">${this.deviceInfo.deviceMake || '—'}</div>
-              </div>
-              <div class="p-2 rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60">
-                <div class="text-gray-500">FW Version</div>
-                <div class="font-mono text-gray-800 dark:text-gray-100">${this.deviceInfo.firmwareVersion || '—'}</div>
-              </div>
-            </div>
-            <div class="flex justify-end gap-2">
-              <button onclick="window.factoryTestingPage.cancelConnectConfirm()" class="px-4 py-2 bg-gray-200 rounded">Cancel</button>
-              ${(() => { const di = this.deviceInfo || {}; const hasError = ['uniqueId','deviceModel','deviceMake','firmwareVersion'].some(k => String(di[k] || '').toUpperCase() === 'ERROR'); return hasError ? '<button onclick="window.factoryTestingPage.confirmConnectOk()" class="px-4 py-2 bg-red-500 text-white rounded">Close</button>' : '<button onclick="window.factoryTestingPage.confirmConnectOk()" class="px-4 py-2 bg-green-500 text-white rounded">OK</button>'; })()}
+            <div class="mt-3 flex justify-end">
+              <button onclick="window.factoryTestingPage.confirmConnectOk()" class="px-4 py-1 bg-gray-200 dark:bg-gray-700 rounded">OK</button>
             </div>
           </div>
         </div>

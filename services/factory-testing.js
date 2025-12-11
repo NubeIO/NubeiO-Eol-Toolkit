@@ -20,6 +20,8 @@ class FactoryTestingService {
     this.baudRate = 115200;
     this.commandTimeout = 5000; // 5 seconds timeout for AT commands
     this.progressCallback = null;
+    // Gate for auto connecting to next device; controlled by renderer
+    this.autoNextEnabled = false;
   }
 
   /**
@@ -183,27 +185,12 @@ class FactoryTestingService {
       this.baudRate = baudRate;
       this.deviceType = deviceType; // Store device type for later use
 
-      // Skip esptool for ACB-M, Droplet and ZC-Controller (uses RS485 hex)
-      // Only ZC-LCD uses ESP32 and might need esptool
-      const isEsp32Device = deviceType === 'ZC-LCD';
+      // Do NOT use esptool for any device in factory-testing flows
+      const isEsp32Device = false;
       
-      // If device is non-AT and is ESP32, attempt to read MAC via esptool BEFORE opening the serial port
+      // Skip any esptool usage; rely on AT commands for info
       let preDeviceInfo = null;
-      if (!useUnlock && isEsp32Device) {
-        try {
-          console.log('[Factory Testing Service] Attempting to read MAC via esptool before opening port...');
-          console.log('[Factory Testing Service] Platform:', process.platform);
-          console.log('[Factory Testing Service] esptool attempt port:', this.portPath);
-          const espMac = await this.readEsp32MAC(this.portPath);
-          console.log('[Factory Testing Service] esptool returned MAC:', espMac);
-          if (espMac) preDeviceInfo = { uniqueId: espMac };
-        } catch (e) {
-          console.warn('[Factory Testing Service] esptool read before open failed:', e.message);
-          // continue, we'll try fallback later
-        }
-      } else {
-        console.log('[Factory Testing Service] Skipping esptool (device type:', deviceType, ', useUnlock:', useUnlock, ')');
-      }
+      console.log('[Factory Testing Service] Skipping esptool for device type:', deviceType);
 
       console.log(`[Factory Testing Service] Creating SerialPort instance...`);
 
@@ -296,12 +283,12 @@ class FactoryTestingService {
       // Read device info (Unique ID / MAC) right after unlock
       let deviceInfo = null;
       try {
-        // If we previously read MAC before opening port, reuse it
-        if (preDeviceInfo) {
-          deviceInfo = preDeviceInfo;
-        } else if (deviceType === 'ZC-LCD') {
+        // For ZC-LCD: Read device info via AT commands
+        if (deviceType === 'ZC-LCD') {
           // ZC-LCD: Read device info via dedicated method
           console.log('[Factory Testing Service] Reading ZC-LCD device info...');
+          // Small delay to ensure device is ready before sending AT commands
+          await new Promise(resolve => setTimeout(resolve, 200));
           const zcDeviceInfo = await this.readZCLCDDeviceInfo();
           if (zcDeviceInfo.success) {
             deviceInfo = zcDeviceInfo.data;
@@ -321,6 +308,10 @@ class FactoryTestingService {
           const dropletDeviceInfo = await this.readDropletDeviceInfo();
           if (dropletDeviceInfo.success) {
             deviceInfo = dropletDeviceInfo.data;
+            // Normalize FW field for UI consistency
+            if (deviceInfo && (deviceInfo.fwVersion || deviceInfo.firmwareVersion)) {
+              deviceInfo.firmwareVersion = deviceInfo.fwVersion || deviceInfo.firmwareVersion;
+            }
             console.log('[Factory Testing Service] Droplet device info:', deviceInfo);
           }
         } else if (useUnlock) {
@@ -331,23 +322,6 @@ class FactoryTestingService {
             if (infoRes.success) deviceInfo = infoRes.data;
           } catch (err) {
             console.warn('[Factory Testing Service] readDeviceInfo failed for AT device:', err.message);
-          }
-        } else if (isEsp32Device) {
-          // Non-AT ESP32 devices: Try reading MAC using bundled esptool if available (will try with port open)
-          try {
-            const espMac = await this.readEsp32MAC(this.portPath);
-            if (espMac) {
-              deviceInfo = { uniqueId: espMac };
-            }
-          } catch (e) {
-            console.warn('[Factory Testing Service] esptool read after open failed:', e.message);
-            // fallback to AT-based readDeviceInfo
-            try {
-              const infoRes = await this.readDeviceInfo(this.deviceType);
-              if (infoRes.success) deviceInfo = infoRes.data;
-            } catch (err) {
-              console.warn('[Factory Testing Service] readDeviceInfo fallback failed:', err.message);
-            }
           }
         } else {
           // Non-ESP32 devices (like ACB-M STM32): Skip esptool, but read device info via AT commands
@@ -401,7 +375,8 @@ class FactoryTestingService {
           });
         });
       }
-
+      // Disable auto-next until user explicitly enables it again
+      this.autoNextEnabled = false;
       this.cleanup();
       console.log('[Factory Testing] Serial port disconnected');
       return { success: true };
@@ -410,6 +385,16 @@ class FactoryTestingService {
       this.cleanup();
       throw error;
     }
+  }
+
+  /** Enable/disable auto proceed to next device (called from renderer) */
+  setAutoNextEnabled(enabled) {
+    this.autoNextEnabled = !!enabled;
+  }
+
+  /** Query whether service allows auto proceed to next device */
+  shouldAutoProceedNext() {
+    return this.autoNextEnabled === true;
   }
 
   /**
@@ -460,16 +445,17 @@ class FactoryTestingService {
         
         if (!line) return; // Skip empty lines
         
-        // Check for error response (only after we've sent the command)
-        if (commandSent && (line === 'ERROR' || line.startsWith('+CME ERROR:'))) {
+        // Check for error response (accept immediately to avoid long timeouts in auto flows)
+        if (commandSent && (line === 'ERROR' || line.startsWith('ERROR') || line.startsWith('+CME ERROR:'))) {
           clearTimeout(timeout);
           this.parser.removeListener('data', onData);
-          reject(new Error(`Command failed: ${command}`));
+          // Resolve with the error line so caller can proceed to next step without waiting 30s
+          resolve(line);
           return;
         }
         
-        // Collect data line with expected prefix
-        if (line.startsWith(expectedPrefix)) {
+        // Collect data line with expected prefix (allow noise before prefix)
+        if (!expectedPrefix || line.includes(expectedPrefix)) {
           responseData = line;
           console.log(`[Factory Testing] Got data line: ${line}`);
           
@@ -505,7 +491,7 @@ class FactoryTestingService {
           }
         }
         
-        // Check for OK
+        // Check for OK: accept immediately even if no expectedPrefix yet
         if (line === 'OK') {
           console.log(`[Factory Testing] Got OK, responseData=${!!responseData}`);
           gotOK = true;
@@ -522,6 +508,12 @@ class FactoryTestingService {
             resolve(responseData);
           }
           // Otherwise keep waiting for data line (within timeout)
+          else {
+            // No data line expected or device only returns OK → resolve OK immediately for non-blocking behavior
+            clearTimeout(timeout);
+            this.parser.removeListener('data', onData);
+            resolve('OK');
+          }
         }
       };
 
@@ -937,8 +929,6 @@ class FactoryTestingService {
    * Commands: AT+HWVERSION?, AT+UNIQUEID?, AT+DEVICEMAKE?, AT+DEVICEMODEL?
    */
   async readZCLCDDeviceInfo() {
-      console.log('[Factory Testing] AHUHU69Device Make:');
-
     try {
       console.log('[Factory Testing] Reading ZC-LCD device information...');
       
@@ -948,7 +938,9 @@ class FactoryTestingService {
       // 1. HW Version: AT+HWVERSION? → +HWVERSION:v1.0
       try {
         const hwResponse = await this.sendATCommand('AT+HWVERSION?', '+HWVERSION:', timeout, false);
-        deviceInfo.hwVersion = hwResponse.replace('+HWVERSION:', '').trim();
+        // Extract after prefix if noise exists
+        const idx = hwResponse.indexOf('+HWVERSION:');
+        deviceInfo.hwVersion = idx >= 0 ? hwResponse.substring(idx + 11).trim() : hwResponse.replace('+HWVERSION:', '').trim();
         console.log('[Factory Testing] HW Version:', deviceInfo.hwVersion);
       } catch (error) {
         console.error('[Factory Testing] Failed to read HW version:', error.message);
@@ -968,29 +960,34 @@ class FactoryTestingService {
       // 3. Device Make: AT+DEVICEMAKE? → +DEVICEMAKE:ZC-LCD
       try {
         const makeResponse = await this.sendATCommand('AT+DEVICEMAKE?', '+DEVICEMAKE:', timeout, false);
-        deviceInfo.deviceMake = makeResponse.replace('+DEVICEMAKE:', '').trim();
+        const idx = makeResponse.indexOf('+DEVICEMAKE:');
+        deviceInfo.deviceMake = idx >= 0 ? makeResponse.substring(idx + 12).trim() : makeResponse.replace('+DEVICEMAKE:', '').trim();
         console.log('[Factory Testing] Device Make:', deviceInfo.deviceMake);
       } catch (error) {
         console.error('[Factory Testing] Failed to read Device Make:', error.message);
         deviceInfo.deviceMake = 'ERROR';
       }
-      console.log('[Factory Testing] Device Make:');
       // 4. Device Model (with retry)
       try {
         let modelResponse = null;
         let retries = 3;
-        const timeout = 1000; // 30 seconds timeout per command
+        const modelTimeout = 30000; // use same 30s timeout
 
         for (let i = 0; i < retries; i++) {
           try {
-            modelResponse = await this.sendATCommand('AT+DEVICEMODEL?', '+DEVICEMODEL:', timeout, requireOK);
+            modelResponse = await this.sendATCommand('AT+DEVICEMODEL?', '+DEVICEMODEL:', modelTimeout, false);
             // if (modelResponse) break;
           } catch (err) {
             console.warn(`[Factory Testing] Device Model attempt ${i + 1}/${retries} failed:`, err.message);
             if (i < retries - 1) await new Promise(resolve => setTimeout(resolve, 500));
           }
         }
-        deviceInfo.deviceModel = modelResponse ? modelResponse.replace('+DEVICEMODEL:', '').trim() : 'ERROR';
+        if (modelResponse) {
+          const parts = modelResponse.split('+DEVICEMODEL:');
+          deviceInfo.deviceModel = parts.length > 1 ? parts[parts.length - 1].trim() : modelResponse.replace('+DEVICEMODEL:', '').trim();
+        } else {
+          deviceInfo.deviceModel = 'ERROR';
+        }
       } catch (error) {
         console.error('[Factory Testing] Failed to read Device Model:', error);
         deviceInfo.deviceModel = 'ERROR';
@@ -2339,7 +2336,8 @@ class FactoryTestingService {
     return {
       isConnected: this.isConnected,
       port: this.portPath,
-      baudRate: this.baudRate
+      baudRate: this.baudRate,
+      autoNextEnabled: this.autoNextEnabled
     };
   }
 
