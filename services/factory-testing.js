@@ -1590,7 +1590,7 @@ class FactoryTestingService {
 
         this.updateProgress('Droplet: Starting tests...');
 
-        // LoRa test: AT+TEST=lora → +LORA:1,1,0 (tx_done, rx_done, value_rx)
+        // LoRa test: AT+TEST=lora → +LORA:1,1,4F4B (tx_done, rx_done, value_rx hex)
         this.updateProgress('Droplet: Running LoRa test...');
         try {
           const resp = await this.sendATCommand('AT+TEST=lora', '+LORA:', 30000, false);
@@ -1598,15 +1598,22 @@ class FactoryTestingService {
           const parts = payload.split(',');
           const txDone = Number(parts[0] || '0');
           const rxDone = Number(parts[1] || '0');
-          const valueRx = Number(parts[2] || '0');
+          const valueHex = (parts[2] || '').trim();
+          // decode hex payload to ASCII when possible
+          let valueAscii = '';
+          try {
+            const buf = Buffer.from(valueHex, 'hex');
+            valueAscii = buf.toString('ascii');
+          } catch (_) { valueAscii = ''; }
           const pass = txDone === 1 && rxDone === 1;
           resultsDroplet.tests.lora = {
             pass,
             txDone,
             rxDone,
-            valueRx,
+            valueRx: valueHex,
+            valueAscii,
             raw: resp,
-            message: pass ? `LoRa: TX=${txDone}, RX=${rxDone}, Value=${valueRx}` : `TX=${txDone}, RX=${rxDone} (need both=1)`
+            message: pass ? `LoRa: TX=${txDone}, RX=${rxDone}, Value=${valueAscii || valueHex}` : `TX=${txDone}, RX=${rxDone} (need both=1)`
           };
           setEval('pass_lora', pass);
         } catch (err) {
@@ -1621,19 +1628,19 @@ class FactoryTestingService {
           setEval('pass_lora', false);
         }
 
-        // Battery test: AT+TEST=bat → +BAT:3.61 (voltage)
+        // Battery test: AT+TEST=bat → +BAT:3.66 (voltage). Pass range: 3.4V–3.8V
         this.updateProgress('Droplet: Running Battery test...');
         try {
           const resp = await this.sendATCommand('AT+TEST=bat', '+BAT:', 30000, false);
           const payload = resp.replace('+BAT:', '').trim();
           const voltage = Number(payload);
-          // Valid voltage should be > 0 and < 5V (reasonable range)
-          const pass = Number.isFinite(voltage) && voltage > 0 && voltage < 5;
+          // Pass if voltage within specified window 3.4–3.8V
+          const pass = Number.isFinite(voltage) && voltage >= 3.4 && voltage <= 3.8;
           resultsDroplet.tests.battery = {
             pass,
             voltage,
             raw: resp,
-            message: pass ? `Battery: ${voltage}V` : payload.includes('NOT VALUE') ? 'No battery value' : 'Invalid voltage'
+            message: pass ? `Battery: ${voltage}V (pass 3.4–3.8V)` : payload.includes('NOT VALUE') ? 'No battery value' : `Out of range: ${voltage}V`
           };
           setEval('pass_battery', pass);
         } catch (err) {
@@ -1646,28 +1653,34 @@ class FactoryTestingService {
           setEval('pass_battery', false);
         }
 
-        // I2C test: AT+TEST=i2c → +I2C:0x40,275,686 (address, temp, humidity)
+        // I2C test: AT+TEST=i2c → +I2C:0x40,2800,6843 (address, temp*100, hum*100)
         this.updateProgress('Droplet: Running I2C test...');
         try {
           const resp = await this.sendATCommand('AT+TEST=i2c', '+I2C:', 30000, false);
           const payload = resp.replace('+I2C:', '').trim();
           const parts = payload.split(',');
           const i2cAddress = parts[0] ? parts[0].trim() : '';
-          const temp = parts[1] ? Number(parts[1].trim()) : null;
-          const hum = parts[2] ? Number(parts[2].trim()) : null;
+          const tempRaw = parts[1] ? Number(parts[1].trim()) : null;
+          const humRaw = parts[2] ? Number(parts[2].trim()) : null;
+          const tempC = tempRaw !== null && Number.isFinite(tempRaw) ? tempRaw / 100 : null;
+          const humPct = humRaw !== null && Number.isFinite(humRaw) ? humRaw / 100 : null;
+          const tempDisplay = tempC !== null ? tempC.toFixed(2) : null;
+          const humDisplay = humPct !== null ? humPct.toFixed(2) : null;
           
           const addressValid = i2cAddress && i2cAddress.startsWith('0x');
-          const tempValid = temp !== null && Number.isFinite(temp);
-          const humValid = hum !== null && Number.isFinite(hum);
+          const tempValid = tempC !== null && Number.isFinite(tempC);
+          const humValid = humPct !== null && Number.isFinite(humPct);
           const pass = addressValid && tempValid && humValid;
           
           resultsDroplet.tests.i2c = {
             pass,
             i2cAddress,
-            temperature: temp,
-            humidity: hum,
+            temperature: tempRaw,
+            humidity: humRaw,
+            temperature_c: tempC,
+            humidity_percent: humPct,
             raw: resp,
-            message: pass ? `I2C: ${i2cAddress}, Temp: ${temp}, Hum: ${hum}` : 'Invalid I2C values'
+            message: pass ? `I2C: ${i2cAddress}, Temp: ${tempDisplay} C, Hum: ${humDisplay} %` : 'Invalid I2C values'
           };
           setEval('pass_i2c', pass);
         } catch (err) {
@@ -1676,15 +1689,22 @@ class FactoryTestingService {
             i2cAddress: null,
             temperature: null,
             humidity: null,
+            temperature_c: null,
+            humidity_percent: null,
             raw: null,
             message: err.message || 'I2C test failed'
           };
           setEval('pass_i2c', false);
         }
 
-        const allPass = Object.keys(resultsDroplet._eval).length > 0 && Object.values(resultsDroplet._eval).every(Boolean);
+        // Pass only if all three Droplet tests passed
+        const passLora = !!resultsDroplet._eval.pass_lora;
+        const passBattery = !!resultsDroplet._eval.pass_battery;
+        const passI2c = !!resultsDroplet._eval.pass_i2c;
+        const allPass = passLora && passBattery && passI2c;
         resultsDroplet.summary = {
-          passAll: allPass
+          passAll: allPass,
+          breakdown: { lora: passLora, battery: passBattery, i2c: passI2c }
         };
 
         this.updateProgress('Droplet tests completed');
