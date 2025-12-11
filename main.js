@@ -338,7 +338,7 @@ function createMenu() {
       label: 'Help',
       submenu: [
         {
-          label: 'About Nube iO Toolkit',
+          label: 'About Nube iO EOL Factory',
           click: () => {
             const mainWindow = BrowserWindow.getFocusedWindow();
             if (mainWindow) {

@@ -972,9 +972,9 @@ class App {
           <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg dark:shadow-2xl p-4 transition-colors duration-300">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-4">
-                <img src="assets/Logo.svg" alt="Nube iO Toolkit Logo" class="h-10 ${this.isDarkMode ? 'brightness-110' : ''}" />
+                <img src="assets/Logo.svg" alt="Nube iO EOL Factory Logo" class="h-10 ${this.isDarkMode ? 'brightness-110' : ''}" />
                 <div>
-                  <h1 class="text-2xl font-bold text-gray-800 dark:text-gray-100">Nube iO Toolkit</h1>
+                  <h1 class="text-2xl font-bold text-gray-800 dark:text-gray-100">Nube iO EOL Factory</h1>
                   <div class="flex items-center gap-2">
                     <div class="w-3 h-3 rounded-full ${this.isConnected ? 'bg-green-500' : 'bg-red-500'}"></div>
                     <span class="text-sm text-gray-600 dark:text-gray-300">${this.isConnected ? 'Connected' : 'Disconnected'}</span>

@@ -15,7 +15,7 @@ class AboutPage {
           <div class="w-20 h-20 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl mx-auto mb-4 flex items-center justify-center">
             <span class="text-3xl">🏠</span>
           </div>
-          <h1 class="text-3xl font-bold text-gray-800 mb-2">Nube iO Toolkit</h1>
+          <h1 class="text-3xl font-bold text-gray-800 mb-2">Nube iO EOL Factory</h1>
           <p class="text-lg text-gray-600">Complete Development Tool: Flash, Monitor, Control & Simulate</p>
           <div class="mt-2 px-4 py-2 bg-blue-100 text-blue-800 rounded-full text-sm font-medium inline-block">
             Version 1.0.0
