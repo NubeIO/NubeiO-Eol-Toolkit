@@ -27,11 +27,11 @@ let cachedPythonCommand = null;
 function getPrinterScriptsDir() {
   // In production, files in asarUnpack are extracted to app.asar.unpacked
   const unpackedPath = path.join(__dirname, '..', 'app.asar.unpacked', 'embedded', 'printer-scripts');
-  
+
   if (fs.existsSync(unpackedPath)) {
     return unpackedPath;
   }
-  
+
   // Development or non-ASAR build
   return path.join(__dirname, 'embedded', 'printer-scripts');
 }
@@ -97,14 +97,14 @@ function resolvePythonExecutable() {
 function spawnPython(pythonArgs, options = {}) {
   // Check if first arg is the print_product_label.py script
   const isLabelPrinter = pythonArgs.length > 0 && pythonArgs[0].includes('print_product_label.py');
-  
+
   if (isLabelPrinter) {
     // For label printer, check for bundled .exe first
     const scriptPath = pythonArgs[0];
     const exePath = scriptPath.replace('.py', '.exe');
-    
+
     console.log('[Printer] Checking for executable:', exePath);
-    
+
     if (fs.existsSync(exePath)) {
       console.log('[Printer] Using bundled executable:', exePath);
       // Remove the .py script path and pass remaining args to .exe
@@ -117,7 +117,7 @@ function spawnPython(pythonArgs, options = {}) {
       console.log('[Printer] Executable not found, falling back to Python');
     }
   }
-  
+
   // Fall back to Python interpreter
   const pythonCommand = resolvePythonExecutable();
   if (!pythonCommand) {
@@ -338,7 +338,7 @@ function createMenu() {
       label: 'Help',
       submenu: [
         {
-          label: 'About Nube iO Toolkit',
+          label: 'About Nube iO EOL Factory',
           click: () => {
             const mainWindow = BrowserWindow.getFocusedWindow();
             if (mainWindow) {
@@ -1001,10 +1001,21 @@ ipcMain.handle('stm32:readUID', async () => {
 });
 
 ipcMain.handle('stm32:detectSTLink', async () => {
+  console.log('[MAIN] stm32:detectSTLink handler called');
   try {
-    return await OpenOCDSTM32Service.detectSTLink();
+    console.log('[MAIN] Calling OpenOCDSTM32Service.detectSTLink()...');
+    const result = await OpenOCDSTM32Service.detectSTLink();
+    console.log('[MAIN] detectSTLink returned:', JSON.stringify({
+      success: result.success,
+      detected: result.detected,
+      mismatch: result.mismatch,
+      detectedType: result.detectedType,
+      selectedType: result.selectedType
+    }, null, 2));
+    return result;
   } catch (error) {
-    console.error('Failed to detect ST-Link:', error);
+    console.error('[MAIN] ❌ Failed to detect ST-Link:', error.message);
+    console.error('[MAIN] Error stack:', error.stack);
     return {
       success: false,
       detected: false,
@@ -1026,14 +1037,7 @@ ipcMain.handle('stm32:getStatus', () => {
   return OpenOCDSTM32Service.getStatus();
 });
 
-ipcMain.handle('stm32:disconnectCubeCLI', async () => {
-  try {
-    return await OpenOCDSTM32Service.disconnectCubeCLI();
-  } catch (error) {
-    console.error('disconnectCubeCLI failed:', error);
-    return { success: false, error: error.message };
-  }
-});
+// Removed: stm32:disconnectCubeCLI - no longer needed, using OpenOCD only
 
 ipcMain.handle('stm32:setVersion', (event, version) => {
   OpenOCDSTM32Service.setVersion(version);
@@ -1042,14 +1046,11 @@ ipcMain.handle('stm32:setVersion', (event, version) => {
 
 ipcMain.handle('stm32:disconnect', async () => {
   try {
-    // Try OpenOCD disconnect first
+    // Try OpenOCD disconnect
     const openocdRes = await OpenOCDSTM32Service.disconnectSTLink().catch(e => ({ success: false, error: e.message }));
-    // Also attempt to disconnect CubeProgrammer CLI to fully release the ST-Link
-    const cubeRes = await OpenOCDSTM32Service.disconnectCubeCLI().catch(() => ({ success: false }));
 
     return {
-      openocd: openocdRes,
-      cubecli: cubeRes
+      openocd: openocdRes
     };
   } catch (error) {
     console.error('Failed to disconnect ST-Link:', error);
@@ -1072,23 +1073,16 @@ ipcMain.handle('stm32:forceRelease', async () => {
       results.openocd_disconnect = { success: false, error: e.message };
     }
 
-    try {
-      results.cubecli_disconnect = await OpenOCDSTM32Service.disconnectCubeCLI().catch(e => ({ success: false, error: e.message }));
-    } catch (e) {
-      results.cubecli_disconnect = { success: false, error: e.message };
-    }
-
     // If graceful disconnects indicate success, return early and let UI refresh
     const openOk = results.openocd_disconnect && results.openocd_disconnect.success;
-    const cliOk = results.cubecli_disconnect && results.cubecli_disconnect.success;
-    if (openOk || cliOk) {
+    if (openOk) {
       // Append to diagnostics and return tails
       try {
         const fs = require('fs');
         const path = require('path');
         const logPath = path.join(__dirname, 'cubecli-diagnostics.log');
         fs.appendFileSync(logPath, `\n=== FORCE RELEASE (graceful) (${new Date().toISOString()}) ===\n` + JSON.stringify(results, null, 2) + '\n');
-      } catch (e) {}
+      } catch (e) { }
 
       try {
         const fs = require('fs');
@@ -1147,7 +1141,7 @@ ipcMain.handle('stm32:forceRelease', async () => {
       const path = require('path');
       const logPath = path.join(__dirname, 'cubecli-diagnostics.log');
       fs.appendFileSync(logPath, `\n=== FORCE RELEASE (${new Date().toISOString()}) ===\n` + JSON.stringify(results, null, 2) + '\n');
-    } catch (e) {}
+    } catch (e) { }
 
     // Read last lines from diagnostics to help UI show immediate feedback
     try {
@@ -1193,7 +1187,7 @@ ipcMain.handle('dialog:openFile', async (event, options) => {
 ipcMain.handle('printer:getPrinters', async () => {
   try {
     const execPromise = util.promisify(childProcess.exec);
-    
+
     // Use PowerShell to get installed printers
     const { stdout } = await execPromise('powershell -Command "Get-Printer | Select-Object -ExpandProperty Name"');
     const printers = stdout.trim().split('\n').map(name => ({ name: name.trim() })).filter(p => p.name);
@@ -1260,19 +1254,19 @@ ipcMain.handle('printer:printLabel', async (event, payload) => {
     }
 
     const path = require('path');
-    
+
     // Path to Python print script from embedded folder
     const pythonScriptDir = getPrinterScriptsDir();
     const pythonScript = path.join(pythonScriptDir, 'print_product_label.py');
-    
+
     console.log('Printing label with script:', pythonScript);
     console.log('Payload:', JSON.stringify(payload, null, 2));
-    
+
     // Check if script exists
     if (!require('fs').existsSync(pythonScript)) {
       return { success: false, error: `Script not found: ${pythonScript}` };
     }
-    
+
     return await new Promise((resolve) => {
       // Call script with arguments
       // Format: print_product_label.py <barcode> <mn> <firmware> <batchId> <uid> <date>
@@ -1285,31 +1279,31 @@ ipcMain.handle('printer:printLabel', async (event, payload) => {
         payload.uid || '',                               // UID (for label display)
         payload.date || new Date().toISOString().slice(0, 10).replace(/-/g, '/')  // Date
       ];
-      
+
       console.log('Calling print script with args:', args);
-      
+
       try {
         // Use spawnPython which handles .exe detection automatically
         const pythonProcess = spawnPython(args, { cwd: pythonScriptDir });
-        
+
         let output = '';
         let errorOutput = '';
-        
+
         pythonProcess.stdout.on('data', (data) => {
           output += data.toString();
           console.log('[Print] stdout:', data.toString());
         });
-        
+
         pythonProcess.stderr.on('data', (data) => {
           errorOutput += data.toString();
           console.log('[Print] stderr:', data.toString());
         });
-        
+
         pythonProcess.on('error', (err) => {
           console.error('[Print] Process error:', err.message);
           resolve({ success: false, error: err.message });
         });
-        
+
         pythonProcess.on('close', (code) => {
           console.log('[Print] Exit code:', code);
           if (code === 0) {
@@ -1539,7 +1533,7 @@ ipcMain.handle('factoryTesting:acb:full', async (event) => {
 // Two-step connect: probe connect-only and return working token
 ipcMain.handle('stm32:probeConnect', async () => {
   try {
-    return await OpenOCDSTM32Service.probeConnect_via_CubeCLI();
+    return await OpenOCDSTM32Service.probeConnect();
   } catch (error) {
     console.error('probeConnect failed:', error);
     return { success: false, error: error.message };
@@ -1555,7 +1549,7 @@ ipcMain.handle('stm32:flashWithToken', async (event, connectToken, firmwarePath,
 
     const mainWindow = BrowserWindow.getAllWindows()[0];
 
-    const result = await OpenOCDSTM32Service.flashWithToken_via_CubeCLI(connectToken, firmwarePath, (progress) => {
+    const result = await OpenOCDSTM32Service.flashWithToken(connectToken, firmwarePath, (progress) => {
       if (mainWindow) mainWindow.webContents.send('stm32:flash-progress', progress);
     });
 

@@ -26,6 +26,19 @@ class STM32FlasherModule {
     this.selectedType = null;
     this.backendStatus = null;
     this._detectionTimerId = null;
+
+    // Flash protection
+    this.flashProtected = false;
+    this.protectionInfo = null;
+    this.powerCycleRequired = false;
+    this.isUnlocking = false;
+
+    // Connection monitoring
+    this._connectionCheckInterval = null;
+    this._connectionCheckIntervalMs = 15000; // Check every 15 seconds (reduced frequency to avoid too many OpenOCD calls)
+    this._connectionLostWarningShown = false;
+    this._connectionFailCount = 0; // Track consecutive failures
+    this._maxConnectionFailures = 3; // Allow 3 consecutive failures before disconnecting
   }
 
   async init() {
@@ -39,7 +52,8 @@ class STM32FlasherModule {
       // Fallback defaults
       this.deviceTypes = {
         DROPLET: { name: 'Droplet', mcu: 'STM32WLE5', supportsLoRaID: true },
-        ZONE_CONTROLLER: { name: 'Zone Controller', mcu: 'STM32F030C8T6', supportsLoRaID: false }
+        ZONE_CONTROLLER: { name: 'Zone Controller', mcu: 'STM32F030C8T6', supportsLoRaID: false },
+        MICRO_EDGE: { name: 'Micro Edge', mcu: 'STM32L432KBU6', supportsLoRaID: true }
       };
     }
 
@@ -78,104 +92,12 @@ class STM32FlasherModule {
       this.isDetecting = true;
       // clear any previous connect token
       this._connectToken = null;
-      
-      // Special handling for Micro Edge - continuous detection
-      if (this.currentDeviceType === 'MICRO_EDGE') {
-        const proceed = confirm(
-          '⚠️ MICRO EDGE - CONTINUOUS DETECTION\n\n' +
-          'Instructions:\n' +
-          '1. HOLD the RESET button on the board\n' +
-          '2. Click OK to start continuous detection\n' +
-          '3. RELEASE the RESET button when you see "Connecting..."\n' +
-          '4. Click Cancel button to stop detection\n\n' +
-          'Ready?'
-        );
-        
-        if (!proceed) {
-          this.isDetecting = false;
-          return;
-        }
-        
-        // Start two-step probe flow: we will ask backend to probe-connect and return a token
-        this.flashProgress = '🔄 Probing ST-Link for connect token...';
-        this.render();
 
-        try {
-          const probeRes = await electronAPI.probeConnect();
-          if (probeRes && probeRes.success && probeRes.connectToken) {
-            // Save connect token and instruct user to release RESET then press Continue
-            this._connectToken = probeRes.connectToken;
-            this._probeInfo = probeRes.info || null;
-
-            this.flashProgress = `✅ Probe successful. Token: ${this._connectToken}\nRelease RESET now, then press Continue to flash.`;
-            // Mark ST-Link as detected for UI enable
-            this.stlinkDetected = true;
-            this.mcuInfo = this._probeInfo || { chip: this._probeInfo?.chip };
-            this.render();
-            return;
-          } else {
-            this.flashProgress = '❌ Probe failed. Please ensure RESET is being held and try again.';
-            this.render();
-            this.isDetecting = false;
-            return;
-          }
-        } catch (e) {
-          this.flashProgress = `Probe error: ${e.message}`;
-          this.render();
-          this.isDetecting = false;
-          return;
-        }
-        
-        this.isContinuousDetecting = true;
-        let attempt = 0;
-        const maxAttempts = 30; // 30 attempts × 2 seconds = 60 seconds max
-        
-        const tryDetection = async () => {
-          if (!this.isContinuousDetecting || attempt >= maxAttempts) {
-            this.isContinuousDetecting = false;
-            this.isDetecting = false;
-            if (attempt >= maxAttempts) {
-              this.flashProgress = '❌ Detection timeout. Please try again.';
-            } else {
-              this.flashProgress = 'Detection cancelled.';
-            }
-            this.render();
-            return;
-          }
-          
-          attempt++;
-          this.flashProgress = `🔄 Connecting... (attempt ${attempt}/${maxAttempts}) - Release RESET now!`;
-          this.render();
-          
-          // Try detection
-          try {
-            const result = await electronAPI.detectSTM32Once(4000); // Use 4000 kHz like STM32CubeProgrammer
-            
-            if (result && result.success && result.detected) {
-              // Success!
-              this.isContinuousDetecting = false;
-              this.isDetecting = false;
-              this.stlinkDetected = true;
-              this.mcuInfo = result.info;
-              this.flashProgress = '✅ Connected successfully!';
-              this.render();
-              return;
-            }
-          } catch (error) {
-            console.log(`Detection attempt ${attempt} failed:`, error);
-          }
-          
-          // Try again after 2 seconds (give OpenOCD time to complete)
-          this._detectionTimerId = setTimeout(tryDetection, 2000);
-        };
-        
-        // Start first attempt
-            tryDetection();
-          return;
-      }
-      
-      // Normal detection for other devices
+      // All devices (Droplet, Zone Controller, Micro Edge) now use the same detection mechanism
       this.flashProgress = 'Detecting ST-Link and MCU...';
+
+      // Stop any existing connection monitoring
+      this.stopConnectionMonitoring();
 
       // Reset ALL detection state before new detection
       this.stlinkDetected = false;
@@ -186,6 +108,8 @@ class STM32FlasherModule {
       this.flashProtected = false;
       this.protectionInfo = null;
       this.powerCycleRequired = false;
+      this._connectionLostWarningShown = false;
+      this.flashResult = null; // Clear previous flash result (e.g., "Flash Successful")
 
       this.render();
 
@@ -212,51 +136,73 @@ class STM32FlasherModule {
         this.detectedType = result.detectedType;
         this.selectedType = result.selectedType;
 
-      // console.log('=== FRONTEND: Processing detection ===');
-      // console.log('mcuMismatch:', this.mcuMismatch);
-      // console.log('detectedType:', this.detectedType);
-      // console.log('selectedType:', this.selectedType);
+        // console.log('=== FRONTEND: Processing detection ===');
+        // console.log('mcuMismatch:', this.mcuMismatch);
+        // console.log('detectedType:', this.detectedType);
+        // console.log('selectedType:', this.selectedType);
 
         if (this.mcuMismatch === true && this.detectedType && this.selectedType) {
           // Device mismatch detected - auto disconnect and force reselection
           const detectedDevice = this.deviceTypes[this.detectedType];
           const selectedDevice = this.deviceTypes[this.selectedType];
 
-          this.flashProgress = `⚠️ DEVICE MISMATCH - Auto disconnecting...\n\n` +
-            `Detected: ${detectedDevice.name} (${detectedDevice.mcu})\n` +
-            `Selected: ${selectedDevice.name} (${selectedDevice.mcu})`;
+          // Stop connection monitoring if running
+          this.stopConnectionMonitoring();
+
+          this.flashProgress = `⚠️ DEVICE TYPE MISMATCH!\n\n` +
+            `Detected device: ${detectedDevice.name} (${detectedDevice.mcu})\n` +
+            `Selected device: ${selectedDevice.name} (${selectedDevice.mcu})\n\n` +
+            `Auto disconnecting...`;
 
           this.render();
 
           // Auto disconnect
-          await electronAPI.disconnectSTM32();
+          try {
+            await electronAPI.disconnectSTM32();
+          } catch (disconnectError) {
+            console.log('Disconnect error (ignored):', disconnectError);
+          }
 
           // Reset state
           this.stlinkDetected = false;
           this.mcuInfo = null;
+          this.mcuMismatch = false;
+          this.detectedType = null;
+          this.selectedType = null;
+          this.flashProtected = false;
+          this.protectionInfo = null;
+          this._connectionLostWarningShown = false;
+          this.flashResult = null; // Clear previous flash result
 
           // Show alert and force reselection
           setTimeout(() => {
             alert(
-              `⚠️ WRONG DEVICE TYPE!\n\n` +
+              `⚠️ WRONG DEVICE TYPE DETECTED!\n\n` +
+              `The connected device does not match the selected device type.\n\n` +
               `Detected device: ${detectedDevice.name} (${detectedDevice.mcu})\n` +
-              `Selected type: ${selectedDevice.name} (${selectedDevice.mcu})\n\n` +
-              `The device has been disconnected.\n` +
-              `Please select "${detectedDevice.name}" from the dropdown and detect again.`
+              `Selected device: ${selectedDevice.name} (${selectedDevice.mcu})\n\n` +
+              `The device has been disconnected.\n\n` +
+              `Please:\n` +
+              `1. Select "${detectedDevice.name}" from the device type dropdown\n` +
+              `2. Click "Detect ST-Link" again`
             );
 
-            this.flashProgress = `Please select "${detectedDevice.name}" and detect again.`;
+            this.flashProgress = `⚠️ Please select "${detectedDevice.name}" from the dropdown and click "Detect ST-Link" again.`;
             this.render();
           }, 500);
         } else {
           // Device detected and matches selected type
           this.flashProgress = 'ST-Link detected successfully! Device type matches.';
-          
+
+          // Start continuous connection monitoring
+          this._connectionFailCount = 0; // Reset failure counter on successful detection
+          this.startConnectionMonitoring();
+
           // Check flash protection status
           console.log('[UI] Protection result:', result.protection);
           if (result.protection) {
             this.protectionInfo = result.protection;
-            
+
             // Check if there's a mismatch (OPTR=0xAA but flash probe still shows RDP level 1)
             // This indicates power cycle is required
             if (result.protection.note && result.protection.note.includes('power cycle')) {
@@ -274,10 +220,10 @@ class STM32FlasherModule {
               // Normal protection check
               this.flashProtected = result.protection.isProtected === true;
               this.powerCycleRequired = false;
-              
+
               console.log('[UI] Flash protected:', this.flashProtected);
               console.log('[UI] RDP Level:', result.protection.rdpLevel);
-              
+
               if (this.flashProtected) {
                 const rdpLevel = result.protection.rdpLevel || 0;
                 if (rdpLevel === 1) {
@@ -309,6 +255,7 @@ class STM32FlasherModule {
       this.render();
     } catch (error) {
       this.isDetecting = false;
+      this.flashResult = null; // Clear previous flash result on error
       this.flashProgress = `Detection failed: ${error.message}`;
       this.render();
       // console.error('Detection error:', error);
@@ -344,6 +291,9 @@ class STM32FlasherModule {
 
   async disconnectSTLink() {
     try {
+      // Stop connection monitoring
+      this.stopConnectionMonitoring();
+
       this.flashProgress = 'Disconnecting ST-Link...';
       this.render();
 
@@ -360,6 +310,7 @@ class STM32FlasherModule {
         this.selectedType = null;
         this.flashProtected = false;
         this.protectionInfo = null;
+        this._connectionLostWarningShown = false;
 
         this.flashProgress = 'ST-Link disconnected. Please select device type and detect again.';
       } else {
@@ -367,6 +318,7 @@ class STM32FlasherModule {
       }
       this.render();
     } catch (error) {
+      this.flashResult = null; // Clear previous flash result on error
       this.flashProgress = `Disconnect error: ${error.message}`;
       this.render();
       // console.error('Disconnect error:', error);
@@ -507,7 +459,7 @@ class STM32FlasherModule {
           'Unlocking will ERASE ALL flash content.\n\n' +
           'Do you want to unlock now?'
         );
-        
+
         if (confirmed) {
           await this.unlockFlash();
           // After unlock, check if still protected
@@ -527,14 +479,8 @@ class STM32FlasherModule {
       this.flashResult = null;
       this.render();
 
-      // For Micro Edge use two-step token flow if available
-      let result = null;
-      if (this.currentDeviceType === 'MICRO_EDGE' && this._connectToken) {
-        // Use token-based flash (assumes user released RESET and pressed Continue)
-        result = await electronAPI.flashWithToken(this._connectToken, this.firmwarePath, this.version);
-      } else {
-        result = await electronAPI.flashSTM32Droplet(this.firmwarePath, this.version);
-      }
+      // All devices (Droplet, Zone Controller, Micro Edge) use the same flash mechanism
+      const result = await electronAPI.flashSTM32Droplet(this.firmwarePath, this.version);
       // console.log('[STM32Flasher] Flash result:', result);
 
       this.isFlashing = false;
@@ -572,6 +518,202 @@ class STM32FlasherModule {
       this.flashProgress = `Failed to read device info: ${error.message}`;
       this.render();
       // console.error('Read UID error:', error);
+    }
+  }
+
+  async unlockFlash() {
+    if (this.isUnlocking) {
+      return;
+    }
+
+    if (!this.flashProtected) {
+      alert('Flash is not protected. No need to unlock.');
+      return;
+    }
+
+    if (this.protectionInfo && this.protectionInfo.rdpLevel === 2) {
+      alert('Flash is permanently protected (RDP Level 2). Cannot unlock.');
+      return;
+    }
+
+    // No need to verify connection before unlock - device is already detected
+    // verifyConnection() calls detectSTM32Once() which executes mdw commands
+    // This can cause disconnect and is unnecessary since device was already detected
+
+    // Confirm with user
+    const confirmed = confirm(
+      '⚠️ WARNING: Unlocking flash protection will ERASE ALL FLASH CONTENT!\n\n' +
+      'This includes:\n' +
+      '• All firmware\n' +
+      '• All user data\n' +
+      '• Everything stored in flash memory\n\n' +
+      'Are you sure you want to continue?'
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      this.isUnlocking = true;
+      this.powerCycleRequired = false;
+      this.flashProgress = 'Unlocking flash protection (this will erase all flash)...';
+      this.render();
+
+      const result = await electronAPI.unlockSTM32Flash();
+
+      if (result.success) {
+        // Wait for device to stabilize after unlock before verifying
+        // Unlock process may reset device, so we need to wait before checking protection
+        this.flashProgress = 'Waiting for device to stabilize after unlock...';
+        this.render();
+        await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds
+
+        // Verify unlock by checking both OPTR and flash probe with retry logic
+        this.flashProgress = 'Verifying unlock status (checking OPTR and flash controller)...';
+        this.render();
+
+        let protectionCheck = null;
+        let checkAttempts = 0;
+        const maxCheckAttempts = 3;
+
+        while (checkAttempts < maxCheckAttempts && !protectionCheck) {
+          try {
+            protectionCheck = await electronAPI.checkSTM32FlashProtection();
+            break; // Success, exit retry loop
+          } catch (checkError) {
+            checkAttempts++;
+            if (checkAttempts < maxCheckAttempts) {
+              console.log(`[Unlock] Protection check attempt ${checkAttempts} failed, retrying in 1 second...`);
+              this.flashProgress = `Verifying unlock status (attempt ${checkAttempts + 1}/${maxCheckAttempts})...`;
+              this.render();
+              await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second before retry
+            } else {
+              // All attempts failed, handle error
+              throw checkError;
+            }
+          }
+        }
+
+        if (protectionCheck) {
+          this.protectionInfo = protectionCheck;
+
+          // Priority 1: Check if there's a mismatch (OPTR=0xAA but flash probe still shows RDP level 1)
+          // This means flash controller hasn't reloaded OPTR - needs power cycle
+          const hasPowerCycleNote = protectionCheck.note && protectionCheck.note.includes('power cycle');
+          const isMismatchAfterUnlock = protectionCheck.isProtected === true &&
+            protectionCheck.rdpLevel === 1 &&
+            !hasPowerCycleNote;
+
+          if (hasPowerCycleNote || isMismatchAfterUnlock) {
+            // OPTR = 0xAA but flash probe still shows RDP level 1
+            this.powerCycleRequired = true;
+            this.flashProtected = true; // Keep protected until power cycle
+            this.flashProgress = '⚠️ POWER CYCLE REQUIRED\n\n' +
+              'OPTR has been unlocked (0xAA) but flash controller still shows RDP Level 1.\n\n' +
+              'Please:\n' +
+              '1. Power off STM32 (unplug USB or disconnect power)\n' +
+              '2. Wait 2-3 seconds\n' +
+              '3. Power on again\n' +
+              '4. Click "Detect ST-Link" again to verify';
+          } else if (protectionCheck.isProtected === false) {
+            // Both OPTR and flash probe confirm unlocked
+            this.flashProtected = false;
+            this.powerCycleRequired = false;
+            this.flashProgress = '✅ Flash protection unlocked successfully! Flash has been erased. You can now flash new firmware.';
+          } else {
+            // Still protected (but not due to power cycle mismatch)
+            this.flashProtected = true;
+            this.powerCycleRequired = false;
+            this.flashProgress = `⚠️ Flash is still protected. RDP Level: ${protectionCheck.rdpLevel || 'unknown'}\n\n` +
+              'Please try unlocking again or use ST-Link Utility.';
+          }
+        }
+      } else {
+        this.flashProgress = `❌ Failed to unlock flash: ${result.error || 'Unknown error'}`;
+      }
+
+      this.render();
+    } catch (error) {
+      // Check if error message indicates power cycle requirement
+      if (error.message && error.message.includes('POWER CYCLE')) {
+        this.powerCycleRequired = true;
+        this.flashProtected = true;
+        this.flashProgress = '⚠️ POWER CYCLE REQUIRED\n\n' +
+          'OPTR has been unlocked (0xAA) but flash controller still shows RDP Level 1.\n\n' +
+          'Please:\n' +
+          '1. Power off STM32 (unplug USB or disconnect power)\n' +
+          '2. Wait 2-3 seconds\n' +
+          '3. Power on again\n' +
+          '4. Click "Detect ST-Link" again to verify';
+      } else {
+        // Don't assume connection lost - unlock may have succeeded even if verification failed
+        this.flashProgress = `⚠️ Unlock completed but verification failed: ${error.message}\n\n` +
+          'Please click "Detect ST-Link" to verify unlock status.';
+      }
+      this.render();
+    } finally {
+      this.isUnlocking = false;
+    }
+  }
+
+  /**
+   * Verify ST-Link connection is still active
+   * @returns {Promise<boolean>} true if connected, false if disconnected
+   */
+  async verifyConnection() {
+    try {
+      // Quick check using detectSTM32Once (faster than full detect)
+      const result = await electronAPI.detectSTM32Once(480);
+
+      if (result && result.success && result.detected) {
+        return true;
+      }
+
+      // If detect fails, connection is likely lost
+      // Don't call protection check here as it's expensive and not needed for connection verification
+      // Protection check should only be called explicitly (e.g., after unlock, before flash)
+      return false;
+    } catch (error) {
+      console.log('[Connection Check] Connection lost:', error.message);
+      return false;
+    }
+  }
+
+  /**
+   * Start continuous connection monitoring (polling)
+   */
+  startConnectionMonitoring() {
+    // Stop any existing monitoring first
+    this.stopConnectionMonitoring();
+
+    // Only monitor if device is detected
+    if (!this.stlinkDetected) {
+      return;
+    }
+
+    // Connection monitoring disabled - verifyConnection() was causing false disconnects
+    // Users can manually detect ST-Link when needed by clicking "Detect ST-Link" button
+    console.log('[Connection Monitor] Connection monitoring disabled - verifyConnection() was causing disconnects');
+    console.log('[Connection Monitor] Users can manually click "Detect ST-Link" to check connection');
+    this._connectionLostWarningShown = false;
+
+    // Keep the interval structure but don't actually check connection
+    // This allows us to stop monitoring later if needed
+    this._connectionCheckInterval = setInterval(() => {
+      // Connection monitoring disabled - verifyConnection() was causing false disconnects
+      // Do nothing - users will need to manually detect ST-Link when needed
+    }, this._connectionCheckIntervalMs);
+  }
+
+  /**
+   * Stop continuous connection monitoring
+   */
+  stopConnectionMonitoring() {
+    if (this._connectionCheckInterval) {
+      clearInterval(this._connectionCheckInterval);
+      this._connectionCheckInterval = null;
+      console.log('[Connection Monitor] Stopped connection monitoring');
     }
   }
 
@@ -814,25 +956,14 @@ class STM32FlasherModule {
             Flash ${this.currentDeviceType === 'DROPLET' ? '& Read Info' : 'Firmware'}
           </h3>
             <div class="flex gap-4">
-              ${this.currentDeviceType === 'MICRO_EDGE' && this._connectToken ? `
-                <button
-                  onclick="window.stm32Flasher.flashFirmware()"
-                  class="flex-1 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed font-semibold"
-                  ${this.isFlashing || !this.firmwarePath ? 'disabled' : ''}
-                >
-                  <i class="fas ${this.isFlashing ? 'fa-spinner fa-spin' : 'fa-upload'} mr-2"></i>
-                  ${this.isFlashing ? 'Flashing...' : 'Continue (Flash)'}
-                </button>
-              ` : `
-                <button 
-                  onclick="window.stm32Flasher.flashFirmware()"
-                  class="flex-1 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed font-semibold"
-                  ${this.isFlashing || !this.firmwarePath ? 'disabled' : ''}
-                >
-                  <i class="fas ${this.isFlashing ? 'fa-spinner fa-spin' : 'fa-upload'} mr-2"></i>
-                  ${this.isFlashing ? 'Flashing...' : (this.currentDeviceType === 'DROPLET' ? 'Flash & Read Info' : 'Flash Firmware')}
-                </button>
-              `}
+              <button 
+                onclick="window.stm32Flasher.flashFirmware()"
+                class="flex-1 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed font-semibold"
+                ${this.isFlashing || !this.firmwarePath ? 'disabled' : ''}
+              >
+                <i class="fas ${this.isFlashing ? 'fa-spinner fa-spin' : 'fa-upload'} mr-2"></i>
+                ${this.isFlashing ? 'Flashing...' : (this.currentDeviceType === 'DROPLET' ? 'Flash & Read Info' : 'Flash Firmware')}
+              </button>
 
             ${this.currentDeviceType === 'DROPLET' ? `
             <button 

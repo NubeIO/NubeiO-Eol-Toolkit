@@ -101,7 +101,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   flashWithToken: (connectToken, firmwarePath, version) => ipcRenderer.invoke('stm32:flashWithToken', connectToken, firmwarePath, version),
   readSTM32UID: () => ipcRenderer.invoke('stm32:readUID'),
   disconnectSTM32: () => ipcRenderer.invoke('stm32:disconnect'),
-  disconnectCubeCLI: () => ipcRenderer.invoke('stm32:disconnectCubeCLI'),
   forceReleaseSTM32: () => ipcRenderer.invoke('stm32:forceRelease'),
   abortSTM32: () => ipcRenderer.invoke('stm32:abort'),
   getSTM32Status: () => ipcRenderer.invoke('stm32:getStatus'),
@@ -165,7 +164,7 @@ contextBridge.exposeInMainWorld('factoryTestingAPI', {
   disconnect: () => ipcRenderer.invoke('factoryTesting:disconnect'),
   readDeviceInfo: (deviceType = null) => ipcRenderer.invoke('factoryTesting:readDeviceInfo', deviceType),
   runFactoryTests: (device) => ipcRenderer.invoke('factoryTesting:runFactoryTests', device),
-  saveResults: (version, device, deviceInfo, testResults, preTesting) => 
+  saveResults: (version, device, deviceInfo, testResults, preTesting) =>
     ipcRenderer.invoke('factoryTesting:saveResults', version, device, deviceInfo, testResults, preTesting),
   getStatus: () => ipcRenderer.invoke('factoryTesting:getStatus'),
   // ACB-M specific tests
