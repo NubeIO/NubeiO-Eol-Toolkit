@@ -116,6 +116,30 @@ class FactoryTestingPage {
     this.app.render();
   }
 
+  async forceDisconnectDevice() {
+    if (!window.factoryTestingModule) return;
+    this.testProgress = 'Force disconnecting...';
+    this.app.render();
+    try {
+      const res = await window.factoryTestingModule.forceDisconnect();
+      // Reset UI state
+      this.isConnected = false;
+      this._lastAutoConnectedPort = '';
+      try {
+        window.factoryTestingModule.selectedPort = '';
+        window.factoryTestingModule.updatePortDropdown();
+      } catch (_) {}
+      if (res && res.success) {
+        this.testProgress = '✅ Force disconnected';
+      } else {
+        this.testProgress = `❌ Force disconnect failed: ${res && res.error ? res.error : 'Unknown error'}`;
+      }
+    } catch (e) {
+      this.testProgress = `❌ Force disconnect error: ${e && e.message}`;
+    }
+    this.app.render();
+  }
+
   toggleRawJson() {
     this.showRawJson = !this.showRawJson;
     this.app.render();
@@ -1420,6 +1444,13 @@ class FactoryTestingPage {
               this.allowPrint = true;
               this.testProgress += '\n✅ All tests passed - Print Label enabled';
             }
+          } else if (this.selectedDevice === 'Droplet') {
+            const summary = this.factoryTestResults && this.factoryTestResults.summary;
+            const allPass = !!(summary && summary.passAll);
+            if (allPass) {
+              this.allowPrint = true;
+              this.testProgress += '\n✅ All tests passed - Print Label enabled';
+            }
           }
         } catch (e) {}
       }
@@ -2292,12 +2323,26 @@ class FactoryTestingPage {
                 >
                   🔌 Connect
                 </button>
+                <button
+                  onclick="window.factoryTestingPage.forceDisconnectDevice()"
+                  class="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-medium transition-colors"
+                  title="Force release any stuck serial state"
+                >
+                  🛑 Force Disconnect
+                </button>
               ` : `
                 <button
                   onclick="window.factoryTestingPage.disconnectDevice()"
                   class="px-6 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium transition-colors"
                 >
                   🔌 Disconnect
+                </button>
+                <button
+                  onclick="window.factoryTestingPage.forceDisconnectDevice()"
+                  class="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-medium transition-colors"
+                  title="Force release any stuck serial state"
+                >
+                  🛑 Force Disconnect
                 </button>
               `}
             </div>
@@ -2312,6 +2357,7 @@ class FactoryTestingPage {
               ${this.isConnected ? `
                 <button onclick="window.factoryTestingPage.disconnectDevice()" class="px-3 py-1 bg-red-500 text-white rounded">Disconnect</button>
               ` : ''}
+              <button onclick="window.factoryTestingPage.forceDisconnectDevice()" class="px-3 py-1 bg-orange-500 text-white rounded" title="Force release serial">Force Disconnect</button>
               <button onclick="window.factoryTestingPage.startTestNextDevice()" class="px-3 py-1 bg-green-600 text-white rounded">Test Next Device</button>
               <button onclick="window.factoryTestingPage.stopAuto()" class="px-3 py-1 bg-red-500 text-white rounded">Stop Auto</button>
             </div>

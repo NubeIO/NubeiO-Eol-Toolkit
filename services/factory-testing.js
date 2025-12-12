@@ -387,6 +387,49 @@ class FactoryTestingService {
     }
   }
 
+  /**
+   * Forcefully disconnect and reset serial state
+   * Use when the UI shows not connected but backend still holds the port
+   */
+  async forceDisconnect() {
+    try {
+      // Attempt to close port even if flags are inconsistent
+      if (this.port) {
+        try {
+          // Lower DTR/RTS to release any pending operations (best-effort)
+          if (typeof this.port.set === 'function') {
+            try { await new Promise(resolve => this.port.set({ dtr: false, rts: false }, () => resolve())); } catch (_) {}
+          }
+          if (this.port.isOpen) {
+            await new Promise((resolve, reject) => {
+              this.port.close((err) => {
+                if (err) reject(err);
+                else resolve();
+              });
+            });
+          }
+        } catch (e) {
+          console.warn('[Factory Testing] forceDisconnect: close error (ignored):', e && e.message);
+        }
+        // Remove listeners to avoid leaks
+        try { this.port.removeAllListeners && this.port.removeAllListeners(); } catch (_) {}
+      }
+      try { this.parser && this.parser.removeAllListeners && this.parser.removeAllListeners(); } catch (_) {}
+      // Reset service state
+      this.isConnected = false;
+      this.isConnecting = false;
+      this.portPath = '';
+      this.autoNextEnabled = false;
+      this.cleanup();
+      console.log('[Factory Testing] Force disconnect completed');
+      return { success: true };
+    } catch (error) {
+      console.error('[Factory Testing] Force disconnect error:', error);
+      this.cleanup();
+      return { success: false, error: error.message };
+    }
+  }
+
   /** Enable/disable auto proceed to next device (called from renderer) */
   setAutoNextEnabled(enabled) {
     this.autoNextEnabled = !!enabled;

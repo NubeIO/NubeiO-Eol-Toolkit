@@ -1399,6 +1399,15 @@ ipcMain.handle('factoryTesting:disconnect', async () => {
   }
 });
 
+ipcMain.handle('factoryTesting:forceDisconnect', async () => {
+  try {
+    return await factoryTesting.forceDisconnect();
+  } catch (error) {
+    console.error('Failed to force disconnect factory testing:', error);
+    throw error;
+  }
+});
+
 ipcMain.handle('factoryTesting:readDeviceInfo', async (event, deviceType = null) => {
   try {
     return await factoryTesting.readDeviceInfo(deviceType);

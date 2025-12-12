@@ -162,6 +162,7 @@ contextBridge.exposeInMainWorld('fleetMonitoringAPI', {
 contextBridge.exposeInMainWorld('factoryTestingAPI', {
   connect: (port, baudRate, useUnlock = true, deviceType = null) => ipcRenderer.invoke('factoryTesting:connect', port, baudRate, useUnlock, deviceType),
   disconnect: () => ipcRenderer.invoke('factoryTesting:disconnect'),
+  forceDisconnect: () => ipcRenderer.invoke('factoryTesting:forceDisconnect'),
   readDeviceInfo: (deviceType = null) => ipcRenderer.invoke('factoryTesting:readDeviceInfo', deviceType),
   runFactoryTests: (device) => ipcRenderer.invoke('factoryTesting:runFactoryTests', device),
   saveResults: (version, device, deviceInfo, testResults, preTesting) =>

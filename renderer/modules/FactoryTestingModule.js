@@ -185,6 +185,16 @@ class FactoryTestingModule {
     }
   }
 
+  async forceDisconnect() {
+    try {
+      const result = await window.factoryTestingAPI.forceDisconnect();
+      return result;
+    } catch (error) {
+      console.error('Force disconnect error:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
   async readDeviceInfo(deviceType = null) {
     try {
       const result = await window.factoryTestingAPI.readDeviceInfo(deviceType);
