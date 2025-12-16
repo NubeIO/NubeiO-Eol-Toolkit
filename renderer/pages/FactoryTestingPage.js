@@ -928,31 +928,14 @@ class FactoryTestingPage {
           
           this.app.render();
           
-          // Auto mode: show popup then run full tests automatically
+          // Auto mode: pause at Connected modal; user confirms before tests
           if (this.mode === 'auto') {
-            if (!silent) {
-              this._lastAutoConnectedPort = selectedPort;
-              this.showConnectConfirm = true;
-              this.app.render();
-            }
-            try {
-              this.testProgress = 'Starting auto tests...';
-              this.app.render();
-              
-              const fullRes = await window.factoryTestingModule.acbFullTest();
-              if (fullRes && fullRes.success) {
-                this.factoryTestResults = fullRes.data || this.factoryTestResults;
-                this.testProgress = '✅ ACB-M auto tests completed';
-                // Save results to enable Print Label if all tests pass
-                await this.saveResultsToFile();
-              } else {
-                this.testProgress = `❌ ACB-M auto tests failed: ${fullRes && fullRes.error ? fullRes.error : 'Unknown error'}`;
-              }
-            } catch (e) {
-              console.warn('[Factory Testing] ACB-M auto test error:', e && e.message);
-              this.testProgress = `❌ Auto test error: ${e && e.message}`;
-            }
+            this._lastAutoConnectedPort = selectedPort;
+            this._lastAutoConnectedBaud = String(selectedBaud);
+            this.showConnectConfirm = true;
+            this.testProgress = '✅ Connected — review info, then press OK to proceed';
             this.app.render();
+            // Tests will start from confirmConnectOk() in auto mode
           }
         } else if (this.selectedDevice === 'Micro Edge') {
           // Micro Edge: Device info already read during connect, just show popup
@@ -1425,7 +1408,7 @@ class FactoryTestingPage {
             }
           } else if (this.selectedDevice === 'ACB-M') {
             const evals = (this.factoryTestResults && this.factoryTestResults._eval) ? this.factoryTestResults._eval : null;
-            const allPass = evals ? ['pass_uart','pass_rtc','pass_wifi','pass_eth','pass_rs4852'].every(k => evals[k] === true) : false;
+            const allPass = evals ? ['pass_uart','pass_rtc','pass_wifi','pass_lora','pass_eth','pass_rs4852'].every(k => evals[k] === true) : false;
             if (allPass) {
               this.allowPrint = true;
               this.testProgress += '\n✅ All tests passed - Print Label enabled';
@@ -1740,6 +1723,7 @@ class FactoryTestingPage {
       uart: acbStatusBadge(acbEval.pass_uart),
       rtc: acbStatusBadge(acbEval.pass_rtc),
       wifi: acbStatusBadge(acbEval.pass_wifi),
+      lora: acbStatusBadge(acbEval.pass_lora),
       eth: acbStatusBadge(acbEval.pass_eth),
       rs4852: acbStatusBadge(acbEval.pass_rs4852)
     };
@@ -2699,6 +2683,16 @@ class FactoryTestingPage {
                     </div>
                     <div class="rounded-lg border border-gray-200 bg-white p-4 text-sm shadow-sm dark:border-gray-700 dark:bg-gray-900/60">
                       <div class="flex items-center justify-between">
+                        <div class="font-semibold text-gray-800 dark:text-gray-100">LoRa</div>
+                        <span class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold ${acbBadges.lora.className}">${acbBadges.lora.text}</span>
+                      </div>
+                      <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">TX: ${acbTests.lora && typeof acbTests.lora.txDone !== 'undefined' ? acbTests.lora.txDone : '—'}</div>
+                      <div class="text-xs text-gray-500 dark:text-gray-400">RX: ${acbTests.lora && typeof acbTests.lora.rxDone !== 'undefined' ? acbTests.lora.rxDone : '—'}</div>
+                      <div class="text-xs text-gray-500 dark:text-gray-400">Value: ${acbTests.lora && typeof acbTests.lora.value !== 'undefined' ? acbTests.lora.value : '—'}</div>
+                      <div class="text-xs text-gray-500 dark:text-gray-400">${acbTests.lora && acbTests.lora.message ? acbTests.lora.message : 'Awaiting test...'}</div>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 bg-white p-4 text-sm shadow-sm dark:border-gray-700 dark:bg-gray-900/60">
+                      <div class="flex items-center justify-between">
                         <div class="font-semibold text-gray-800 dark:text-gray-100">Ethernet</div>
                         <span class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold ${acbBadges.eth.className}">${acbBadges.eth.text}</span>
                       </div>
@@ -2715,7 +2709,7 @@ class FactoryTestingPage {
                       <div class="text-xs text-gray-500 dark:text-gray-400">Connected: ${acbTests.wifi && typeof acbTests.wifi.connected !== 'undefined' ? acbTests.wifi.connected : '—'}</div>
                       <div class="text-xs text-gray-500 dark:text-gray-400">${acbTests.wifi && acbTests.wifi.message ? acbTests.wifi.message : 'Awaiting test...'}</div>
                     </div>
-                    <div class="rounded-lg border border-gray-200 bg-white p-4 text-sm shadow-sm dark:border-gray-700 dark:bg-gray-900/60 md:col-span-2">
+                    <div class="rounded-lg border border-gray-200 bg-white p-4 text-sm shadow-sm dark:border-gray-700 dark:bg-gray-900/60">
                       <div class="flex items-center justify-between">
                         <div class="font-semibold text-gray-800 dark:text-gray-100">RS485-2</div>
                         <span class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold ${acbBadges.rs4852.className}">${acbBadges.rs4852.text}</span>

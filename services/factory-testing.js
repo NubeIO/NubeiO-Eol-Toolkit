@@ -459,7 +459,9 @@ class FactoryTestingService {
     // Small delay to ensure previous command response is fully consumed
     await new Promise(resolve => setTimeout(resolve, 100));
 
-    const timeoutDuration = customTimeout || this.commandTimeout;
+    // For AT+TEST commands, default timeout is 20s unless caller overrides
+    const isTestCommand = typeof command === 'string' && command.toUpperCase().startsWith('AT+TEST=');
+    const timeoutDuration = customTimeout || (isTestCommand ? 20000 : this.commandTimeout);
     console.log(`[Factory Testing] Command timeout: ${timeoutDuration}ms, requireOK: ${requireOK}`);
 
     return new Promise((resolve, reject) => {
@@ -496,6 +498,14 @@ class FactoryTestingService {
           resolve(line);
           return;
         }
+
+        // For AT+TEST commands, if we get a plain OK, resolve immediately and proceed to next test
+        if (isTestCommand && (line === 'OK' || line.startsWith('OK'))) {
+          clearTimeout(timeout);
+          this.parser.removeListener('data', onData);
+          resolve(responseData || 'OK');
+          return;
+        }
         
         // Collect data line with expected prefix (allow noise before prefix)
         if (!expectedPrefix || line.includes(expectedPrefix)) {
@@ -525,7 +535,7 @@ class FactoryTestingService {
             // For devices that require OK: Set a short timer - if no OK comes within 500ms, accept the data anyway
             dataReceivedTimer = setTimeout(() => {
               if (responseData && !gotOK) {
-                console.log(`[Factory Testing] No OK received within 500ms, accepting data anyway: ${responseData}`);
+                // Accept data if OK hasn't arrived within 500ms to keep flows responsive
                 clearTimeout(timeout);
                 this.parser.removeListener('data', onData);
                 resolve(responseData);
@@ -1528,6 +1538,34 @@ class FactoryTestingService {
           setEval('pass_wifi', false);
         }
 
+        // LoRa test (with 30 second timeout)
+        this.updateProgress('ACB-M: Running LoRa test...');
+        try {
+          const resp = await this.sendATCommand('AT+TEST=lora', '+LORA:', 30000);
+          const payload = resp.replace('+LORA:', '').trim();
+          const parts = payload.split(',');
+          const txDone = Number(parts[0] || '0');
+          const rxDone = Number(parts[1] || '0');
+          const value = (parts[2] || '').trim();
+          const pass = txDone === 1 && rxDone === 1;
+          resultsACB.tests.lora = {
+            pass,
+            txDone,
+            rxDone,
+            value,
+            raw: resp,
+            message: pass ? `LoRa TX=${txDone}, RX=${rxDone}, Value=${value}` : 'LoRa failed'
+          };
+          setEval('pass_lora', pass);
+        } catch (err) {
+          resultsACB.tests.lora = {
+            pass: false,
+            raw: null,
+            message: err.message || 'LoRa test failed'
+          };
+          setEval('pass_lora', false);
+        }
+
         // Ethernet test (with 30 second timeout)
         this.updateProgress('ACB-M: Running Ethernet test...');
         try {
@@ -1582,25 +1620,42 @@ class FactoryTestingService {
         // RS485-2 test (with 30 second timeout)
         this.updateProgress('ACB-M: Running RS485-2 test...');
         try {
-          const resp = await this.sendATCommand('AT+TEST=rs4852', '+RS485:', 30000);
-          const payload = resp.replace('+RS485:', '').trim();
-          // Parse format: "30,0" where first number is count, second is status
-          const parts = payload.split(',');
-          const count = Number(parts[0] || '0');
-          const status = Number(parts[1] || '0');
-          const pass = status === 0; // 0 means success for RS485 test
-          resultsACB.tests.rs4852 = {
-            pass,
-            count,
-            status,
-            raw: resp,
-            message: pass ? `RS485-2 test passed (count=${count})` : `RS485-2 test failed (status=${status})`
-          };
-          setEval('pass_rs4852', pass);
+          const resp = await this.sendATCommand('AT+TEST=rs4852', '+RS4852:', 30000);
+          const raw = resp || '';
+          // If device reports any ERROR, treat as failure immediately
+          if (raw.startsWith('+CME ERROR:') || raw.startsWith('ERROR')) {
+            resultsACB.tests.rs4852 = {
+              pass: false,
+              status: null,
+              count: null,
+              raw,
+              message: 'RS485-2 hardware init failed'
+            };
+            setEval('pass_rs4852', false);
+          } else {
+            // Accept two possible payload formats:
+            // 1) "+RS4852:count,status" (preferred)
+            // 2) "+RS4852:value" then later ERROR (we already handle ERROR above)
+            const payload = raw.replace('+RS4852:', '').trim();
+            const parts = payload.split(',');
+            const count = Number(parts[0] || '0');
+            const status = parts.length > 1 ? Number(parts[1] || '1') : NaN;
+            const haveStatus = parts.length > 1 && Number.isFinite(status);
+            const pass = haveStatus ? (status === 0) : false;
+            resultsACB.tests.rs4852 = {
+              pass,
+              count,
+              status: haveStatus ? status : null,
+              raw,
+              message: pass ? `RS485-2 test passed (count=${count})` : (haveStatus ? `RS485-2 test failed (status=${status})` : 'RS485-2 response incomplete')
+            };
+            setEval('pass_rs4852', pass);
+          }
         } catch (err) {
           resultsACB.tests.rs4852 = {
             pass: false,
             status: null,
+            count: null,
             raw: null,
             message: err.message || 'RS485-2 test failed'
           };
