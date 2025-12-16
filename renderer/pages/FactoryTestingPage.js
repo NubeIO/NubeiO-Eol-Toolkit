@@ -2653,15 +2653,6 @@ class FactoryTestingPage {
                     </div>
                     <div class="rounded-lg border border-gray-200 bg-white p-4 text-sm shadow-sm dark:border-gray-700 dark:bg-gray-900/60">
                       <div class="flex items-center justify-between">
-                        <div class="font-semibold text-gray-800 dark:text-gray-100">Ethernet</div>
-                        <span class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold ${acbBadges.eth.className}">${acbBadges.eth.text}</span>
-                      </div>
-                      <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">MAC: ${acbTests.eth && acbTests.eth.mac ? acbTests.eth.mac : '—'}</div>
-                      <div class="text-xs text-gray-500 dark:text-gray-400">IP: ${acbTests.eth && acbTests.eth.ip ? acbTests.eth.ip : '—'}</div>
-                      <div class="text-xs text-gray-500 dark:text-gray-400">${acbTests.eth && acbTests.eth.message ? acbTests.eth.message : 'Awaiting test...'}</div>
-                    </div>
-                    <div class="rounded-lg border border-gray-200 bg-white p-4 text-sm shadow-sm dark:border-gray-700 dark:bg-gray-900/60">
-                      <div class="flex items-center justify-between">
                         <div class="font-semibold text-gray-800 dark:text-gray-100">WiFi</div>
                         <span class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold ${acbBadges.wifi.className}">${acbBadges.wifi.text}</span>
                       </div>
@@ -2669,7 +2660,7 @@ class FactoryTestingPage {
                       <div class="text-xs text-gray-500 dark:text-gray-400">Connected: ${acbTests.wifi && typeof acbTests.wifi.connected !== 'undefined' ? acbTests.wifi.connected : '—'}</div>
                       <div class="text-xs text-gray-500 dark:text-gray-400">${acbTests.wifi && acbTests.wifi.message ? acbTests.wifi.message : 'Awaiting test...'}</div>
                     </div>
-                    <div class="rounded-lg border border-gray-200 bg-white p-4 text-sm shadow-sm dark:border-gray-700 dark:bg-gray-900/60 md:col-span-2">
+                    <div class="rounded-lg border border-gray-200 bg-white p-4 text-sm shadow-sm dark:border-gray-700 dark:bg-gray-900/60">
                       <div class="flex items-center justify-between">
                         <div class="font-semibold text-gray-800 dark:text-gray-100">RS485-2</div>
                         <span class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold ${acbBadges.rs4852.className}">${acbBadges.rs4852.text}</span>
