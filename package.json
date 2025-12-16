@@ -1,7 +1,7 @@
 {
-  "name": "nube-io-toolkit",
+  "name": "nube-io-eol-factory-toolkit",
   "version": "1.0.0",
-  "description": "Nube iO Toolkit - Complete Development Tool: Flash, Monitor, Control & Simulate",
+  "description": "Nube iO EOL Factory - Complete Development Tool: Flash, Monitor, Control & Simulate",
   "main": "main.js",
   "scripts": {
     "start": "electron . --no-sandbox",
@@ -131,10 +131,10 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Nube iO Toolkit"
+      "shortcutName": "Nube iO EOL Factory"
     },
     "portable": {
-      "artifactName": "Nube_iO_Toolkit-${version}-Portable.exe"
+      "artifactName": "Nube_iO_EOL_Factory-${version}-Portable.exe"
     },
     "forceCodeSigning": false,
     "mac": {
