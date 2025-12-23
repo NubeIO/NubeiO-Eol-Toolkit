@@ -465,9 +465,10 @@ class FactoryTestingService {
     console.log(`[Factory Testing] Command timeout: ${timeoutDuration}ms, requireOK: ${requireOK}`);
 
     return new Promise((resolve, reject) => {
+      const expectedPrefixes = !expectedPrefix ? null : (Array.isArray(expectedPrefix) ? expectedPrefix : [expectedPrefix]);
       const timeout = setTimeout(() => {
         this.parser.removeListener('data', onData);
-        console.error(`[Factory Testing] TIMEOUT: No response for ${command} with prefix ${expectedPrefix}`);
+        console.error(`[Factory Testing] TIMEOUT: No response for ${command} with prefix ${expectedPrefixes ? expectedPrefixes.join('|') : 'NONE'}`);
         console.error(`[Factory Testing] State: responseData=${!!responseData}, gotOK=${gotOK}`);
         
         // If we have responseData but no OK, accept it (some devices don't send OK)
@@ -508,7 +509,7 @@ class FactoryTestingService {
         }
         
         // Collect data line with expected prefix (allow noise before prefix)
-        if (!expectedPrefix || line.includes(expectedPrefix)) {
+        if (!expectedPrefixes || expectedPrefixes.some(p => line.includes(p))) {
           responseData = line;
           console.log(`[Factory Testing] Got data line: ${line}`);
           
@@ -1620,7 +1621,8 @@ class FactoryTestingService {
         // RS485-2 test (with 30 second timeout)
         this.updateProgress('ACB-M: Running RS485-2 test...');
         try {
-          const resp = await this.sendATCommand('AT+TEST=rs4852', '+RS4852:', 30000);
+          // Some firmware returns "+RS4852:count,status" while others return "+RS485:count,status" for the rs4852 command
+          const resp = await this.sendATCommand('AT+TEST=rs4852', ['+RS4852:', '+RS485:'], 30000);
           const raw = resp || '';
           // If device reports any ERROR, treat as failure immediately
           if (raw.startsWith('+CME ERROR:') || raw.startsWith('ERROR')) {
@@ -1635,8 +1637,9 @@ class FactoryTestingService {
           } else {
             // Accept two possible payload formats:
             // 1) "+RS4852:count,status" (preferred)
+            // 1b) "+RS485:count,status" (legacy)
             // 2) "+RS4852:value" then later ERROR (we already handle ERROR above)
-            const payload = raw.replace('+RS4852:', '').trim();
+            const payload = raw.replace(/^\+RS4852?:/i, '').trim();
             const parts = payload.split(',');
             const count = Number(parts[0] || '0');
             const status = parts.length > 1 ? Number(parts[1] || '1') : NaN;

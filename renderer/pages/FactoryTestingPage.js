@@ -63,6 +63,32 @@ class FactoryTestingPage {
     this._lastPrinterCheck = 0;
     this._postRenderTicket = false;
     this._printerPollTimer = null;
+    // Toast state
+    this.toast = null;
+    this._toastTimer = null;
+  }
+
+  // Promise timeout helper for commands/tests
+  async withTimeout(promise, ms = 30000, label = 'Command') {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timeout after ${Math.floor(ms/1000)}s`)), ms);
+    });
+    try {
+      const res = await Promise.race([promise, timeout]);
+      clearTimeout(timer);
+      return res;
+    } catch (e) {
+      clearTimeout(timer);
+      // On timeout, stop testing and surface error status
+      if (String(e && e.message || '').includes('timeout')) {
+        this.isTesting = false;
+        this.testProgress = `❌ ${e.message}`;
+        try { await this.disconnectDevice(); } catch (_) {}
+        this.app.render();
+      }
+      throw e;
+    }
   }
 
   _createEmptyFactoryResults() {
@@ -155,6 +181,27 @@ class FactoryTestingPage {
   }
 
   selectDevice(device) {
+    // If navigating back to device selection, ensure ports are released
+    if (device == null) {
+      try {
+        if (this.isConnected) {
+          // Best-effort disconnect and clear selected port
+          this.disconnectDevice();
+        }
+        if (window.factoryTestingModule) {
+          try { if (window.factoryTestingModule.setAutoNextEnabled) { window.factoryTestingModule.setAutoNextEnabled(false); } } catch (_) {}
+          window.factoryTestingModule.selectedPort = '';
+          try { window.factoryTestingModule.updatePortDropdown && window.factoryTestingModule.updatePortDropdown(); } catch (_) {}
+        }
+      } catch (_) {}
+      this.selectedDevice = null;
+      // Stop any ongoing auto detection when switching views
+      if (this._autoPollTimer) { clearTimeout(this._autoPollTimer); this._autoPollTimer = null; }
+      this.resetData();
+      this.app.render();
+      return;
+    }
+
     this.selectedDevice = device;
     // Stop any ongoing auto detection when switching devices
     if (this._autoPollTimer) { clearTimeout(this._autoPollTimer); this._autoPollTimer = null; }
@@ -550,11 +597,37 @@ class FactoryTestingPage {
       const key = `factoryDefaults:${this.selectedDevice.replace(/\s+/g, '-').toLowerCase()}`;
       localStorage.setItem(key, JSON.stringify(this.preTesting));
       this.testProgress = 'Saved defaults for ' + this.selectedDevice;
+      if (this.showToast) {
+        this.showToast('Defaults saved');
+      }
       // Don't re-render to avoid losing focus on input fields
       console.log('[Factory Testing] Defaults saved for', this.selectedDevice);
     } catch (e) {
       console.error('[Factory Testing] Failed to save defaults:', e && e.message);
     }
+  }
+
+  // Toast helpers
+  showToast(message, timeoutMs = 1800) {
+    try { if (this._toastTimer) { clearTimeout(this._toastTimer); this._toastTimer = null; } } catch (_) {}
+    this.toast = String(message || '');
+    this.app.render();
+    this._toastTimer = setTimeout(() => {
+      this.toast = null;
+      this.app.render();
+    }, timeoutMs);
+  }
+
+  renderToast() {
+    if (!this.toast) return '';
+    const msg = this.toast.replace(/`/g, '');
+    return `
+      <div class="fixed top-4 right-4 z-50">
+        <div class="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm text-gray-800 shadow-lg dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100">
+          <svg class="h-4 w-4 text-gray-700 dark:text-gray-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10a8 8 0 1 0-16 0c0 6 8 10 8 10z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+          <span>${msg}</span>
+        </div>
+      </div>`;
   }
 
   // Reset defaults for selected device type
@@ -793,17 +866,8 @@ class FactoryTestingPage {
     const missing = [];
     if (!this.preTesting.testerName) missing.push('Tester Name');
     if (!this.preTesting.hardwareVersion) missing.push('Hardware Version');
-    
-    // For ACB-M, only Tester Name and Hardware Version are required
-    // For ZC-LCD and Droplet, also require Firmware Version
-    // For Micro Edge, all fields are required
-    if (this.selectedDevice === 'ZC-LCD' || this.selectedDevice === 'Droplet') {
-      if (!this.preTesting.firmwareVersion) missing.push('Firmware Version');
-    } else if (this.selectedDevice === 'Micro Edge') {
-      if (!this.preTesting.firmwareVersion) missing.push('Firmware Version');
-      if (!this.preTesting.batchId) missing.push('Batch ID');
-      if (!this.preTesting.workOrderSerial) missing.push('Work Order Serial');
-    }
+    if (!this.preTesting.batchId) missing.push('Batch ID');
+    if (!this.preTesting.workOrderSerial) missing.push('Work Order Serial');
     
     if (missing.length > 0) {
         console.log('[validatePreTestingInfo] Missing fields:', missing);
@@ -969,7 +1033,7 @@ class FactoryTestingPage {
               this.testProgress = 'Starting auto tests...';
               this.app.render();
               
-              const fullRes = await window.factoryTestingModule.runFactoryTests('Micro Edge');
+              const fullRes = await this.withTimeout(window.factoryTestingModule.runFactoryTests('Micro Edge'), 30000, 'Run all tests');
               if (fullRes && fullRes.success) {
                 this.factoryTestResults = fullRes.data || this.factoryTestResults;
                 this.testProgress = '✅ Micro Edge auto tests completed';
@@ -1138,7 +1202,7 @@ class FactoryTestingPage {
     if (!window.factoryTestingModule || !this.isConnected) { const msg = 'Connect first'; if (this.mode === 'auto') { this.testProgress = msg; this.app.render(); } else { alert(msg); } return; }
     this.testProgress = 'Running ZC WiFi test...'; this.app.render();
     try {
-      const res = await window.factoryTestingModule.zcWifiTest();
+      const res = await this.withTimeout(window.factoryTestingModule.zcWifiTest(), 30000, 'ZC WiFi');
       this.factoryTestResults.wifi = res;
       // Populate labeled value spans and apply status color
       const status = res.status || (res.success ? 'done' : 'fail');
@@ -1158,7 +1222,7 @@ class FactoryTestingPage {
     if (!window.factoryTestingModule || !this.isConnected) { const msg = 'Connect first'; if (this.mode === 'auto') { this.testProgress = msg; this.app.render(); } else { alert(msg); } return; }
     this.testProgress = 'Running ZC I2C test...'; this.app.render();
     try {
-      const res = await window.factoryTestingModule.zcI2cTest();
+      const res = await this.withTimeout(window.factoryTestingModule.zcI2cTest(), 30000, 'ZC I2C');
       this.factoryTestResults.i2c = res;
       // Populate labeled value spans and apply status color
       const statusI = res.status || (res.success ? 'done' : 'fail');
@@ -1184,7 +1248,7 @@ class FactoryTestingPage {
     if (!window.factoryTestingModule || !this.isConnected) { const msg = 'Connect first'; if (this.mode === 'auto') { this.testProgress = msg; this.app.render(); } else { alert(msg); } return; }
     this.testProgress = 'Running ZC RS485 test...'; this.app.render();
     try {
-      const res = await window.factoryTestingModule.zcRs485Test();
+      const res = await this.withTimeout(window.factoryTestingModule.zcRs485Test(), 30000, 'ZC RS485');
       this.factoryTestResults.rs485 = res;
       // Populate labeled value spans and apply status color
       const statusR = res.status || (res.success ? 'done' : 'fail');
@@ -1205,7 +1269,7 @@ class FactoryTestingPage {
     if (!this.validatePreTestingInfo()) return;
     this.isTesting = true; this.testProgress = 'Running ZC full test...'; this.app.render();
     try {
-      const res = await window.factoryTestingModule.zcFullTest();
+      const res = await this.withTimeout(window.factoryTestingModule.zcFullTest(), 30000, 'ZC Full');
       if (res.success) {
         // populate UI fields
         this.factoryTestResults.wifi = res.data.wifi || {};
@@ -1267,10 +1331,14 @@ class FactoryTestingPage {
       this.testProgress = 'Running factory tests...';
       this.app.render();
       
-      const result = await window.factoryTestingModule.runFactoryTests(this.selectedDevice, (progress) => {
+      const result = await this.withTimeout(
+        window.factoryTestingModule.runFactoryTests(this.selectedDevice, (progress) => {
         this.testProgress = progress;
         this.app.render();
-      });
+        }),
+        30000,
+        'Run all tests'
+      );
       
       if (result.success) {
         const mergedResults = Object.assign(this._createEmptyFactoryResults(), result.data || {});
@@ -1576,15 +1644,20 @@ class FactoryTestingPage {
     if (!this.selectedVersion) {
       return `
         <div class="rounded-xl border border-gray-200 bg-white px-8 py-8 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-          <h2 class="mb-6 text-2xl font-bold text-gray-800 dark:text-gray-100">Factory Testing - Select Version</h2>
+          <h2 class="mb-6 text-3xl font-semibold tracking-tight text-gray-900 dark:text-gray-100">Select Testing Version</h2>
           
           <div class="grid grid-cols-2 gap-6">
             <button
               onclick="window.factoryTestingPage.selectVersion('v1')"
               class="group rounded-xl border-2 border-gray-300 bg-gray-50 p-8 transition-all hover:border-gray-400 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-900/40 dark:hover:border-gray-500 dark:hover:bg-gray-800"
             >
-              <div class="mb-4 text-4xl text-gray-600 group-hover:text-gray-800 dark:text-gray-400 dark:group-hover:text-gray-200">📟</div>
-              <div class="mb-2 text-2xl font-bold text-gray-800 dark:text-gray-100">Gen 1</div>
+              <div class="mb-4 flex items-center justify-center text-gray-600 transition-colors group-hover:text-gray-800 dark:text-gray-400 dark:group-hover:text-gray-200">
+                <svg class="h-12 w-12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="8" y="8" width="8" height="8" rx="1"></rect>
+                  <path d="M3 10h3M3 14h3M18 10h3M18 14h3M10 3v3M14 3v3M10 18v3M14 18v3"></path>
+                </svg>
+              </div>
+              <div class="mb-2 text-2xl font-semibold text-gray-900 dark:text-gray-100">Gen 1</div>
               <div class="text-sm text-gray-600 dark:text-gray-400">Micro Edge</div>
             </button>
             
@@ -1592,18 +1665,43 @@ class FactoryTestingPage {
               onclick="window.factoryTestingPage.selectVersion('v2')"
               class="group rounded-xl border-2 border-gray-300 bg-gray-50 p-8 transition-all hover:border-gray-400 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-900/40 dark:hover:border-gray-500 dark:hover:bg-gray-800"
             >
-              <div class="mb-4 text-4xl text-gray-600 group-hover:text-gray-800 dark:text-gray-400 dark:group-hover:text-gray-200">📱</div>
-              <div class="mb-2 text-2xl font-bold text-gray-800 dark:text-gray-100">Gen 2</div>
+              <div class="mb-4 flex items-center justify-center text-gray-600 transition-colors group-hover:text-gray-800 dark:text-gray-400 dark:group-hover:text-gray-200">
+                <svg class="h-12 w-12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 3l9 5-9 5-9-5 9-5z"></path>
+                  <path d="M3 14l9 5 9-5"></path>
+                </svg>
+              </div>
+              <div class="mb-2 text-2xl font-semibold text-gray-900 dark:text-gray-100">Gen 2</div>
               <div class="text-sm text-gray-600 dark:text-gray-400">ZC-LCD, ACB-M, Droplet, ZC-Controller</div>
             </button>
           </div>
         </div>
+        ${this.renderToast()}
       `;
     }
 
     // Device selection screen
     if (!this.selectedDevice) {
       const devices = this.selectedVersion === 'v1' ? this.v1Devices : this.v2Devices;
+      const deviceIconSVG = (name, sizeClass = 'h-12 w-12') => {
+        const baseAttrs = `class="${sizeClass}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"`;
+        if (name === 'Micro Edge') {
+          return `<svg ${baseAttrs}><rect x="8" y="8" width="8" height="8" rx="1"></rect><path d="M3 10h3M3 14h3M18 10h3M18 14h3M10 3v3M14 3v3M10 18v3M14 18v3"></path></svg>`;
+        }
+        if (name === 'ZC-LCD') {
+          return `<svg ${baseAttrs}><rect x="6" y="6" width="12" height="9" rx="2"></rect><path d="M10 17h4M9 19h6"></path></svg>`;
+        }
+        if (name === 'ZC-Controller') {
+          return `<svg ${baseAttrs}><path d="M9 7v4M15 7v4"></path><rect x="8" y="11" width="8" height="5" rx="2"></rect><path d="M12 16v3c0 2 2 3 4 3"></path></svg>`;
+        }
+        if (name === 'ACB-M') {
+          return `<svg ${baseAttrs}><circle cx="12" cy="12" r="8"></circle><path d="M4 12h16M6 8h12M6 16h12M12 4v16"></path></svg>`;
+        }
+        if (name === 'Droplet') {
+          return `<svg ${baseAttrs}><path d="M12 3C9 7 7 9 7 12a5 5 0 0 0 10 0c0-3-2-5-5-9Z"></path></svg>`;
+        }
+        return `<svg ${baseAttrs}><path d="M5 16l4-4M9 12l2-2M11 10l4-4"></path><path d="M15 6l3 3-6 6H6v-6l3-3"></path></svg>`;
+      };
 
       return `
         <div class="rounded-xl border border-gray-200 bg-white px-8 py-8 shadow-sm dark:border-gray-700 dark:bg-gray-800">
@@ -1629,25 +1727,18 @@ class FactoryTestingPage {
               const isACBM = device === 'ACB-M';
               const isDroplet = device === 'Droplet';
 
-              let icon, description;
-
+              let description;
               if (isMicroEdge) {
-                icon = '⚡';
                 description = 'Digital, Analog, Pulse & LoRa';
               } else if (isZCLCD) {
-                icon = '📺';
                 description = 'Screen Testing';
               } else if (isZCController) {
-                icon = '🔌';
                 description = 'Relay Testing';
               } else if (isACBM) {
-                icon = '🌐';
                 description = 'Gateway Testing';
               } else if (isDroplet) {
-                icon = '🌡️';
                 description = 'Environmental Sensors & LoRa';
               } else {
-                icon = '🔧';
                 description = 'Factory Testing';
               }
 
@@ -1656,7 +1747,7 @@ class FactoryTestingPage {
                   onclick="window.factoryTestingPage.selectDevice('${device}')"
                   class="group rounded-xl border-2 border-gray-300 bg-gray-50 p-8 transition-all hover:border-gray-400 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-900/40 dark:hover:border-gray-500 dark:hover:bg-gray-800"
                 >
-                  <div class="mb-4 text-6xl text-gray-600 group-hover:text-gray-800 dark:text-gray-400 dark:group-hover:text-gray-200">${icon}</div>
+                  <div class="mb-4 flex items-center justify-center text-gray-600 transition-colors group-hover:text-gray-800 dark:text-gray-400 dark:group-hover:text-gray-200">${deviceIconSVG(device)}</div>
                   <div class="mb-2 text-2xl font-bold text-gray-800 dark:text-gray-100">${device}</div>
                   <div class="text-sm text-gray-600 dark:text-gray-400">${description}</div>
                 </button>
@@ -1664,6 +1755,7 @@ class FactoryTestingPage {
             }).join('')}
           </div>
         </div>
+        ${this.renderToast()}
       `;
     }
 
@@ -1746,32 +1838,87 @@ class FactoryTestingPage {
     };
     const zcSummaryBadge = zcStatusBadge(typeof zcSummary.passAll === 'boolean' ? zcSummary.passAll : undefined);
 
+    // Minimal black & white step icons
+    const stepIconSVG = (type, sizeClass = 'h-5 w-5') => {
+      const base = `class="${sizeClass}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"`;
+      if (type === 'mode') {
+        return `<svg ${base}><path d="M4 7h16M4 12h16M4 17h16"></path><circle cx="9" cy="7" r="1.5"></circle><circle cx="14" cy="12" r="1.5"></circle><circle cx="11" cy="17" r="1.5"></circle></svg>`;
+      }
+      if (type === 'form') {
+        return `<svg ${base}><rect x="6" y="5" width="12" height="14" rx="2"></rect><path d="M9 3h6v2H9z"></path><path d="M9 11h6M9 15h6"></path></svg>`;
+      }
+      if (type === 'printer') {
+        return `<svg ${base}><path d="M7 9V5h10v4"></path><rect x="5" y="11" width="14" height="8" rx="2"></rect><path d="M8 15h8"></path></svg>`;
+      }
+      if (type === 'info') {
+        // simple info-circle
+        return `<svg ${base}><circle cx="12" cy="12" r="9"></circle><path d="M12 8h.01"></path><path d="M11 12h2v5"></path></svg>`;
+      }
+      if (type === 'results') {
+        // simple bar chart
+        return `<svg ${base}><rect x="5" y="12" width="3" height="7" rx="1"></rect><rect x="10" y="8" width="3" height="11" rx="1"></rect><rect x="15" y="5" width="3" height="14" rx="1"></rect></svg>`;
+      }
+      if (type === 'wifi') {
+        // wifi arcs
+        return `<svg ${base}><path d="M4 10a12 12 0 0 1 16 0"></path><path d="M7 13a8 8 0 0 1 10 0"></path><path d="M10 16a4 4 0 0 1 4 0"></path><circle cx="12" cy="19" r="1"></circle></svg>`;
+      }
+      if (type === 'lcd') {
+        // screen
+        return `<svg ${base}><rect x="6" y="6" width="12" height="9" rx="2"></rect><path d="M10 17h4M9 19h6"></path></svg>`;
+      }
+      if (type === 'rs485') {
+        // simple linked nodes
+        return `<svg ${base}><rect x="6" y="6" width="5" height="5" rx="1"></rect><rect x="13" y="13" width="5" height="5" rx="1"></rect><path d="M11 11l2 2"></path></svg>`;
+      }
+      if (type === 'lora') {
+        // radio waves around a dot
+        return `<svg ${base}><circle cx="12" cy="12" r="1.5"></circle><path d="M8 12a4 4 0 0 1 4-4m0 8a4 4 0 0 0 4-4"></path><path d="M5 12a7 7 0 0 1 7-7m0 14a7 7 0 0 0 7-7"></path></svg>`;
+      }
+      if (type === 'battery') {
+        return `<svg ${base}><rect x="6" y="7" width="11" height="10" rx="2"></rect><path d="M17 10h1.5v4H17"></path></svg>`;
+      }
+      if (type === 'i2c') {
+        // generic chip with pins
+        return `<svg ${base}><rect x="7" y="7" width="10" height="10" rx="2"></rect><path d="M9 5v2M12 5v2M15 5v2M9 17v2M12 17v2M15 17v2"></path></svg>`;
+      }
+      if (type === 'broom') {
+        return `<svg ${base}><path d="M4 18l6-6"></path><path d="M10 12l6-6"></path><path d="M12 10l2 2"></path><path d="M3 21h6l1-3H4z"></path></svg>`;
+      }
+      return `<svg ${base}><circle cx="12" cy="12" r="9"></circle></svg>`;
+    };
+
     return `
+      ${this.renderToast()}
       <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6">
-        <div class="flex items-center justify-between mb-6">
-          <div class="flex items-center gap-4">
-            <div class="flex h-14 w-14 items-center justify-center rounded-xl bg-gray-100 text-2xl text-gray-700 dark:bg-gray-700 dark:text-gray-200">
-              ${this.selectedDevice === 'Micro Edge' ? '⚡' : this.selectedDevice === 'ZC-LCD' ? '📺' : this.selectedDevice === 'ZC-Controller' ? '🔌' : this.selectedDevice === 'ACB-M' ? '🌐' : this.selectedDevice === 'Droplet' ? '🌡️' : '🔧'}
+                <div class="flex items-center justify-between mb-3">
+                  <h4 class="text-sm font-semibold flex items-center gap-2">${stepIconSVG('results','h-5 w-5')}<span>Test Results - ZC-LCD</span></h4>
+                  <button onclick="window.factoryTestingModule.acbClearOutput()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg text-sm font-medium flex items-center gap-2">${stepIconSVG('broom','h-4 w-4')}<span>Clear Output</span></button>
+                </div>
+                
             </div>
             <div>
               <h2 class="text-2xl font-bold text-gray-800 dark:text-gray-100">
                 ${this.selectedDevice}
               </h2>
-              <p class="text-sm text-gray-600 dark:text-gray-400">
-                ${this.selectedDevice === 'Micro Edge' ? 'Digital, Analog, Pulse & LoRa Testing' : 
-                  this.selectedDevice === 'ZC-LCD' ? 'Screen Testing' : 
-                  this.selectedDevice === 'ZC-Controller' ? 'Relay Testing' : 
-                  this.selectedDevice === 'ACB-M' ? 'Gateway Testing' : 
-                  this.selectedDevice === 'Droplet' ? 'Environmental Sensors & LoRa Testing' : 
-                  'Factory Testing'} • Gen ${this.selectedVersion === 'v1' ? '1' : '2'}
-              </p>
+              ${this.selectedDevice === 'Micro Edge' ? '' : `
+                <p class="text-sm text-gray-600 dark:text-gray-400">
+                  ${this.selectedDevice === 'ZC-LCD' ? 'Screen Testing' : 
+                    this.selectedDevice === 'ZC-Controller' ? 'Relay Testing' : 
+                    this.selectedDevice === 'ACB-M' ? 'Gateway Testing' : 
+                    this.selectedDevice === 'Droplet' ? 'Environmental Sensors & LoRa Testing' : 
+                    'Factory Testing'} • Gen ${this.selectedVersion === 'v1' ? '1' : '2'}
+                </p>
+              `}
             </div>
           </div>
-          <div class="flex gap-2">
-            <div class="inline-flex items-center gap-2 rounded-full border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-600 dark:border-gray-600 dark:text-gray-300">
-              <span class="h-2 w-2 rounded-full ${this.isConnected ? 'bg-green-500' : 'bg-gray-400'}"></span>
-              ${this.isConnected ? 'Connected' : 'Disconnected'}
-            </div>
+              <div class="flex items-center gap-2">
+            <button
+              onclick="window.factoryTestingPage.forceDisconnectDevice()"
+              class="rounded-lg border border-orange-500 px-4 py-2 text-sm font-medium text-orange-600 bg-white hover:bg-orange-50 dark:border-orange-400 dark:text-orange-300 dark:hover:bg-gray-800"
+              title="Force release serial"
+            >
+              Force Disconnect
+            </button>
             <button
               onclick="window.factoryTestingPage.selectDevice(null)"
               class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
@@ -1794,13 +1941,12 @@ class FactoryTestingPage {
 
         <!-- Micro Edge Pre Page (Mode + Pre-Testing + Printer) -->
         ${this.selectedDevice === 'Micro Edge' && this.microEdgeStep === 'pre' ? `
-          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
-                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">🧭</div>
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('mode')}</div>
                 <div>
                   <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 1 · Select Mode</h3>
-                  <p class="text-xs text-gray-500 dark:text-gray-400">Auto will detect COM and run tests</p>
                 </div>
               </div>
               <div class="inline-flex items-center rounded-lg border border-gray-300 bg-gray-50 p-0.5 dark:border-gray-600 dark:bg-gray-900/40">
@@ -1810,67 +1956,61 @@ class FactoryTestingPage {
             </div>
           </div>
 
-          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
-                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">📝</div>
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('form')}</div>
                 <div>
                   <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 2 · Pre-Testing Information</h3>
-                  <p class="text-xs text-gray-500 dark:text-gray-400">Complete before running tests</p>
                 </div>
               </div>
+              <div class="flex items-center gap-2">
+                <button 
+                  onclick="window.factoryTestingPage.saveDefaultsForDevice()" 
+                  class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                  Save defaults
+                </button>
+                <button 
+                  onclick="window.factoryTestingPage.resetDefaultsForDevice()" 
+                  class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                  Reset
+                </button>
+              </div>
             </div>
-            <div class="mt-4 flex items-center gap-2">
-              <button 
-                onclick="window.factoryTestingPage.saveDefaultsForDevice()" 
-                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
-                Save defaults
-              </button>
-              <button 
-                onclick="window.factoryTestingPage.resetDefaultsForDevice()" 
-                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
-                Reset
-              </button>
-            </div>
-            <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div class="mt-3 grid grid-cols-1 md:grid-cols-4 gap-3">
               <div>
                 <label class="text-xs text-gray-600 dark:text-gray-300">Tester Name *</label>
-                <input type="text" data-field="testerName" value="${this.preTesting.testerName || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <input type="text" data-field="testerName" value="${this.preTesting.testerName || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
               <div>
                 <label class="text-xs text-gray-600 dark:text-gray-300">Hardware Version *</label>
-                <input type="text" data-field="hardwareVersion" value="${this.preTesting.hardwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
-              </div>
-              <div>
-                <label class="text-xs text-gray-600 dark:text-gray-300">Firmware Version *</label>
-                <input type="text" data-field="firmwareVersion" value="${this.preTesting.firmwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <input type="text" data-field="hardwareVersion" value="${this.preTesting.hardwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
               <div>
                 <label class="text-xs text-gray-600 dark:text-gray-300">Batch ID *</label>
-                <input type="text" data-field="batchId" value="${this.preTesting.batchId || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <input type="text" data-field="batchId" value="${this.preTesting.batchId || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
               <div>
                 <label class="text-xs text-gray-600 dark:text-gray-300">Work Order Serial *</label>
-                <input type="text" data-field="workOrderSerial" value="${this.preTesting.workOrderSerial || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <input type="text" data-field="workOrderSerial" value="${this.preTesting.workOrderSerial || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
             </div>
           </div>
 
-          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
-                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">🖨️</div>
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('printer')}</div>
                 <div>
                   <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 3 · Connect Brother PT-P900W</h3>
-                  <p class="text-xs text-gray-500 dark:text-gray-400">Ensure USB printer is connected</p>
                 </div>
               </div>
               <div>
                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${this.printerConnected ? 'text-green-600 border-green-300' : 'text-red-600 border-red-300'}">${this.printerConnected ? 'Connected' : 'Not Connected'}</span>
               </div>
             </div>
-            <div class="mt-3 flex items-center gap-2">
-              <button onclick="window.factoryTestingPage.checkPrinterConnection({ force: true })" class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">Check Printer</button>
+            <div class="mt-2 flex items-center gap-2">
+              <button onclick="window.factoryTestingPage.checkPrinterConnection({ force: true })" class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">Check Printer</button>
             </div>
           </div>
 
@@ -1883,13 +2023,12 @@ class FactoryTestingPage {
 
         <!-- ACB-M Pre Page (Mode + Pre-Testing + Printer) -->
         ${this.selectedDevice === 'ACB-M' && this.acbStep === 'pre' ? `
-          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
-                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">🧭</div>
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('mode')}</div>
                 <div>
                   <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 1 · Select Mode</h3>
-                  <p class="text-xs text-gray-500 dark:text-gray-400">Auto will detect COM and run tests</p>
                 </div>
               </div>
               <div class="inline-flex items-center rounded-lg border border-gray-300 bg-gray-50 p-0.5 dark:border-gray-600 dark:bg-gray-900/40">
@@ -1899,63 +2038,61 @@ class FactoryTestingPage {
             </div>
           </div>
 
-          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
-                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">📝</div>
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('form')}</div>
                 <div>
                   <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 2 · Pre-Testing Information</h3>
-                  <p class="text-xs text-gray-500 dark:text-gray-400">Complete before running tests</p>
                 </div>
               </div>
+              <div class="flex items-center gap-2">
+                <button 
+                  onclick="window.factoryTestingPage.saveDefaultsForDevice()" 
+                  class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                  Save defaults
+                </button>
+                <button 
+                  onclick="window.factoryTestingPage.resetDefaultsForDevice()" 
+                  class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                  Reset
+                </button>
+              </div>
             </div>
-            <div class="mt-4 flex items-center gap-2">
-              <button 
-                onclick="window.factoryTestingPage.saveDefaultsForDevice()" 
-                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
-                Save defaults
-              </button>
-              <button 
-                onclick="window.factoryTestingPage.resetDefaultsForDevice()" 
-                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
-                Reset
-              </button>
-            </div>
-            <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div class="mt-3 grid grid-cols-1 md:grid-cols-4 gap-3">
               <div>
                 <label class="text-xs text-gray-600 dark:text-gray-300">Tester Name *</label>
-                <input type="text" data-field="testerName" value="${this.preTesting.testerName || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <input type="text" data-field="testerName" value="${this.preTesting.testerName || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
               <div>
                 <label class="text-xs text-gray-600 dark:text-gray-300">Hardware Version *</label>
-                <input type="text" data-field="hardwareVersion" value="${this.preTesting.hardwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <input type="text" data-field="hardwareVersion" value="${this.preTesting.hardwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
               <div>
-                <label class="text-xs text-gray-600 dark:text-gray-300">Batch ID</label>
-                <input type="text" data-field="batchId" value="${this.preTesting.batchId || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <label class="text-xs text-gray-600 dark:text-gray-300">Batch ID *</label>
+                <input type="text" data-field="batchId" value="${this.preTesting.batchId || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
               <div>
-                <label class="text-xs text-gray-600 dark:text-gray-300">Work Order Serial</label>
-                <input type="text" data-field="workOrderSerial" value="${this.preTesting.workOrderSerial || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <label class="text-xs text-gray-600 dark:text-gray-300">Work Order Serial *</label>
+                <input type="text" data-field="workOrderSerial" value="${this.preTesting.workOrderSerial || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
             </div>
           </div>
 
-          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
-                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">🖨️</div>
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('printer')}</div>
                 <div>
                   <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 3 · Connect Brother PT-P900W</h3>
-                  <p class="text-xs text-gray-500 dark:text-gray-400">Ensure USB printer is connected</p>
                 </div>
               </div>
               <div>
                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${this.printerConnected ? 'text-green-600 border-green-300' : 'text-red-600 border-red-300'}">${this.printerConnected ? 'Connected' : 'Not Connected'}</span>
               </div>
             </div>
-            <div class="mt-3 flex items-center gap-2">
-              <button onclick="window.factoryTestingPage.checkPrinterConnection({ force: true })" class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">Check Printer</button>
+            <div class="mt-2 flex items-center gap-2">
+              <button onclick="window.factoryTestingPage.checkPrinterConnection({ force: true })" class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">Check Printer</button>
             </div>
           </div>
 
@@ -1968,13 +2105,12 @@ class FactoryTestingPage {
 
         <!-- ZC-LCD Pre Page (Mode + Pre-Testing) -->
         ${this.selectedDevice === 'ZC-LCD' && this.zcStep === 'pre' ? `
-          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
-                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">🧭</div>
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('mode')}</div>
                 <div>
                   <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 1 · Select Mode</h3>
-                  <p class="text-xs text-gray-500 dark:text-gray-400">Auto will detect COM and run tests</p>
                 </div>
               </div>
               <div class="inline-flex items-center rounded-lg border border-gray-300 bg-gray-50 p-0.5 dark:border-gray-600 dark:bg-gray-900/40">
@@ -1984,67 +2120,61 @@ class FactoryTestingPage {
             </div>
           </div>
 
-          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
-                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">📝</div>
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('form')}</div>
                 <div>
                   <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 2 · Pre-Testing Information</h3>
-                  <p class="text-xs text-gray-500 dark:text-gray-400">Complete before running tests</p>
                 </div>
               </div>
+              <div class="flex items-center gap-2">
+                <button 
+                  onclick="window.factoryTestingPage.saveDefaultsForDevice()" 
+                  class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                  Save defaults
+                </button>
+                <button 
+                  onclick="window.factoryTestingPage.resetDefaultsForDevice()" 
+                  class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                  Reset
+                </button>
+              </div>
             </div>
-            <div class="mt-4 flex items-center gap-2">
-              <button 
-                onclick="window.factoryTestingPage.saveDefaultsForDevice()" 
-                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
-                Save defaults
-              </button>
-              <button 
-                onclick="window.factoryTestingPage.resetDefaultsForDevice()" 
-                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
-                Reset
-              </button>
-            </div>
-            <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div class="mt-3 grid grid-cols-1 md:grid-cols-4 gap-3">
               <div>
                 <label class="text-xs text-gray-600 dark:text-gray-300">Tester Name *</label>
-                <input type="text" data-field="testerName" value="${this.preTesting.testerName || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
-              </div>
-              <div>
-                <label class="text-xs text-gray-600 dark:text-gray-300">Firmware Version *</label>
-                <input type="text" data-field="firmwareVersion" value="${this.preTesting.firmwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <input type="text" data-field="testerName" value="${this.preTesting.testerName || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
               <div>
                 <label class="text-xs text-gray-600 dark:text-gray-300">Hardware Version *</label>
-                <input type="text" data-field="hardwareVersion" value="${this.preTesting.hardwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <input type="text" data-field="hardwareVersion" value="${this.preTesting.hardwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
               <div>
-                <label class="text-xs text-gray-600 dark:text-gray-300">Batch ID</label>
-                <input type="text" data-field="batchId" value="${this.preTesting.batchId || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <label class="text-xs text-gray-600 dark:text-gray-300">Batch ID *</label>
+                <input type="text" data-field="batchId" value="${this.preTesting.batchId || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
               <div>
-                <label class="text-xs text-gray-600 dark:text-gray-300">Work Order Serial</label>
-                <input type="text" data-field="workOrderSerial" value="${this.preTesting.workOrderSerial || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <label class="text-xs text-gray-600 dark:text-gray-300">Work Order Serial *</label>
+                <input type="text" data-field="workOrderSerial" value="${this.preTesting.workOrderSerial || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
             </div>
           </div>
 
-          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
-                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">🖨️</div>
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('printer')}</div>
                 <div>
                   <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 3 · Connect Brother PT-P900W</h3>
-                  <p class="text-xs text-gray-500 dark:text-gray-400">Ensure USB printer is connected</p>
                 </div>
               </div>
               <div>
                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${this.printerConnected ? 'text-green-600 border-green-300' : 'text-red-600 border-red-300'}">${this.printerConnected ? 'Connected' : 'Not Connected'}</span>
               </div>
             </div>
-            <div class="mt-3 flex items-center gap-2">
-              <button onclick="window.factoryTestingPage.checkPrinterConnection({ force: true })" class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">Check Printer</button>
+            <div class="mt-2 flex items-center gap-2">
+              <button onclick="window.factoryTestingPage.checkPrinterConnection({ force: true })" class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">Check Printer</button>
             </div>
           </div>
 
@@ -2057,13 +2187,12 @@ class FactoryTestingPage {
 
         <!-- ZC-Controller Pre Page (Mode + Pre-Testing) -->
         ${this.selectedDevice === 'ZC-Controller' && this.zcControllerStep === 'pre' ? `
-          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
-                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">🧭</div>
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('mode')}</div>
                 <div>
                   <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 1 · Select Mode</h3>
-                  <p class="text-xs text-gray-500 dark:text-gray-400">Auto will detect COM and run tests (enabled after Proceed)</p>
                 </div>
               </div>
               <div class="inline-flex items-center rounded-lg border border-gray-300 bg-gray-50 p-0.5 dark:border-gray-600 dark:bg-gray-900/40">
@@ -2073,67 +2202,61 @@ class FactoryTestingPage {
             </div>
           </div>
 
-          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
-                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">📝</div>
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('form')}</div>
                 <div>
                   <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 2 · Pre-Testing Information</h3>
-                  <p class="text-xs text-gray-500 dark:text-gray-400">Complete before running tests</p>
                 </div>
               </div>
+              <div class="flex items-center gap-2">
+                <button 
+                  onclick="window.factoryTestingPage.saveDefaultsForDevice()" 
+                  class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                  Save defaults
+                </button>
+                <button 
+                  onclick="window.factoryTestingPage.resetDefaultsForDevice()" 
+                  class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                  Reset
+                </button>
+              </div>
             </div>
-            <div class="mt-4 flex items-center gap-2">
-              <button 
-                onclick="window.factoryTestingPage.saveDefaultsForDevice()" 
-                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
-                Save defaults
-              </button>
-              <button 
-                onclick="window.factoryTestingPage.resetDefaultsForDevice()" 
-                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
-                Reset
-              </button>
-            </div>
-            <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div class="mt-3 grid grid-cols-1 md:grid-cols-4 gap-3">
               <div>
                 <label class="text-xs text-gray-600 dark:text-gray-300">Tester Name *</label>
-                <input type="text" data-field="testerName" value="${this.preTesting.testerName || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
-              </div>
-              <div>
-                <label class="text-xs text-gray-600 dark:text-gray-300">Firmware Version *</label>
-                <input type="text" data-field="firmwareVersion" value="${this.preTesting.firmwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <input type="text" data-field="testerName" value="${this.preTesting.testerName || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
               <div>
                 <label class="text-xs text-gray-600 dark:text-gray-300">Hardware Version *</label>
-                <input type="text" data-field="hardwareVersion" value="${this.preTesting.hardwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <input type="text" data-field="hardwareVersion" value="${this.preTesting.hardwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
               <div>
-                <label class="text-xs text-gray-600 dark:text-gray-300">Batch ID</label>
-                <input type="text" data-field="batchId" value="${this.preTesting.batchId || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <label class="text-xs text-gray-600 dark:text-gray-300">Batch ID *</label>
+                <input type="text" data-field="batchId" value="${this.preTesting.batchId || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
               <div>
-                <label class="text-xs text-gray-600 dark:text-gray-300">Work Order Serial</label>
-                <input type="text" data-field="workOrderSerial" value="${this.preTesting.workOrderSerial || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <label class="text-xs text-gray-600 dark:text-gray-300">Work Order Serial *</label>
+                <input type="text" data-field="workOrderSerial" value="${this.preTesting.workOrderSerial || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
             </div>
           </div>
 
-          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
-                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">🖨️</div>
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('printer')}</div>
                 <div>
                   <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 3 · Connect Brother PT-P900W</h3>
-                  <p class="text-xs text-gray-500 dark:text-gray-400">Ensure USB printer is connected</p>
                 </div>
               </div>
               <div>
                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${this.printerConnected ? 'text-green-600 border-green-300' : 'text-red-600 border-red-300'}">${this.printerConnected ? 'Connected' : 'Not Connected'}</span>
               </div>
             </div>
-            <div class="mt-3 flex items-center gap-2">
-              <button onclick="window.factoryTestingPage.checkPrinterConnection({ force: true })" class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">Check Printer</button>
+            <div class="mt-2 flex items-center gap-2">
+              <button onclick="window.factoryTestingPage.checkPrinterConnection({ force: true })" class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">Check Printer</button>
             </div>
           </div>
 
@@ -2146,13 +2269,12 @@ class FactoryTestingPage {
 
         <!-- Droplet Pre Page (Mode + Pre-Testing + Printer) -->
         ${this.selectedDevice === 'Droplet' && this.dropletStep === 'pre' ? `
-          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
-                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">🧭</div>
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('mode')}</div>
                 <div>
                   <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 1 · Select Mode</h3>
-                  <p class="text-xs text-gray-500 dark:text-gray-400">Auto will detect COM and run tests</p>
                 </div>
               </div>
               <div class="inline-flex items-center rounded-lg border border-gray-300 bg-gray-50 p-0.5 dark:border-gray-600 dark:bg-gray-900/40">
@@ -2162,67 +2284,61 @@ class FactoryTestingPage {
             </div>
           </div>
 
-          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
-                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">📝</div>
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('form')}</div>
                 <div>
                   <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 2 · Pre-Testing Information</h3>
-                  <p class="text-xs text-gray-500 dark:text-gray-400">Complete before running tests</p>
                 </div>
               </div>
+              <div class="flex items-center gap-2">
+                <button 
+                  onclick="window.factoryTestingPage.saveDefaultsForDevice()" 
+                  class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                  Save defaults
+                </button>
+                <button 
+                  onclick="window.factoryTestingPage.resetDefaultsForDevice()" 
+                  class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                  Reset
+                </button>
+              </div>
             </div>
-            <div class="mt-4 flex items-center gap-2">
-              <button 
-                onclick="window.factoryTestingPage.saveDefaultsForDevice()" 
-                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
-                Save defaults
-              </button>
-              <button 
-                onclick="window.factoryTestingPage.resetDefaultsForDevice()" 
-                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
-                Reset
-              </button>
-            </div>
-            <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div class="mt-3 grid grid-cols-1 md:grid-cols-4 gap-3">
               <div>
                 <label class="text-xs text-gray-600 dark:text-gray-300">Tester Name *</label>
-                <input type="text" data-field="testerName" value="${this.preTesting.testerName || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
-              </div>
-              <div>
-                <label class="text-xs text-gray-600 dark:text-gray-300">Firmware Version *</label>
-                <input type="text" data-field="firmwareVersion" value="${this.preTesting.firmwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <input type="text" data-field="testerName" value="${this.preTesting.testerName || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
               <div>
                 <label class="text-xs text-gray-600 dark:text-gray-300">Hardware Version *</label>
-                <input type="text" data-field="hardwareVersion" value="${this.preTesting.hardwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <input type="text" data-field="hardwareVersion" value="${this.preTesting.hardwareVersion || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
               <div>
-                <label class="text-xs text-gray-600 dark:text-gray-300">Batch ID</label>
-                <input type="text" data-field="batchId" value="${this.preTesting.batchId || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <label class="text-xs text-gray-600 dark:text-gray-300">Batch ID *</label>
+                <input type="text" data-field="batchId" value="${this.preTesting.batchId || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
               <div>
-                <label class="text-xs text-gray-600 dark:text-gray-300">Work Order Serial</label>
-                <input type="text" data-field="workOrderSerial" value="${this.preTesting.workOrderSerial || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
+                <label class="text-xs text-gray-600 dark:text-gray-300">Work Order Serial *</label>
+                <input type="text" data-field="workOrderSerial" value="${this.preTesting.workOrderSerial || ''}" class="mt-1 w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100" />
               </div>
             </div>
           </div>
 
-          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
-                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">🖨️</div>
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('printer')}</div>
                 <div>
                   <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 3 · Connect Brother PT-P900W</h3>
-                  <p class="text-xs text-gray-500 dark:text-gray-400">Ensure USB printer is connected</p>
                 </div>
               </div>
               <div>
                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${this.printerConnected ? 'text-green-600 border-green-300' : 'text-red-600 border-red-300'}">${this.printerConnected ? 'Connected' : 'Not Connected'}</span>
               </div>
             </div>
-            <div class="mt-3 flex items-center gap-2">
-              <button onclick="window.factoryTestingPage.checkPrinterConnection({ force: true })" class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">Check Printer</button>
+            <div class="mt-2 flex items-center gap-2">
+              <button onclick="window.factoryTestingPage.checkPrinterConnection({ force: true })" class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">Check Printer</button>
             </div>
           </div>
 
@@ -2265,18 +2381,11 @@ class FactoryTestingPage {
                   `}
                   <button
                     onclick="window.factoryTestingPage.refreshSerialPorts()"
-                    class="px-3 py-2 bg-gray-500 hover:bg-gray-600 text-white rounded-lg text-sm transition-colors"
+                    class="px-3 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 text-sm transition-colors dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
                     ${this.isConnected ? 'disabled' : ''}
                     title="Refresh ports"
                   >
-                    🔄
-                  </button>
-                  <button
-                    onclick="window.factoryTestingPage.debugPorts()"
-                    class="px-3 py-2 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg text-sm transition-colors"
-                    title="Debug ports"
-                  >
-                    🐛
+                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9"/><polyline points="21 3 21 12 12 12"/></svg>
                   </button>
                 </div>
                 <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
@@ -2303,30 +2412,22 @@ class FactoryTestingPage {
               ${!this.isConnected ? `
                 <button
                   onclick="window.factoryTestingPage.connectDevice()"
-                  class="px-6 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium transition-colors"
+                  class="px-6 py-2 border border-green-600 text-green-700 bg-white hover:bg-green-50 rounded-lg font-medium transition-colors dark:border-green-500 dark:text-green-400 dark:bg-transparent dark:hover:bg-gray-800"
                 >
-                  🔌 Connect
-                </button>
-                <button
-                  onclick="window.factoryTestingPage.forceDisconnectDevice()"
-                  class="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-medium transition-colors"
-                  title="Force release any stuck serial state"
-                >
-                  🛑 Force Disconnect
+                  <span class="inline-flex items-center gap-2">
+                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7v6a4 4 0 0 0 4 4h2"></path><path d="M19 7v6a4 4 0 0 1-4 4h-2"></path><path d="M7 7h10"></path></svg>
+                    <span>Connect</span>
+                  </span>
                 </button>
               ` : `
                 <button
                   onclick="window.factoryTestingPage.disconnectDevice()"
-                  class="px-6 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium transition-colors"
+                  class="px-6 py-2 border border-red-600 text-red-700 bg-white hover:bg-red-50 rounded-lg font-medium transition-colors dark:border-red-500 dark:text-red-400 dark:bg-transparent dark:hover:bg-gray-800"
                 >
-                  🔌 Disconnect
-                </button>
-                <button
-                  onclick="window.factoryTestingPage.forceDisconnectDevice()"
-                  class="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-medium transition-colors"
-                  title="Force release any stuck serial state"
-                >
-                  🛑 Force Disconnect
+                  <span class="inline-flex items-center gap-2">
+                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7v6a4 4 0 0 0 4 4h2"></path><path d="M19 7v6a4 4 0 0 1-4 4h-2"></path><path d="M7 7h10"></path><path d="M9 17l6-6"></path></svg>
+                    <span>Disconnect</span>
+                  </span>
                 </button>
               `}
             </div>
@@ -2352,9 +2453,7 @@ class FactoryTestingPage {
           <div class="mb-6 rounded-xl border border-gray-200 bg-white dark:bg-gray-800 px-6 py-5 shadow-sm">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
-                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">
-                  🖨️
-                </div>
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('printer')}</div>
                 <div>
                   <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Brother PT-P900W</h3>
                   <p class="text-sm text-gray-500 dark:text-gray-400">Direct USB printing via py-brotherlabel</p>
@@ -2368,7 +2467,7 @@ class FactoryTestingPage {
             <div class="mt-4 rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600 dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-300">
               ${this.printerConnected ? 'Printer ready for label printing.' : 'Connect the printer via USB before printing.'}
             </div>
-            <div class="mt-4 flex items-center gap-3">
+              <div class="mt-4 flex items-center gap-3">
               <button 
                 onclick="window.factoryTestingPage.printLabel()" 
                 class="flex-1 rounded-lg px-5 py-2.5 text-sm font-medium transition-colors ${
@@ -2378,7 +2477,7 @@ class FactoryTestingPage {
                 }" 
                 ${this.allowPrint ? '' : 'disabled'}>
                 <span class="flex items-center justify-center gap-2">
-                  <span class="text-base">🏷️</span>
+                  <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7v10a2 2 0 0 0 2 2h9l7-7-7-7H5a2 2 0 0 0-2 2z"></path><circle cx="9" cy="12" r="1.5"></circle></svg>
                   <span>Print Label</span>
                 </span>
               </button>
@@ -2392,12 +2491,9 @@ class FactoryTestingPage {
           <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
-                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">
-                  📝
-                </div>
+                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('form')}</div>
                 <div>
                   <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Pre-Testing Information</h3>
-                  <p class="text-xs text-gray-500 dark:text-gray-400">Complete before running tests</p>
                 </div>
               </div>
               <button 
@@ -2509,7 +2605,7 @@ class FactoryTestingPage {
           <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <div class="flex items-center gap-3">
               <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">
-                📟
+                ${stepIconSVG('info','h-6 w-6')}
               </div>
               <h4 class="text-sm font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-300">Device information</h4>
             </div>
@@ -2540,7 +2636,7 @@ class FactoryTestingPage {
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
                 <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">
-                  ${this.selectedDevice === 'Micro Edge' ? '⚡' : this.selectedDevice === 'ZC-LCD' ? '📺' : this.selectedDevice === 'ZC-Controller' ? '🔌' : this.selectedDevice === 'ACB-M' ? '🌐' : this.selectedDevice === 'Droplet' ? '🌡️' : '🧪'}
+                  ${stepIconSVG('results','h-6 w-6')}
                 </div>
                 <div>
                   <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Step 3 · Run Factory Tests</h3>
@@ -2661,7 +2757,7 @@ class FactoryTestingPage {
               <div class="mt-6 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
                 <div class="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800/60">
                   <div class="flex items-center justify-between">
-                    <div class="text-sm font-semibold text-gray-700 dark:text-gray-200">📊 Test Results</div>
+                    <div class="text-sm font-semibold text-gray-700 dark:text-gray-200 flex items-center gap-2">${stepIconSVG('results','h-5 w-5')}<span>Test Results</span></div>
                     <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${acbSummaryBadge.className}">${acbSummaryBadge.text}</span>
                   </div>
                   <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -2724,7 +2820,7 @@ class FactoryTestingPage {
 
             ${this.selectedDevice === 'Micro Edge' ? `
               <div class="mt-6 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                <h4 class="text-sm font-semibold mb-3">🧩 Micro Edge - Test Results</h4>
+                <h4 class="text-sm font-semibold mb-3 flex items-center gap-2">${stepIconSVG('results','h-5 w-5')}<span>Micro Edge - Test Results</span></h4>
                 <div class="mb-3 p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700 text-sm">
                   <div class="font-semibold mb-2">Test Conditions</div>
                   <div class="grid grid-cols-3 gap-2">
@@ -2822,7 +2918,7 @@ class FactoryTestingPage {
               <div class="mt-6 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
                 <!-- Header with Clear Output Button -->
                 <div class="flex items-center justify-between mb-3">
-                  <h4 class="text-sm font-semibold">📊 Test Results - ZC-LCD</h4>
+                  <h4 class="text-sm font-semibold flex items-center gap-2">${stepIconSVG('results','h-5 w-5')}<span>Test Results - ZC-LCD</span></h4>
                   <button onclick="window.factoryTestingModule.acbClearOutput()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg text-sm font-medium">🧹 Clear Output</button>
                 </div>
 
@@ -2831,7 +2927,7 @@ class FactoryTestingPage {
                   <!-- WiFi Test -->
                   <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
                     <div class="flex items-center justify-between mb-2">
-                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300">📶 WiFi Test</div>
+                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">${stepIconSVG('wifi','h-5 w-5')}<span>WiFi Test</span></div>
                       ${this.factoryTestResults?.tests?.wifi ? `
                         <div class="text-xl">${this.factoryTestResults.tests.wifi.pass ? '✅' : '❌'}</div>
                       ` : ''}
@@ -2849,7 +2945,7 @@ class FactoryTestingPage {
                   <!-- I2C Test -->
                   <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
                     <div class="flex items-center justify-between mb-2">
-                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300">🔬 I2C Temp/Humidity</div>
+                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">${stepIconSVG('i2c','h-5 w-5')}<span>I2C Temp/Humidity</span></div>
                       ${this.factoryTestResults?.tests?.i2c ? `
                         <div class="text-xl">${this.factoryTestResults.tests.i2c.pass ? '✅' : '❌'}</div>
                       ` : ''}
@@ -2868,7 +2964,7 @@ class FactoryTestingPage {
                   <!-- RS485 Test -->
                   <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
                     <div class="flex items-center justify-between mb-2">
-                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300">🧭 RS485 Test</div>
+                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">${stepIconSVG('rs485','h-5 w-5')}<span>RS485 Test</span></div>
                       ${this.factoryTestResults?.tests?.rs485 ? `
                         <div class="text-xl">${this.factoryTestResults.tests.rs485.pass ? '✅' : '❌'}</div>
                       ` : ''}
@@ -2886,7 +2982,7 @@ class FactoryTestingPage {
                   <!-- LCD Test -->
                   <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
                     <div class="flex items-center justify-between mb-2">
-                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300">📺 LCD Test</div>
+                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">${stepIconSVG('lcd','h-5 w-5')}<span>LCD Test</span></div>
                       ${this.factoryTestResults?.tests?.lcd ? `
                         <div class="text-xl">${this.factoryTestResults.tests.lcd.pass ? '✅' : '❌'}</div>
                       ` : ''}
@@ -2907,7 +3003,7 @@ class FactoryTestingPage {
             ${this.selectedDevice === 'ZC-Controller' ? `
               <div class="mt-6 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
                 <div class="flex items-center justify-between mb-3">
-                  <h4 class="text-sm font-semibold">🔌 Test Results - ZC-Controller</h4>
+                  <h4 class="text-sm font-semibold flex items-center gap-2">${stepIconSVG('results','h-5 w-5')}<span>Test Results - ZC-Controller</span></h4>
                   <button onclick="window.factoryTestingModule.acbClearOutput()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg text-sm font-medium">🧹 Clear Output</button>
                 </div>
 
@@ -3035,8 +3131,8 @@ class FactoryTestingPage {
               <div class="mt-6 p-4 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
                 <!-- Header with Clear Output Button -->
                 <div class="flex items-center justify-between mb-3">
-                  <h4 class="text-sm font-semibold">🌡️ Test Results - Droplet</h4>
-                  <button onclick="window.factoryTestingModule.acbClearOutput()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg text-sm font-medium">🧹 Clear Output</button>
+                  <h4 class="text-sm font-semibold flex items-center gap-2">${stepIconSVG('results','h-5 w-5')}<span>Test Results - Droplet</span></h4>
+                  <button onclick="window.factoryTestingModule.acbClearOutput()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg text-sm font-medium flex items-center gap-2">${stepIconSVG('broom','h-4 w-4')}<span>Clear Output</span></button>
                 </div>
 
                 <!-- Test Results Grid -->
@@ -3044,7 +3140,7 @@ class FactoryTestingPage {
                   <!-- LoRa Test -->
                   <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
                     <div class="flex items-center justify-between mb-2">
-                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300">📡 LoRa Test</div>
+                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">${stepIconSVG('lora','h-5 w-5')}<span>LoRa Test</span></div>
                       ${this.factoryTestResults?.tests?.lora ? `
                         <div class="text-xl">${this.factoryTestResults.tests.lora.pass ? '✅' : '❌'}</div>
                       ` : ''}
@@ -3063,7 +3159,7 @@ class FactoryTestingPage {
                   <!-- Battery Test -->
                   <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
                     <div class="flex items-center justify-between mb-2">
-                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300">🔋 Battery Test</div>
+                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">${stepIconSVG('battery','h-5 w-5')}<span>Battery Test</span></div>
                       ${this.factoryTestResults?.tests?.battery ? `
                         <div class="text-xl">${this.factoryTestResults.tests.battery.pass ? '✅' : '❌'}</div>
                       ` : ''}
@@ -3081,7 +3177,7 @@ class FactoryTestingPage {
                   <!-- I2C Test -->
                   <div class="col-span-2 p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
                     <div class="flex items-center justify-between mb-2">
-                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300">🔬 I2C Temp/Humidity</div>
+                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">${stepIconSVG('i2c','h-5 w-5')}<span>I2C Temp/Humidity</span></div>
                       ${this.factoryTestResults?.tests?.i2c ? `
                         <div class="text-xl">${this.factoryTestResults.tests.i2c.pass ? '✅' : '❌'}</div>
                       ` : ''}
