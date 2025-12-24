@@ -66,6 +66,8 @@ class FactoryTestingPage {
     // Toast state
     this.toast = null;
     this._toastTimer = null;
+    // Progress modal state
+    this.showProgressModal = false;
   }
 
   // Promise timeout helper for commands/tests
@@ -123,6 +125,35 @@ class FactoryTestingPage {
         this.runFactoryTests();
       }
     } catch (e) { console.warn('Failed to start tests after confirm:', e && e.message); }
+  }
+
+  // Progress modal rendering
+  renderProgressModal() {
+    const shouldShow = !!this.testProgress && (this.isTesting || this.showProgressModal);
+    if (!shouldShow) return '';
+    const msg = String(this.testProgress || '').replace(/`/g,'');
+    return `
+      <div class="fixed inset-0 z-50 flex items-center justify-center">
+        <div class="absolute inset-0 bg-black/40"></div>
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl z-10 w-11/12 max-w-lg p-5">
+          <div class="flex items-center gap-3">
+            <svg class="h-5 w-5 animate-spin text-gray-600 dark:text-gray-200" viewBox="0 0 24 24" fill="none">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="text-sm text-gray-800 dark:text-gray-100 whitespace-pre-line">${msg}</p>
+          </div>
+          <div class="mt-4 flex justify-end">
+            <button onclick="window.factoryTestingPage.dismissProgress()" class="px-4 py-2 rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200">${this.isTesting ? 'Hide' : 'Close'}</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  dismissProgress() {
+    this.showProgressModal = false;
+    this.app.render();
   }
 
   cancelConnectConfirm() {
@@ -1031,6 +1062,7 @@ class FactoryTestingPage {
           if (this.mode === 'auto') {
             try {
               this.testProgress = 'Starting auto tests...';
+              this.showProgressModal = true;
               this.app.render();
               
               const fullRes = await this.withTimeout(window.factoryTestingModule.runFactoryTests('Micro Edge'), 30000, 'Run all tests');
@@ -1046,6 +1078,7 @@ class FactoryTestingPage {
               console.warn('[Factory Testing] Micro Edge auto test error:', e && e.message);
               this.testProgress = `❌ Auto test error: ${e && e.message}`;
             }
+            this.showProgressModal = false;
             this.app.render();
           }
           
@@ -1329,12 +1362,14 @@ class FactoryTestingPage {
     try {
       this.isTesting = true;
       this.testProgress = 'Running factory tests...';
+      this.showProgressModal = true;
       this.app.render();
       
       const result = await this.withTimeout(
         window.factoryTestingModule.runFactoryTests(this.selectedDevice, (progress) => {
-        this.testProgress = progress;
-        this.app.render();
+          this.testProgress = progress;
+          this.showProgressModal = true;
+          this.app.render();
         }),
         30000,
         'Run all tests'
@@ -1506,7 +1541,7 @@ class FactoryTestingPage {
         } catch (e) {}
       }
     } catch (error) {
-      console.error('Save results error:', error);
+        this.isTesting = false; this.showProgressModal = false; this.app.render();
     }
   }
 
@@ -1858,18 +1893,6 @@ class FactoryTestingPage {
         // simple bar chart
         return `<svg ${base}><rect x="5" y="12" width="3" height="7" rx="1"></rect><rect x="10" y="8" width="3" height="11" rx="1"></rect><rect x="15" y="5" width="3" height="14" rx="1"></rect></svg>`;
       }
-      if (type === 'wifi') {
-        // wifi arcs
-        return `<svg ${base}><path d="M4 10a12 12 0 0 1 16 0"></path><path d="M7 13a8 8 0 0 1 10 0"></path><path d="M10 16a4 4 0 0 1 4 0"></path><circle cx="12" cy="19" r="1"></circle></svg>`;
-      }
-      if (type === 'lcd') {
-        // screen
-        return `<svg ${base}><rect x="6" y="6" width="12" height="9" rx="2"></rect><path d="M10 17h4M9 19h6"></path></svg>`;
-      }
-      if (type === 'rs485') {
-        // simple linked nodes
-        return `<svg ${base}><rect x="6" y="6" width="5" height="5" rx="1"></rect><rect x="13" y="13" width="5" height="5" rx="1"></rect><path d="M11 11l2 2"></path></svg>`;
-      }
       if (type === 'lora') {
         // radio waves around a dot
         return `<svg ${base}><circle cx="12" cy="12" r="1.5"></circle><path d="M8 12a4 4 0 0 1 4-4m0 8a4 4 0 0 0 4-4"></path><path d="M5 12a7 7 0 0 1 7-7m0 14a7 7 0 0 0 7-7"></path></svg>`;
@@ -1890,11 +1913,21 @@ class FactoryTestingPage {
     return `
       ${this.renderToast()}
       <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6">
-                <div class="flex items-center justify-between mb-3">
-                  <h4 class="text-sm font-semibold flex items-center gap-2">${stepIconSVG('results','h-5 w-5')}<span>Test Results - ZC-LCD</span></h4>
-                  <button onclick="window.factoryTestingModule.acbClearOutput()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg text-sm font-medium flex items-center gap-2">${stepIconSVG('broom','h-4 w-4')}<span>Clear Output</span></button>
-                </div>
-                
+        <div class="flex items-center justify-between mb-6">
+          <div class="flex items-center gap-4">
+            <div class="flex h-14 w-14 items-center justify-center rounded-xl bg-gray-100 text-2xl text-gray-700 dark:bg-gray-700 dark:text-gray-200">
+              ${(() => {
+                const deviceIconSVG = (name, sizeClass = 'h-7 w-7') => {
+                  const baseAttrs = `class="${sizeClass}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"`;
+                  if (name === 'Micro Edge') return `<svg ${baseAttrs}><rect x="8" y="8" width="8" height="8" rx="1"></rect><path d="M3 10h3M3 14h3M18 10h3M18 14h3M10 3v3M14 3v3M10 18v3M14 18v3"></path></svg>`;
+                  if (name === 'ZC-LCD') return `<svg ${baseAttrs}><rect x="6" y="6" width="12" height="9" rx="2"></rect><path d="M10 17h4M9 19h6"></path></svg>`;
+                  if (name === 'ZC-Controller') return `<svg ${baseAttrs}><path d="M9 7v4M15 7v4"></path><rect x="8" y="11" width="8" height="5" rx="2"></rect><path d="M12 16v3c0 2 2 3 4 3"></path></svg>`;
+                  if (name === 'ACB-M') return `<svg ${baseAttrs}><circle cx="12" cy="12" r="8"></circle><path d="M4 12h16M6 8h12M6 16h12M12 4v16"></path></svg>`;
+                  if (name === 'Droplet') return `<svg ${baseAttrs}><path d="M12 3C9 7 7 9 7 12a5 5 0 0 0 10 0c0-3-2-5-5-9Z"></path></svg>`;
+                  return `<svg ${baseAttrs}><path d="M5 16l4-4M9 12l2-2M11 10l4-4"></path><path d="M15 6l3 3-6 6H6v-6l3-3"></path></svg>`;
+                };
+                return deviceIconSVG(this.selectedDevice);
+              })()}
             </div>
             <div>
               <h2 class="text-2xl font-bold text-gray-800 dark:text-gray-100">
@@ -2439,12 +2472,18 @@ class FactoryTestingPage {
               <div class="text-xs text-gray-500">Ports: ${window.factoryTestingModule ? window.factoryTestingModule.serialPorts.length : '...'} • Selected: ${window.factoryTestingModule ? (window.factoryTestingModule.selectedPort || '—') : '—'}</div>
             </div>
             <div class="flex gap-2">
-              ${this.isConnected ? `
-                <button onclick="window.factoryTestingPage.disconnectDevice()" class="px-3 py-1 bg-red-500 text-white rounded">Disconnect</button>
-              ` : ''}
-              <button onclick="window.factoryTestingPage.forceDisconnectDevice()" class="px-3 py-1 bg-orange-500 text-white rounded" title="Force release serial">Force Disconnect</button>
-              <button onclick="window.factoryTestingPage.startTestNextDevice()" class="px-3 py-1 bg-green-600 text-white rounded">Test Next Device</button>
-              <button onclick="window.factoryTestingPage.stopAuto()" class="px-3 py-1 bg-red-500 text-white rounded">Stop Auto</button>
+              <button
+                onclick="window.factoryTestingPage.startTestNextDevice()"
+                class="px-6 py-2 border border-blue-600 text-blue-700 bg-white hover:bg-blue-50 rounded-lg font-medium transition-colors dark:border-blue-500 dark:text-blue-400 dark:bg-transparent dark:hover:bg-gray-800"
+              >
+                Test Next Device
+              </button>
+              <button
+                onclick="window.factoryTestingPage.stopAuto()"
+                class="px-6 py-2 border border-red-600 text-red-700 bg-white hover:bg-red-50 rounded-lg font-medium transition-colors dark:border-red-500 dark:text-red-400 dark:bg-transparent dark:hover:bg-gray-800"
+              >
+                Stop Auto
+              </button>
             </div>
           </div>
           `}
@@ -2927,7 +2966,7 @@ class FactoryTestingPage {
                   <!-- WiFi Test -->
                   <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
                     <div class="flex items-center justify-between mb-2">
-                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">${stepIconSVG('wifi','h-5 w-5')}<span>WiFi Test</span></div>
+                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300">📶 WiFi Test</div>
                       ${this.factoryTestResults?.tests?.wifi ? `
                         <div class="text-xl">${this.factoryTestResults.tests.wifi.pass ? '✅' : '❌'}</div>
                       ` : ''}
@@ -2945,7 +2984,7 @@ class FactoryTestingPage {
                   <!-- I2C Test -->
                   <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
                     <div class="flex items-center justify-between mb-2">
-                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">${stepIconSVG('i2c','h-5 w-5')}<span>I2C Temp/Humidity</span></div>
+                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300">🔬 I2C Temp/Humidity</div>
                       ${this.factoryTestResults?.tests?.i2c ? `
                         <div class="text-xl">${this.factoryTestResults.tests.i2c.pass ? '✅' : '❌'}</div>
                       ` : ''}
@@ -2964,7 +3003,7 @@ class FactoryTestingPage {
                   <!-- RS485 Test -->
                   <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
                     <div class="flex items-center justify-between mb-2">
-                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">${stepIconSVG('rs485','h-5 w-5')}<span>RS485 Test</span></div>
+                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300">🧭 RS485 Test</div>
                       ${this.factoryTestResults?.tests?.rs485 ? `
                         <div class="text-xl">${this.factoryTestResults.tests.rs485.pass ? '✅' : '❌'}</div>
                       ` : ''}
@@ -2982,7 +3021,7 @@ class FactoryTestingPage {
                   <!-- LCD Test -->
                   <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
                     <div class="flex items-center justify-between mb-2">
-                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">${stepIconSVG('lcd','h-5 w-5')}<span>LCD Test</span></div>
+                      <div class="text-sm font-semibold text-gray-700 dark:text-gray-300">📺 LCD Test</div>
                       ${this.factoryTestResults?.tests?.lcd ? `
                         <div class="text-xl">${this.factoryTestResults.tests.lcd.pass ? '✅' : '❌'}</div>
                       ` : ''}
@@ -3199,12 +3238,8 @@ class FactoryTestingPage {
             ` : ''}
           </div>
 
-          <!-- Progress/Status Section -->
-          ${this.testProgress ? `
-            <div class="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg">
-              <p class="text-sm text-blue-800 dark:text-blue-200 whitespace-pre-line">${this.testProgress}</p>
-            </div>
-          ` : ''}
+          <!-- Progress Modal -->
+          ${this.renderProgressModal()}
           
           <!-- Raw JSON Debug Toggle -->
           ${this.selectedDevice === 'ZC-LCD' ? `
