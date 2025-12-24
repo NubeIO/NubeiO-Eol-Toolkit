@@ -1678,7 +1678,7 @@ class FactoryTestingPage {
     // Version selection screen
     if (!this.selectedVersion) {
       return `
-        <div class="rounded-xl border border-gray-200 bg-white px-8 py-8 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div class="rounded-xl border border-gray-600 bg-white px-8 py-8 shadow-sm dark:border-gray-400 dark:bg-gray-800">
           <h2 class="mb-6 text-3xl font-semibold tracking-tight text-gray-900 dark:text-gray-100">Select Testing Version</h2>
           
           <div class="grid grid-cols-2 gap-6">
@@ -1739,7 +1739,7 @@ class FactoryTestingPage {
       };
 
       return `
-        <div class="rounded-xl border border-gray-200 bg-white px-8 py-8 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div class="rounded-xl border border-gray-600 bg-white px-8 py-8 shadow-sm dark:border-gray-400 dark:bg-gray-800">
           <div class="mb-6 flex items-center justify-between">
             <h2 class="text-2xl font-bold text-gray-800 dark:text-gray-100">
               Factory Testing - ${this.selectedVersion === 'v1' ? 'Gen 1' : 'Gen 2'}
@@ -1974,7 +1974,7 @@ class FactoryTestingPage {
 
         <!-- Micro Edge Pre Page (Mode + Pre-Testing + Printer) -->
         ${this.selectedDevice === 'Micro Edge' && this.microEdgeStep === 'pre' ? `
-          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-600 bg-white px-6 py-4 shadow-sm dark:border-gray-400 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
                 <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('mode')}</div>
@@ -1989,7 +1989,7 @@ class FactoryTestingPage {
             </div>
           </div>
 
-          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-600 bg-white px-6 py-4 shadow-sm dark:border-gray-400 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
                 <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('form')}</div>
@@ -2030,7 +2030,7 @@ class FactoryTestingPage {
             </div>
           </div>
 
-          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-600 bg-white px-6 py-4 shadow-sm dark:border-gray-400 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
                 <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('printer')}</div>
@@ -2056,7 +2056,7 @@ class FactoryTestingPage {
 
         <!-- ACB-M Pre Page (Mode + Pre-Testing + Printer) -->
         ${this.selectedDevice === 'ACB-M' && this.acbStep === 'pre' ? `
-          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-600 bg-white px-6 py-4 shadow-sm dark:border-gray-400 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
                 <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('mode')}</div>
@@ -2071,7 +2071,7 @@ class FactoryTestingPage {
             </div>
           </div>
 
-          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-600 bg-white px-6 py-4 shadow-sm dark:border-gray-400 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
                 <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('form')}</div>
@@ -2112,7 +2112,7 @@ class FactoryTestingPage {
             </div>
           </div>
 
-          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-600 bg-white px-6 py-4 shadow-sm dark:border-gray-400 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
                 <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('printer')}</div>
@@ -2138,7 +2138,7 @@ class FactoryTestingPage {
 
         <!-- ZC-LCD Pre Page (Mode + Pre-Testing) -->
         ${this.selectedDevice === 'ZC-LCD' && this.zcStep === 'pre' ? `
-          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-600 bg-white px-6 py-4 shadow-sm dark:border-gray-400 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
                 <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('mode')}</div>
@@ -2153,7 +2153,7 @@ class FactoryTestingPage {
             </div>
           </div>
 
-          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-600 bg-white px-6 py-4 shadow-sm dark:border-gray-400 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
                 <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('form')}</div>
@@ -2194,7 +2194,7 @@ class FactoryTestingPage {
             </div>
           </div>
 
-          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-600 bg-white px-6 py-4 shadow-sm dark:border-gray-400 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
                 <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('printer')}</div>
@@ -2220,7 +2220,7 @@ class FactoryTestingPage {
 
         <!-- ZC-Controller Pre Page (Mode + Pre-Testing) -->
         ${this.selectedDevice === 'ZC-Controller' && this.zcControllerStep === 'pre' ? `
-          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-600 bg-white px-6 py-4 shadow-sm dark:border-gray-400 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
                 <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('mode')}</div>
@@ -2235,7 +2235,7 @@ class FactoryTestingPage {
             </div>
           </div>
 
-          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-600 bg-white px-6 py-4 shadow-sm dark:border-gray-400 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
                 <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('form')}</div>
@@ -2276,7 +2276,7 @@ class FactoryTestingPage {
             </div>
           </div>
 
-          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-600 bg-white px-6 py-4 shadow-sm dark:border-gray-400 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
                 <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('printer')}</div>
@@ -2302,7 +2302,7 @@ class FactoryTestingPage {
 
         <!-- Droplet Pre Page (Mode + Pre-Testing + Printer) -->
         ${this.selectedDevice === 'Droplet' && this.dropletStep === 'pre' ? `
-          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-600 bg-white px-6 py-4 shadow-sm dark:border-gray-400 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
                 <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('mode')}</div>
@@ -2317,7 +2317,7 @@ class FactoryTestingPage {
             </div>
           </div>
 
-          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-600 bg-white px-6 py-4 shadow-sm dark:border-gray-400 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
                 <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('form')}</div>
@@ -2358,7 +2358,7 @@ class FactoryTestingPage {
             </div>
           </div>
 
-          <div class="mb-4 rounded-xl border border-gray-200 bg-white px-6 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-4 rounded-xl border border-gray-600 bg-white px-6 py-4 shadow-sm dark:border-gray-400 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
                 <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('printer')}</div>
@@ -2385,7 +2385,7 @@ class FactoryTestingPage {
         ${isTestingEnabled && ((this.selectedDevice === 'ACB-M' && this.acbStep === 'main') || (this.selectedDevice === 'ZC-LCD' && this.zcStep === 'main') || (this.selectedDevice === 'Micro Edge' && this.microEdgeStep === 'main') || (this.selectedDevice === 'Droplet' && this.dropletStep === 'main') || (this.selectedDevice === 'ZC-Controller' && this.zcControllerStep === 'main')) ? `
           <!-- Connection Section (hidden in Auto mode) -->
           ${this.mode === 'manual' ? `
-          <div class="mb-6 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+          <div class="mb-6 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-600 dark:border-gray-400">
             <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-3">Connect to Device</h3>
             <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
               Connect to the device via UART to communicate using AT commands.
@@ -2466,7 +2466,7 @@ class FactoryTestingPage {
             </div>
           </div>
           ` : `
-          <div class="mb-6 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg flex items-center justify-between">
+          <div class="mb-6 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-600 dark:border-gray-400 flex items-center justify-between">
             <div>
               <strong class="text-sm">Auto Mode</strong>
               <div class="text-xs text-gray-500">Ports: ${window.factoryTestingModule ? window.factoryTestingModule.serialPorts.length : '...'} • Selected: ${window.factoryTestingModule ? (window.factoryTestingModule.selectedPort || '—') : '—'}</div>
@@ -2489,7 +2489,7 @@ class FactoryTestingPage {
           `}
 
           <!-- Brother PT-P900W Printer Section -->
-          <div class="mb-6 rounded-xl border border-gray-200 bg-white dark:bg-gray-800 px-6 py-5 shadow-sm">
+          <div class="mb-6 rounded-xl border border-gray-600 bg-white dark:bg-gray-800 dark:border-gray-400 px-6 py-5 shadow-sm">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
                 <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('printer')}</div>
@@ -2527,7 +2527,7 @@ class FactoryTestingPage {
           </div>
 
           <!-- Pre-Testing Information Section -->
-          <div class="mb-6 rounded-xl border border-gray-200 bg-white px-6 py-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div class="mb-6 rounded-xl border border-gray-600 bg-white px-6 py-5 shadow-sm dark:border-gray-400 dark:bg-gray-800">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
                 <div class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">${stepIconSVG('form')}</div>
