@@ -1097,6 +1097,22 @@ class FactoryTestingPage {
           this.app.render();
           
           // Auto mode: pause here; user will press OK then run tests manually
+
+        } else if (this.selectedDevice === 'ZC-Controller') {
+          // ZC-Controller: Device info read during connect via RS485; show modal
+          if (result.deviceInfo) {
+            this.deviceInfo = result.deviceInfo;
+            console.log('[Factory Testing Page] ZC-Controller device info from connect:', this.deviceInfo);
+          }
+          this.testProgress = `✅ Connected - Device info retrieved`;
+
+          // Show connection success modal for both modes to confirm before tests
+          this._lastAutoConnectedPort = selectedPort;
+          this._lastAutoConnectedBaud = String(selectedBaud);
+          this.showConnectConfirm = true;
+          this.app.render();
+
+          // In auto, tests will start from confirmConnectOk()
           
         } else if (this.selectedDevice === 'Droplet') {
           // Droplet: Device info already read during connect, show popup
@@ -2655,7 +2671,7 @@ class FactoryTestingPage {
               </div>
               <div class="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-xs text-gray-700 dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-200">
                 <span class="text-xs uppercase tracking-wide text-gray-500">UID</span>
-                <span>${(this.deviceInfo.uniqueId || '—').substring(0,24)}</span>
+                <span>${this.deviceInfo.uniqueIdShort || this.deviceInfo.uniqueId || '—'}</span>
               </div>
               <div class="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-200">
                 <span class="text-xs uppercase tracking-wide text-gray-500">Make</span>
