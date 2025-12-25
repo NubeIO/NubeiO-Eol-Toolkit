@@ -68,6 +68,11 @@ class FactoryTestingPage {
     this._toastTimer = null;
     // Progress modal state
     this.showProgressModal = false;
+    // Result modal state (PASS/FAIL after auto tests)
+    this.showTestResultModal = false;
+    this._lastTestResultPass = null;
+    // Last saved artifact paths for display
+    this._lastSaved = { folder: '', csvPath: '', logPath: '', masterCsvPath: '' };
   }
 
   // Promise timeout helper for commands/tests
@@ -129,9 +134,11 @@ class FactoryTestingPage {
 
   // Progress modal rendering
   renderProgressModal() {
-    const shouldShow = !!this.testProgress && (this.isTesting || this.showProgressModal);
+    // Show whenever tests are running or explicitly requested
+    const shouldShow = (this.isTesting || this.showProgressModal);
     if (!shouldShow) return '';
-    const msg = String(this.testProgress || '').replace(/`/g,'');
+    const fallback = this.isTesting ? 'Running tests...' : 'Processing...';
+    const msg = String(this.testProgress || fallback).replace(/`/g,'');
     return `
       <div class="fixed inset-0 z-50 flex items-center justify-center">
         <div class="absolute inset-0 bg-black/40"></div>
@@ -153,6 +160,45 @@ class FactoryTestingPage {
 
   dismissProgress() {
     this.showProgressModal = false;
+    this.app.render();
+  }
+
+  // Result modal rendering (PASS/FAIL summary)
+  renderTestResultModal() {
+    if (!this.showTestResultModal) return '';
+    const pass = !!this._lastTestResultPass;
+    const header = pass ? '✅ Tests Passed' : '❌ Tests Failed';
+    const colorBox = pass ? 'border-green-600' : 'border-red-600';
+    const message = pass ? 'Device passed all checks.' : 'Device failed one or more checks. Review the results.';
+    const di = this.deviceInfo || {};
+    const uid = di.uniqueIdShort || di.uniqueId || '';
+    const model = di.deviceModel || '';
+    const make = di.deviceMake || '';
+    const saved = this._lastSaved || {};
+    const compact = (p) => {
+      if (!p) return '';
+      const parts = String(p).split(/\\\\|\//);
+      const last2 = parts.slice(-2).join('/');
+      return last2 || parts.pop();
+    };
+    const fileLines = (this.selectedDevice === 'Micro Edge') ? `\nCSV: ${compact(saved.csvPath)}\nLOG: ${compact(saved.logPath)}` : '';
+    return `
+      <div class="fixed inset-0 z-50 flex items-center justify-center">
+        <div class="absolute inset-0 bg-black/40"></div>
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl z-10 w-11/12 max-w-md p-4 border ${colorBox}">
+          <h3 class="text-sm font-semibold mb-2">${header}</h3>
+          <pre class="text-xs whitespace-pre-wrap font-sans">${message}\\n\\nDevice: ${make}${make && model ? '-' : ''}${model}\\nUID: ${uid}${fileLines}</pre>
+          <div class="mt-3 flex justify-end">
+            <button onclick="window.factoryTestingPage.dismissTestResult()" class="px-4 py-1 bg-gray-200 dark:bg-gray-700 rounded">OK</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  dismissTestResult() {
+    this.showTestResultModal = false;
+    this._lastTestResultPass = null;
     this.app.render();
   }
 
@@ -1071,12 +1117,21 @@ class FactoryTestingPage {
                 this.testProgress = '✅ Micro Edge auto tests completed';
                 // Save results to enable Print Label if all tests pass
                 await this.saveResultsToFile();
+                // Show result modal with PASS/FAIL
+                const evals = (this.factoryTestResults && this.factoryTestResults._eval) ? this.factoryTestResults._eval : null;
+                const allPass = evals ? ['pass_battery','pass_ain1','pass_ain2','pass_ain3','pass_pulses','pass_lora'].every(k => evals[k] === true) : false;
+                this._lastTestResultPass = allPass;
+                this.showTestResultModal = true;
               } else {
                 this.testProgress = `❌ Micro Edge auto tests failed: ${fullRes && fullRes.error ? fullRes.error : 'Unknown error'}`;
+                this._lastTestResultPass = false;
+                this.showTestResultModal = true;
               }
             } catch (e) {
               console.warn('[Factory Testing] Micro Edge auto test error:', e && e.message);
               this.testProgress = `❌ Auto test error: ${e && e.message}`;
+              this._lastTestResultPass = false;
+              this.showTestResultModal = true;
             }
             this.showProgressModal = false;
             this.app.render();
@@ -1189,6 +1244,14 @@ class FactoryTestingPage {
       this.app.render();
       return { success: false, error: error.message, triggeredByAuto, triggeredByAutoPort };
     }
+  }
+
+  // Compact a filesystem path to just last 1-2 segments
+  _compactPath(p) {
+    if (!p) return '';
+    const parts = String(p).split(/\\|\//);
+    const last2 = parts.slice(-2).join('/');
+    return last2 || parts.pop();
   }
 
   async disconnectDevice() {
@@ -1482,10 +1545,23 @@ class FactoryTestingPage {
           // Always run client-side evaluation to ensure UI is consistent (will be a no-op for icons already set)
           this._evaluateMicroEdgeResults(this.factoryTestResults);
         } catch (e) { console.warn('Eval error:', e && e.message); }
+        // After tests: for Micro Edge in Auto mode, show PASS/FAIL result modal
+        if (this.selectedDevice === 'Micro Edge' && this.mode === 'auto') {
+          const evals = (this.factoryTestResults && this.factoryTestResults._eval) ? this.factoryTestResults._eval : null;
+          const allPass = evals ? ['pass_battery','pass_ain1','pass_ain2','pass_ain3','pass_pulses','pass_lora'].every(k => evals[k] === true) : false;
+          this._lastTestResultPass = allPass;
+          this.showTestResultModal = true;
+        }
       } else {
         this.testProgress = `Factory tests failed: ${result.error}`;
+        if (this.selectedDevice === 'Micro Edge' && this.mode === 'auto') {
+          this._lastTestResultPass = false;
+          this.showTestResultModal = true;
+        }
       }
       
+      // Hide progress spinner once finished
+      this.showProgressModal = false;
       this.isTesting = false;
       this.app.render();
     } catch (error) {
@@ -1511,10 +1587,39 @@ class FactoryTestingPage {
       );
 
       if (result.success) {
-        this.testProgress += `\n✅ Results saved to folder: ${result.folder}`;
-        this.testProgress += `\n📄 CSV: ${result.csvPath}`;
-        this.testProgress += `\n📄 LOG: ${result.logPath}`;
-        this.testProgress += `\n📊 Master CSV: ${result.masterCsvPath}`;
+        // Store last saved paths
+        this._lastSaved = {
+          folder: result.folder || '',
+          csvPath: result.csvPath || '',
+          logPath: result.logPath || '',
+          masterCsvPath: result.masterCsvPath || ''
+        };
+
+        // Determine PASS/FAIL summary for header
+        let allPass = false;
+        if (this.selectedDevice === 'Micro Edge') {
+          const evals = this.factoryTestResults && this.factoryTestResults._eval;
+          allPass = !!(evals && ['pass_battery','pass_ain1','pass_ain2','pass_ain3','pass_pulses','pass_lora'].every(k => evals[k] === true));
+        } else if (this.selectedDevice === 'ACB-M') {
+          const evals = this.factoryTestResults && this.factoryTestResults._eval;
+          allPass = !!(evals && ['pass_uart','pass_rtc','pass_wifi','pass_lora','pass_eth','pass_rs4852'].every(k => evals[k] === true));
+        } else if (this.selectedDevice === 'ZC-LCD') {
+          const evals = this.factoryTestResults && this.factoryTestResults._eval;
+          allPass = !!(evals && ['pass_wifi','pass_rs485','pass_i2c','pass_lcd'].every(k => evals[k] === true));
+        } else if (this.selectedDevice === 'ZC-Controller' || this.selectedDevice === 'Droplet') {
+          const summary = this.factoryTestResults && this.factoryTestResults.summary;
+          allPass = !!(summary && summary.passAll);
+        }
+        const head = allPass ? '✅ Done' : '❌ Fail';
+
+        // Compact paths for display
+        const folderShort = this._compactPath(result.folder);
+        const csvShort = this._compactPath(result.csvPath);
+        const logShort = this._compactPath(result.logPath);
+        const masterShort = this._compactPath(result.masterCsvPath);
+
+        // Replace progress block with concise saved-artifacts summary
+        this.testProgress = `${head}\n📁 Folder: ${folderShort}\n📄 CSV: ${csvShort}\n🗒️ LOG: ${logShort}\n📊 Master CSV: ${masterShort}`;
         
         // If tests pass, enable Print button
         try {
@@ -3256,6 +3361,9 @@ class FactoryTestingPage {
 
           <!-- Progress Modal -->
           ${this.renderProgressModal()}
+          
+          <!-- Result Modal -->
+          ${this.renderTestResultModal()}
           
           <!-- Raw JSON Debug Toggle -->
           ${this.selectedDevice === 'ZC-LCD' ? `
