@@ -181,7 +181,8 @@ class FactoryTestingPage {
       const last2 = parts.slice(-2).join('/');
       return last2 || parts.pop();
     };
-    const fileLines = (this.selectedDevice === 'Micro Edge') ? `\nCSV: ${compact(saved.csvPath)}\nLOG: ${compact(saved.logPath)}` : '';
+    const shouldShowFiles = (this.selectedDevice === 'Micro Edge' || this.selectedDevice === 'Droplet');
+    const fileLines = shouldShowFiles ? `\nCSV: ${compact(saved.csvPath)}\nTXT: ${compact(saved.logPath)}` : '';
     return `
       <div class="fixed inset-0 z-50 flex items-center justify-center">
         <div class="absolute inset-0 bg-black/40"></div>
@@ -1558,6 +1559,11 @@ class FactoryTestingPage {
           this._lastTestResultPass = false;
           this.showTestResultModal = true;
         }
+        // Also show FAIL popup for Droplet regardless of mode
+        if (this.selectedDevice === 'Droplet') {
+          this._lastTestResultPass = false;
+          this.showTestResultModal = true;
+        }
       }
       
       // Hide progress spinner once finished
@@ -1660,6 +1666,12 @@ class FactoryTestingPage {
             }
           }
         } catch (e) {}
+
+        // For Droplet: show popup with Done/Fail and CSV/TXT links
+        if (this.selectedDevice === 'Droplet') {
+          this._lastTestResultPass = allPass;
+          this.showTestResultModal = true;
+        }
       }
     } catch (error) {
         this.isTesting = false; this.showProgressModal = false; this.app.render();
