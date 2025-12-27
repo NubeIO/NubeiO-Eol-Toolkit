@@ -167,6 +167,9 @@ class FactoryTestingService {
     console.log('[Factory Testing Service] Device type:', deviceType);
     console.log('[Factory Testing Service] Current isConnected:', this.isConnected);
     console.log('[Factory Testing Service] Current isConnecting:', this.isConnecting);
+    // Clear any previous abort state to allow fresh AT flows post-connect
+    this._abortRequested = false;
+    this._currentAbort = null;
     
     if (this.isConnected) {
       const error = 'Already connected to a serial port';
