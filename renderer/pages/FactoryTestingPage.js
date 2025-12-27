@@ -183,12 +183,13 @@ class FactoryTestingPage {
     };
     const shouldShowFiles = (this.selectedDevice === 'Micro Edge' || this.selectedDevice === 'Droplet');
     const fileLines = shouldShowFiles ? `\nCSV: ${compact(saved.csvPath)}\nTXT: ${compact(saved.logPath)}` : '';
+    const deviceLabel = (make && model) ? `${make}-${model}` : (this.selectedDevice || '');
     return `
       <div class="fixed inset-0 z-50 flex items-center justify-center">
         <div class="absolute inset-0 bg-black/40"></div>
         <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl z-10 w-11/12 max-w-md p-4 border ${colorBox}">
           <h3 class="text-sm font-semibold mb-2">${header}</h3>
-          <pre class="text-xs whitespace-pre-wrap font-sans">${message}\\n\\nDevice: ${make}${make && model ? '-' : ''}${model}\\nUID: ${uid}${fileLines}</pre>
+          <pre class="text-xs whitespace-pre-wrap font-sans">DEVICE : ${deviceLabel}\nUID: ${uid}\n\n${message}${fileLines}</pre>
           <div class="mt-3 flex justify-end">
             <button onclick="window.factoryTestingPage.dismissTestResult()" class="px-4 py-1 bg-gray-200 dark:bg-gray-700 rounded">OK</button>
           </div>
@@ -222,16 +223,29 @@ class FactoryTestingPage {
 
   async forceDisconnectDevice() {
     if (!window.factoryTestingModule) return;
-    this.testProgress = 'Force disconnecting...';
+    // Immediate UI feedback
+    this.testProgress = '⛔ Aborting... Force disconnecting';
+    this.isTesting = false;
+    this.showProgressModal = false;
+    // Consider device disconnected in UI right away
+    this.isConnected = false;
+    try { if (window.factoryTestingModule.setAutoNextEnabled) { window.factoryTestingModule.setAutoNextEnabled(false); } } catch (_) {}
     this.app.render();
     try {
       const res = await window.factoryTestingModule.forceDisconnect();
       // Reset UI state
-      this.isConnected = false;
       this._lastAutoConnectedPort = '';
+      // Also disconnect Serial Console if it is holding the port
+      try {
+        if (this.app && this.app.serialConsole && this.app.serialConsole.isConnected) {
+          await this.app.serialConsole.disconnect();
+        }
+      } catch (_) {}
       try {
         window.factoryTestingModule.selectedPort = '';
         window.factoryTestingModule.updatePortDropdown();
+        // Refresh port list to reflect released handles
+        await window.factoryTestingModule.loadSerialPorts();
       } catch (_) {}
       if (res && res.success) {
         this.testProgress = '✅ Force disconnected';

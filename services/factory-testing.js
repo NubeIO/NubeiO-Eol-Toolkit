@@ -22,6 +22,9 @@ class FactoryTestingService {
     this.progressCallback = null;
     // Gate for auto connecting to next device; controlled by renderer
     this.autoNextEnabled = false;
+    // Abort control for immediate cancellation/force disconnect
+    this._abortRequested = false;
+    this._currentAbort = null;
   }
 
   /**
@@ -393,6 +396,10 @@ class FactoryTestingService {
    */
   async forceDisconnect() {
     try {
+      // Request abort of any in-flight command and cancel listeners immediately
+      this._abortRequested = true;
+      try { if (typeof this._currentAbort === 'function') this._currentAbort(); } catch (_) {}
+
       // Attempt to close port even if flags are inconsistent
       if (this.port) {
         try {
@@ -400,13 +407,21 @@ class FactoryTestingService {
           if (typeof this.port.set === 'function') {
             try { await new Promise(resolve => this.port.set({ dtr: false, rts: false }, () => resolve())); } catch (_) {}
           }
+          // Flush any pending IO if supported
+          try { if (typeof this.port.flush === 'function') await new Promise(resolve => this.port.flush(() => resolve())); } catch (_) {}
+          // Try a hard destroy first if available to avoid long close waits
+          try { if (typeof this.port.destroy === 'function') this.port.destroy(); } catch (_) {}
           if (this.port.isOpen) {
-            await new Promise((resolve, reject) => {
-              this.port.close((err) => {
-                if (err) reject(err);
-                else resolve();
-              });
+            // Close quickly: race close with a short timeout to avoid hanging ~30s
+            const closePromise = new Promise((resolve, reject) => {
+              try {
+                this.port.close((err) => {
+                  if (err) reject(err); else resolve();
+                });
+              } catch (e) { resolve(); }
             });
+            const quickTimeout = new Promise(resolve => setTimeout(resolve, 800));
+            await Promise.race([closePromise, quickTimeout]);
           }
         } catch (e) {
           console.warn('[Factory Testing] forceDisconnect: close error (ignored):', e && e.message);
@@ -420,6 +435,7 @@ class FactoryTestingService {
       this.isConnecting = false;
       this.portPath = '';
       this.autoNextEnabled = false;
+      this._currentAbort = null;
       this.cleanup();
       console.log('[Factory Testing] Force disconnect completed');
       return { success: true };
@@ -463,6 +479,9 @@ class FactoryTestingService {
     const isTestCommand = typeof command === 'string' && command.toUpperCase().startsWith('AT+TEST=');
     const timeoutDuration = customTimeout || (isTestCommand ? 20000 : this.commandTimeout);
     console.log(`[Factory Testing] Command timeout: ${timeoutDuration}ms, requireOK: ${requireOK}`);
+    if (this._abortRequested) {
+      throw new Error('Aborted');
+    }
 
     return new Promise((resolve, reject) => {
       const expectedPrefixes = !expectedPrefix ? null : (Array.isArray(expectedPrefix) ? expectedPrefix : [expectedPrefix]);
@@ -490,6 +509,12 @@ class FactoryTestingService {
         console.log(`[Factory Testing] RX: ${line}`);
         
         if (!line) return; // Skip empty lines
+        if (this._abortRequested) {
+          clearTimeout(timeout);
+          try { this.parser.removeListener('data', onData); } catch (_) {}
+          reject(new Error('Aborted'));
+          return;
+        }
         
         // Check for error response (accept immediately to avoid long timeouts in auto flows)
         if (commandSent && (line === 'ERROR' || line.startsWith('ERROR') || line.startsWith('+CME ERROR:'))) {
@@ -1130,6 +1155,9 @@ class FactoryTestingService {
    */
   async runFactoryTests(device) {
     try {
+      // Clear any previous abort state at the start of a run
+      this._abortRequested = false;
+      this._currentAbort = null;
       console.log('[Factory Testing] Running factory tests for device:', device);
 
       // Route tests based on device type
@@ -1820,6 +1848,7 @@ class FactoryTestingService {
         results.batteryVoltage = vbatResponse.replace('+VALUE_VBAT:', '').trim() + ' V';
       } catch (error) {
         results.batteryVoltage = 'ERROR';
+        if (this._abortRequested) throw error;
       }
 
       // 2. Pulses Counter
@@ -1829,6 +1858,7 @@ class FactoryTestingService {
         results.pulsesCounter = pulseResponse.replace('+VALUE_PULSE:', '').trim();
       } catch (error) {
         results.pulsesCounter = 'ERROR';
+        if (this._abortRequested) throw error;
       }
 
       // 3. DIP Switches
@@ -1838,6 +1868,7 @@ class FactoryTestingService {
         results.dipSwitches = dipResponse.replace('+VALUE_DIPSWITCHES:', '').trim();
       } catch (error) {
         results.dipSwitches = 'ERROR';
+        if (this._abortRequested) throw error;
       }
 
       // 4. AIN 1 Voltage
@@ -1847,6 +1878,7 @@ class FactoryTestingService {
         results.ain1Voltage = ain1Response.replace('+VALUE_UI1_RAW:', '').trim() + ' V';
       } catch (error) {
         results.ain1Voltage = 'ERROR';
+        if (this._abortRequested) throw error;
       }
 
       // 5. AIN 2 Voltage
@@ -1856,6 +1888,7 @@ class FactoryTestingService {
         results.ain2Voltage = ain2Response.replace('+VALUE_UI2_RAW:', '').trim() + ' V';
       } catch (error) {
         results.ain2Voltage = 'ERROR';
+        if (this._abortRequested) throw error;
       }
 
       // 6. AIN 3 Voltage
@@ -1865,6 +1898,7 @@ class FactoryTestingService {
         results.ain3Voltage = ain3Response.replace('+VALUE_UI3_RAW:', '').trim() + ' V';
       } catch (error) {
         results.ain3Voltage = 'ERROR';
+        if (this._abortRequested) throw error;
       }
 
       // 7. LoRa Unique Address
@@ -1877,48 +1911,17 @@ class FactoryTestingService {
       } catch (error) {
         results.loraAddress = 'ERROR';
         results.loraDetect = 'ERROR';
+        if (this._abortRequested) throw error;
       }
 
       // 8. Push LoRaRaw packet
       this.updateProgress('Testing LoRa transmission...');
       try {
-        // This command expects OK response instead of a value
-        await new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => {
-            this.parser.removeAllListeners('data');
-            reject(new Error('Timeout waiting for LoRa push response'));
-          }, this.commandTimeout);
-
-          const onData = (data) => {
-            const line = data.toString().trim();
-            console.log(`[Factory Testing] RX: ${line}`);
-            
-            if (line === 'OK') {
-              clearTimeout(timeout);
-              this.parser.removeListener('data', onData);
-              resolve('OK');
-            } else if (line === 'ERROR') {
-              clearTimeout(timeout);
-              this.parser.removeListener('data', onData);
-              reject(new Error('LoRa push failed'));
-            }
-          };
-
-          this.parser.on('data', onData);
-
-          const command = 'AT+LORARAWPUSH\r\n';
-          console.log(`[Factory Testing] TX: AT+LORARAWPUSH`);
-          this.port.write(command, (err) => {
-            if (err) {
-              clearTimeout(timeout);
-              this.parser.removeListener('data', onData);
-              reject(new Error(`Failed to send command: ${err.message}`));
-            }
-          });
-        });
-        results.loraRawPush = 'OK';
+        const resp = await this.sendATCommand('AT+LORARAWPUSH', 'OK', this.commandTimeout, false);
+        results.loraRawPush = (resp && resp.includes('OK')) ? 'OK' : 'ERROR';
       } catch (error) {
         results.loraRawPush = 'ERROR';
+        if (this._abortRequested) throw error;
       }
 
       this.updateProgress('All tests completed!');
