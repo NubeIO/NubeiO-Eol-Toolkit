@@ -35,7 +35,6 @@ jobs:
       
       - name: Clean cache and node_modules
         shell: bash
-        working-directory: electron-app
         run: |
           echo "Cleaning electron-builder cache..."
           rm -rf ~/.cache/electron-builder
@@ -44,7 +43,6 @@ jobs:
       
       - name: Update version in package.json
         shell: bash
-        working-directory: electron-app
         run: |
           if [ "${{ github.event_name }}" == "push" ]; then
             TAG="${GITHUB_REF#refs/tags/}"
@@ -61,11 +59,9 @@ jobs:
           npm version $VERSION --no-git-tag-version --allow-same-version
       
       - name: Install dependencies
-        working-directory: electron-app
         run: npm ci
       
       - name: Build for Windows
-        working-directory: electron-app
         run: npm run build:win
         env:
           DEBUG: electron-builder
@@ -73,7 +69,6 @@ jobs:
       - name: List build output
         if: always()
         shell: bash
-        working-directory: electron-app
         run: |
           echo "=== Build output ==="
           ls -lh dist/ || echo "No dist folder"
@@ -82,7 +77,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-build
-          path: electron-app/dist/*.exe
+          path: dist/*.exe
           retention-days: 30
           if-no-files-found: warn
 
