@@ -954,10 +954,10 @@ class FactoryTestingService {
       // 1. FW Version
       try {
         const fwResponse = await this.sendATCommand('AT+FWVERSION?', '+FWVERSION:', quickTimeout, requireOK);
-        deviceInfo.hwVersion = fwResponse.replace('+FWVERSION:', '').trim();
+        deviceInfo.fwVersion = fwResponse.replace('+FWVERSION:', '').trim();
       } catch (error) {
         console.error('[Factory Testing] Failed to read FW version:', error);
-        deviceInfo.hwVersion = 'ERROR';
+        deviceInfo.fwVersion = 'ERROR';
       }
 
       // 2. Unique ID
@@ -1022,11 +1022,11 @@ class FactoryTestingService {
         const fwResponse = await this.sendATCommand('AT+FWVERSION?', '+FWVERSION:', timeout, false);
         // Extract after prefix if noise exists
         const idx = fwResponse.indexOf('+FWVERSION:');
-        deviceInfo.hwVersion = idx >= 0 ? fwResponse.substring(idx + 11).trim() : fwResponse.replace('+FWVERSION:', '').trim();
-        console.log('[Factory Testing] FW Version:', deviceInfo.hwVersion);
+        deviceInfo.fwVersion = idx >= 0 ? fwResponse.substring(idx + 11).trim() : fwResponse.replace('+FWVERSION:', '').trim();
+        console.log('[Factory Testing] FW Version:', deviceInfo.fwVersion);
       } catch (error) {
         console.error('[Factory Testing] Failed to read FW version:', error.message);
-        deviceInfo.hwVersion = 'ERROR';
+        deviceInfo.fwVersion = 'ERROR';
       }
 
       // 2. Unique ID: AT+UNIQUEID? → +UNIQUEID:1CDBD4963210
@@ -2104,7 +2104,7 @@ class FactoryTestingService {
       csvContent += `Device Info,Version,${version}\n`;
       csvContent += `Device Info,Device Type,${device}\n`;
       csvContent += `Device Info,Firmware Version,${deviceInfo.firmwareVersion}\n`;
-      csvContent += `Device Info,HW Version,${deviceInfo.hwVersion}\n`;
+      csvContent += `Device Info,FW Version,${deviceInfo.fwVersion}\n`;
       csvContent += `Device Info,Unique ID,${deviceInfo.uniqueId}\n`;
       csvContent += `Device Info,Device Make,${deviceInfo.deviceMake}\n`;
       csvContent += `Device Info,Device Model,${deviceInfo.deviceModel}\n`;
@@ -2203,7 +2203,7 @@ class FactoryTestingService {
       logContent += 'DEVICE INFORMATION\n';
       logContent += '-'.repeat(80) + '\n';
       logContent += `Firmware Version:  ${deviceInfo.firmwareVersion}\n`;
-      logContent += `HW Version:        ${deviceInfo.hwVersion}\n`;
+      logContent += `FW Version:        ${deviceInfo.fwVersion}\n`;
       logContent += `Unique ID:         ${deviceInfo.uniqueId}\n`;
       logContent += `Device Make:       ${deviceInfo.deviceMake}\n`;
       logContent += `Device Model:      ${deviceInfo.deviceModel}\n`;
@@ -2364,7 +2364,7 @@ class FactoryTestingService {
                   `${escapeCSV(version)},` +
                   `${escapeCSV(device)},` +
                   `${escapeCSV(deviceInfo.firmwareVersion)},` +
-                  `${escapeCSV(deviceInfo.hwVersion)},` +
+                  `${escapeCSV(deviceInfo.fwVersion)},` +
                   `${escapeCSV(deviceInfo.uniqueId)},` +
                   `${escapeCSV(deviceInfo.deviceMake)},` +
                   `${escapeCSV(deviceInfo.deviceModel)},` +
@@ -2394,7 +2394,7 @@ class FactoryTestingService {
                   `${escapeCSV(version)},` +
                   `${escapeCSV(device)},` +
                   `${escapeCSV(deviceInfo.firmwareVersion)},` +
-                  `${escapeCSV(deviceInfo.hwVersion)},` +
+                  `${escapeCSV(deviceInfo.fwVersion)},` +
                   `${escapeCSV(deviceInfo.uniqueId)},` +
                   `${escapeCSV(deviceInfo.deviceMake)},` +
                   `${escapeCSV(deviceInfo.deviceModel)},` +
@@ -2422,7 +2422,7 @@ class FactoryTestingService {
                   `${escapeCSV(version)},` +
                   `${escapeCSV(device)},` +
                   `${escapeCSV(deviceInfo.firmwareVersion)},` +
-                  `${escapeCSV(deviceInfo.hwVersion)},` +
+                  `${escapeCSV(deviceInfo.fwVersion)},` +
                   `${escapeCSV(deviceInfo.uniqueId)},` +
                   `${escapeCSV(deviceInfo.deviceMake)},` +
                   `${escapeCSV(deviceInfo.deviceModel)},` +
@@ -2454,7 +2454,7 @@ class FactoryTestingService {
                   `${escapeCSV(version)},` +
                   `${escapeCSV(device)},` +
                   `${escapeCSV(deviceInfo.firmwareVersion)},` +
-                  `${escapeCSV(deviceInfo.hwVersion)},` +
+                  `${escapeCSV(deviceInfo.fwVersion)},` +
                   `${escapeCSV(deviceInfo.uniqueId)},` +
                   `${escapeCSV(deviceInfo.deviceMake)},` +
                   `${escapeCSV(deviceInfo.deviceModel)},` +

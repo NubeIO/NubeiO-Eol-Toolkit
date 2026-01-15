@@ -26,7 +26,7 @@ class FactoryTestingPage {
     // Device information
     this.deviceInfo = {
       firmwareVersion: '',
-      hwVersion: '',
+      fwVersion: '',
       uniqueId: '',
       deviceMake: '',
       deviceModel: ''
@@ -495,7 +495,7 @@ class FactoryTestingPage {
     };
     this.deviceInfo = {
       firmwareVersion: '',
-      hwVersion: '',
+      fwVersion: '',
       uniqueId: '',
       deviceMake: '',
       deviceModel: ''
@@ -1102,7 +1102,7 @@ class FactoryTestingPage {
               `✅ Connected successfully to ${selectedPort} @ ${selectedBaud} baud`,
               ``,
               `Device Information:`,
-              `  HW Version: ${this.deviceInfo?.hwVersion || 'N/A'}`,
+              `  FW Version: ${this.deviceInfo?.fwVersion || 'N/A'}`,
               `  Unique ID: ${this.deviceInfo?.uniqueId || 'N/A'}`,
               `  Device Make: ${this.deviceInfo?.deviceMake || 'N/A'}`,
               `  Device Model: ${this.deviceInfo?.deviceModel || 'N/A'}`,
@@ -1263,7 +1263,7 @@ class FactoryTestingPage {
               `✅ Connected successfully to ${selectedPort} @ ${selectedBaud} baud`,
               ``,
               `Device Information:`,
-              `  HW Version: ${this.deviceInfo?.hwVersion || 'N/A'}`,
+              `  FW Version: ${this.deviceInfo?.fwVersion || 'N/A'}`,
               `  Unique ID: ${this.deviceInfo?.uniqueId || 'N/A'}`,
               `  Device Make: ${this.deviceInfo?.deviceMake || 'N/A'}`,
               `  Device Model: ${this.deviceInfo?.deviceModel || 'N/A'}`,
