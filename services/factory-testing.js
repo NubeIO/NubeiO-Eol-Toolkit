@@ -951,12 +951,12 @@ class FactoryTestingService {
       // ACB-M doesn't have firmware version command, don't include it
       // deviceInfo.firmwareVersion = 'N/A'; // Removed
 
-      // 1. HW Version
+      // 1. FW Version
       try {
-        const hwResponse = await this.sendATCommand('AT+HWVERSION?', '+HWVERSION:', quickTimeout, requireOK);
-        deviceInfo.hwVersion = hwResponse.replace('+HWVERSION:', '').trim();
+        const fwResponse = await this.sendATCommand('AT+FWVERSION?', '+FWVERSION:', quickTimeout, requireOK);
+        deviceInfo.hwVersion = fwResponse.replace('+FWVERSION:', '').trim();
       } catch (error) {
-        console.error('[Factory Testing] Failed to read HW version:', error);
+        console.error('[Factory Testing] Failed to read FW version:', error);
         deviceInfo.hwVersion = 'ERROR';
       }
 
@@ -1008,7 +1008,7 @@ class FactoryTestingService {
 
   /**
    * Read ZC-LCD device information using AT commands with 30s timeout
-   * Commands: AT+HWVERSION?, AT+UNIQUEID?, AT+DEVICEMAKE?, AT+DEVICEMODEL?
+   * Commands: AT+FWVERSION?, AT+UNIQUEID?, AT+DEVICEMAKE?, AT+DEVICEMODEL?
    */
   async readZCLCDDeviceInfo() {
     try {
@@ -1017,15 +1017,15 @@ class FactoryTestingService {
       const deviceInfo = {};
       const timeout = 30000; // 30 seconds timeout per command
 
-      // 1. HW Version: AT+HWVERSION? → +HWVERSION:v1.0
+      // 1. FW Version: AT+FWVERSION? → +FWVERSION:v1.0
       try {
-        const hwResponse = await this.sendATCommand('AT+HWVERSION?', '+HWVERSION:', timeout, false);
+        const fwResponse = await this.sendATCommand('AT+FWVERSION?', '+FWVERSION:', timeout, false);
         // Extract after prefix if noise exists
-        const idx = hwResponse.indexOf('+HWVERSION:');
-        deviceInfo.hwVersion = idx >= 0 ? hwResponse.substring(idx + 11).trim() : hwResponse.replace('+HWVERSION:', '').trim();
-        console.log('[Factory Testing] HW Version:', deviceInfo.hwVersion);
+        const idx = fwResponse.indexOf('+FWVERSION:');
+        deviceInfo.hwVersion = idx >= 0 ? fwResponse.substring(idx + 11).trim() : fwResponse.replace('+FWVERSION:', '').trim();
+        console.log('[Factory Testing] FW Version:', deviceInfo.hwVersion);
       } catch (error) {
-        console.error('[Factory Testing] Failed to read HW version:', error.message);
+        console.error('[Factory Testing] Failed to read FW version:', error.message);
         deviceInfo.hwVersion = 'ERROR';
       }
 
