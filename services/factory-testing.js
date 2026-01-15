@@ -944,6 +944,7 @@ class FactoryTestingService {
       // Determine if this is Micro Edge (doesn't require OK)
       const isMicroEdge = deviceType === 'Micro Edge';
       const requireOK = !isMicroEdge; // Micro Edge: false, others: true
+      const quickTimeout = 2000; // 2s timeout for fast device info commands
 
       const deviceInfo = {};
 
@@ -952,7 +953,7 @@ class FactoryTestingService {
 
       // 1. HW Version
       try {
-        const hwResponse = await this.sendATCommand('AT+HWVERSION?', '+HWVERSION:', null, requireOK);
+        const hwResponse = await this.sendATCommand('AT+HWVERSION?', '+HWVERSION:', quickTimeout, requireOK);
         deviceInfo.hwVersion = hwResponse.replace('+HWVERSION:', '').trim();
       } catch (error) {
         console.error('[Factory Testing] Failed to read HW version:', error);
@@ -961,7 +962,7 @@ class FactoryTestingService {
 
       // 2. Unique ID
       try {
-        const uidResponse = await this.sendATCommand('AT+UNIQUEID?', '+UNIQUEID:', null, requireOK);
+        const uidResponse = await this.sendATCommand('AT+UNIQUEID?', '+UNIQUEID:', quickTimeout, requireOK);
         deviceInfo.uniqueId = uidResponse.replace('+UNIQUEID:', '').trim();
       } catch (error) {
         console.error('[Factory Testing] Failed to read Unique ID:', error);
@@ -970,26 +971,25 @@ class FactoryTestingService {
 
       // 3. Device Make
       try {
-        const makeResponse = await this.sendATCommand('AT+DEVICEMAKE?', '+DEVICEMAKE:', null, requireOK);
+        const makeResponse = await this.sendATCommand('AT+DEVICEMAKE?', '+DEVICEMAKE:', quickTimeout, requireOK);
         deviceInfo.deviceMake = makeResponse.replace('+DEVICEMAKE:', '').trim();
       } catch (error) {
         console.error('[Factory Testing] Failed to read Device Make:', error);
         deviceInfo.deviceMake = 'ERROR';
       }
-      console.log('[Factory Testing] Device Make:');
       // 4. Device Model (with retry)
       try {
         let modelResponse = null;
         let retries = 3;
-        const timeout = 1000; // 30 seconds timeout per command
+        const timeout = 1000; // 1 second timeout per command
 
         for (let i = 0; i < retries; i++) {
           try {
             modelResponse = await this.sendATCommand('AT+DEVICEMODEL?', '+DEVICEMODEL:', timeout, requireOK);
-            // if (modelResponse) break;
+            if (modelResponse) break; // Exit on success
           } catch (err) {
             console.warn(`[Factory Testing] Device Model attempt ${i + 1}/${retries} failed:`, err.message);
-            if (i < retries - 1) await new Promise(resolve => setTimeout(resolve, 500));
+            if (i < retries - 1) await new Promise(resolve => setTimeout(resolve, 300)); // Reduce retry delay
           }
         }
         deviceInfo.deviceModel = modelResponse ? modelResponse.replace('+DEVICEMODEL:', '').trim() : 'ERROR';
@@ -1703,6 +1703,78 @@ class FactoryTestingService {
 
         this.updateProgress('ACB-M tests completed');
         return { success: true, data: resultsACB };
+      }
+
+      // LoRa UART (Gen2) device specific tests: only UART loopback + LoRa
+      if (device === 'LoRa UART') {
+        const resultsLU = {
+          info: {},
+          tests: {},
+          _eval: {},
+          summary: null
+        };
+
+        const setEval = (key, state) => {
+          resultsLU._eval[key] = state === true;
+        };
+
+        this.updateProgress('LoRa UART: Starting tests...');
+
+        // UART loopback test (expect +VALUE_UART:EE)
+        this.updateProgress('LoRa UART: Running UART test...');
+        try {
+          const resp = await this.sendATCommand('AT+TEST=uart', '+VALUE_UART:', 30000);
+          const value = resp.replace('+VALUE_UART:', '').trim();
+          const pass = value.toUpperCase() === 'EE';
+          resultsLU.tests.uart = {
+            pass,
+            value,
+            raw: resp,
+            message: pass ? 'Loopback value EE received' : `Expected EE, received ${value || 'N/A'}`
+          };
+          setEval('pass_uart', pass);
+        } catch (err) {
+          resultsLU.tests.uart = {
+            pass: false,
+            value: null,
+            raw: null,
+            message: err.message || 'UART test failed'
+          };
+          setEval('pass_uart', false);
+        }
+
+        // LoRa test (expect +LORA:tx_done,rx_done,value_hex)
+        this.updateProgress('LoRa UART: Running LoRa test...');
+        try {
+          const resp = await this.sendATCommand('AT+TEST=lora', '+LORA:', 30000);
+          const payload = resp.replace('+LORA:', '').trim();
+          const parts = payload.split(',');
+          const txDone = Number(parts[0] || '0');
+          const rxDone = Number(parts[1] || '0');
+          const value = (parts[2] || '').trim();
+          const pass = txDone === 1 && rxDone === 1;
+          resultsLU.tests.lora = {
+            pass,
+            txDone,
+            rxDone,
+            value,
+            raw: resp,
+            message: pass ? `LoRa TX=${txDone}, RX=${rxDone}, Value=${value}` : 'LoRa failed'
+          };
+          setEval('pass_lora', pass);
+        } catch (err) {
+          resultsLU.tests.lora = {
+            pass: false,
+            raw: null,
+            message: err.message || 'LoRa test failed'
+          };
+          setEval('pass_lora', false);
+        }
+
+        const allPass = !!(resultsLU._eval.pass_uart && resultsLU._eval.pass_lora);
+        resultsLU.summary = { passAll: allPass };
+        this.updateProgress('LoRa UART tests completed');
+        return { success: true, data: resultsLU };
       }
 
       // Droplet device specific tests

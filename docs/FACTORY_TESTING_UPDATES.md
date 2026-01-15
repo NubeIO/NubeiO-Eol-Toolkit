@@ -1,5 +1,14 @@
 # Factory Testing Updates
 
+## LoRa UART (Gen 2)
+
+- New Gen 2 device option: LoRa UART.
+- Implements two tests aligned with existing workflows:
+   - UART Loopback: `AT+TEST=uart` → expects `+VALUE_UART:EE`.
+   - LoRa: `AT+TEST=lora` → expects `+LORA:tx_done,rx_done,value_hex` with both TX/RX done.
+- Summary status passes when both UART and LoRa tests pass.
+- Results are saved under `factory-tests/Gen2/LoRa-UART/<UniqueID>/` via the existing save flow.
+
 ## Overview
 Updated Factory Testing feature with device-specific UI and CSV export with folder organization by Unique ID.
 
