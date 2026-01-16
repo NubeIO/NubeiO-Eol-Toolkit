@@ -2157,6 +2157,7 @@ class FactoryTestingService {
       // ZC-LCD CSV entries
       if (device === 'ZC-LCD') {
         const zcTests = testResults.tests || {};
+        const ta = testResults.testerAnnotations || {};
         const formatStatus = (res) => {
           if (!res) return 'N/A';
           const state = res.pass === true ? 'PASS' : res.pass === false ? 'FAIL' : 'N/A';
@@ -2173,6 +2174,9 @@ class FactoryTestingService {
         csvContent += `Test Results,I2C Humidity,${zcTests.i2c && typeof zcTests.i2c.humidity !== 'undefined' ? zcTests.i2c.humidity : 'N/A'}\n`;
         csvContent += `Test Results,I2C Status,${formatStatus(zcTests.i2c)}\n`;
         csvContent += `Test Results,LCD Status,${formatStatus(zcTests.lcd)}\n`;
+        // Tester annotations
+        csvContent += `Tester, LCD Outcome,${ta.lcdOutcome ? ta.lcdOutcome : 'N/A'}\n`;
+        csvContent += `Tester, LCD Fail Reason,${ta.lcdFailReason ? ta.lcdFailReason : 'N/A'}\n`;
       }
 
       // Write CSV file
@@ -2255,6 +2259,7 @@ class FactoryTestingService {
       // ZC-LCD log entries
       if (device === 'ZC-LCD') {
         const zcTests = testResults.tests || {};
+        const ta = testResults.testerAnnotations || {};
         const statusToString = (res) => {
           if (!res) return 'N/A';
           const state = res.pass === true ? 'PASS' : res.pass === false ? 'FAIL' : 'N/A';
@@ -2270,6 +2275,8 @@ class FactoryTestingService {
         logContent += `I2C Humidity:      ${zcTests.i2c && typeof zcTests.i2c.humidity !== 'undefined' ? zcTests.i2c.humidity : 'N/A'}\n`;
         logContent += `I2C Status:        ${statusToString(zcTests.i2c)}\n`;
         logContent += `LCD Status:        ${statusToString(zcTests.lcd)}\n`;
+        logContent += `LCD Outcome:       ${ta.lcdOutcome ? ta.lcdOutcome : 'N/A'}\n`;
+        logContent += `LCD Fail Reason:   ${ta.lcdFailReason ? ta.lcdFailReason : 'N/A'}\n`;
       }
       
       logContent += '\n';
@@ -2317,7 +2324,7 @@ class FactoryTestingService {
         if (device === 'ACB-M') {
           header += 'UART Loopback,RTC Time,RTC Status,WiFi Networks,WiFi Connected,WiFi Status,ETH MAC,ETH IP,ETH Status,RS485 Cycles,RS485 Failures,RS485 Status,Test Result\n';
         } else if (device === 'ZC-LCD') {
-          header += 'WiFi Networks,WiFi Connected,WiFi Status,RS485 Value,RS485 Status,I2C Address,I2C Temperature,I2C Humidity,I2C Status,LCD Status,Test Result\n';
+          header += 'WiFi Networks,WiFi Connected,WiFi Status,RS485 Value,RS485 Status,I2C Address,I2C Temperature,I2C Humidity,I2C Status,LCD Status,LCD Outcome,LCD Fail Reason,Test Result\n';
         } else if (device === 'Droplet') {
           header += 'Temperature,Humidity,Pressure,CO2,AIN 1 Voltage,AIN 2 Voltage,AIN 3 Voltage,LoRa Address,LoRa Detect,LoRa Raw Push,Test Result\n';
         } else {
@@ -2442,6 +2449,7 @@ class FactoryTestingService {
       }
       else if (device === 'ZC-LCD') {
         const zcTests = testResults.tests || {};
+        const ta = testResults.testerAnnotations || {};
         const statusValue = (res) => {
           if (!res) return 'N/A';
           return res.pass === true ? 'PASS' : res.pass === false ? 'FAIL' : 'N/A';
@@ -2468,6 +2476,8 @@ class FactoryTestingService {
                   `${escapeCSV(typeof zcTests.i2c?.humidity !== 'undefined' ? zcTests.i2c.humidity : 'N/A')},` +
                   `${escapeCSV(statusValue(zcTests.i2c))},` +
                   `${escapeCSV(statusValue(zcTests.lcd))},` +
+                  `${escapeCSV(ta.lcdOutcome || 'N/A')},` +
+                  `${escapeCSV(ta.lcdFailReason || 'N/A')},` +
                   `${escapeCSV(testResult)}\n`;
       }
       

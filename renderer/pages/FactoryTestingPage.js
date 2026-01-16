@@ -74,6 +74,11 @@ class FactoryTestingPage {
     this._lastTestResultPass = null;
     // Last saved artifact paths for display
     this._lastSaved = { folder: '', csvPath: '', logPath: '', masterCsvPath: '' };
+
+    // ZC-LCD tester annotations (post-test)
+    this.zcTesterOutcome = null; // 'done' | 'fail'
+    this.zcTesterFailReason = null; // 'wrong_color' | 'missing_color'
+    this.zcTesterComplete = false;
   }
 
   // Promise timeout helper for commands/tests
@@ -1538,6 +1543,12 @@ class FactoryTestingPage {
       if (result.success) {
         const mergedResults = Object.assign(this._createEmptyFactoryResults(), result.data || {});
         this.factoryTestResults = mergedResults;
+        // Reset tester annotations for a fresh run
+        if (this.selectedDevice === 'ZC-LCD') {
+          this.zcTesterOutcome = null;
+          this.zcTesterFailReason = null;
+          this.zcTesterComplete = false;
+        }
         if (!this.factoryTestResults.tests) this.factoryTestResults.tests = {};
         if (!this.factoryTestResults._eval) this.factoryTestResults._eval = {};
         if (!this.factoryTestResults.summary) this.factoryTestResults.summary = null;
@@ -1668,7 +1679,22 @@ class FactoryTestingPage {
         this.selectedVersion,
         this.selectedDevice,
         this.deviceInfo,
-        this.factoryTestResults,
+        // Attach tester annotations for ZC-LCD into test results
+        (function(page){
+          const fr = Object.assign({}, page.factoryTestResults);
+          if (page.selectedDevice === 'ZC-LCD') {
+            fr.testerAnnotations = fr.testerAnnotations || {};
+            // Map labels in English
+            if (page.zcTesterOutcome === 'done') {
+              fr.testerAnnotations.lcdOutcome = 'LCD Done';
+              fr.testerAnnotations.lcdFailReason = '';
+            } else if (page.zcTesterOutcome === 'fail') {
+              fr.testerAnnotations.lcdOutcome = 'LCD Fail';
+              fr.testerAnnotations.lcdFailReason = (page.zcTesterFailReason === 'wrong_color' ? 'Wrong color' : (page.zcTesterFailReason === 'missing_color' ? 'Missing color' : ''));
+            }
+          }
+          return fr;
+        })(this),
         this.preTesting
       );
 
@@ -1756,6 +1782,40 @@ class FactoryTestingPage {
     } catch (error) {
         this.isTesting = false; this.showProgressModal = false; this.app.render();
     }
+  }
+
+  // ZC-LCD tester UI handlers
+  setZcTesterOutcome(val) {
+    if (val !== 'done' && val !== 'fail') return;
+    this.zcTesterOutcome = val;
+    if (val === 'done') {
+      this.zcTesterFailReason = null;
+    }
+    this.app.render();
+  }
+
+  setZcTesterFailReason(val) {
+    if (val !== 'wrong_color' && val !== 'missing_color') return;
+    this.zcTesterFailReason = val;
+    this.app.render();
+  }
+
+  async finalizeZcTesterEntry() {
+    if (this.selectedDevice !== 'ZC-LCD') return;
+    // Require outcome selection
+    if (!this.zcTesterOutcome) {
+      alert('Please select LCD Done or LCD Fail');
+      return;
+    }
+    // If fail, require a reason
+    if (this.zcTesterOutcome === 'fail' && !this.zcTesterFailReason) {
+      alert('Please select a fail reason');
+      return;
+    }
+    this.zcTesterComplete = true;
+    // Trigger save to include annotations
+    await this.saveResultsToFile();
+    this.showToast('Tester input saved');
   }
 
   clearOutput() {
@@ -3378,6 +3438,54 @@ class FactoryTestingPage {
                     </div>
                   </div>
                 </div>
+                <!-- Tester Verification (after tests) -->
+                ${(() => {
+                  const hasResults = (this.factoryTestResults && typeof this.factoryTestResults === 'object' && this.factoryTestResults.tests && Object.keys(this.factoryTestResults.tests || {}).length > 0);
+                  if (!hasResults) return '';
+                  const disabled = this.zcTesterComplete ? 'opacity-60 pointer-events-none' : '';
+                  const outcomeDoneChecked = this.zcTesterOutcome === 'done' ? 'checked' : '';
+                  const outcomeFailChecked = this.zcTesterOutcome === 'fail' ? 'checked' : '';
+                  const failWrongChecked = this.zcTesterFailReason === 'wrong_color' ? 'checked' : '';
+                  const failMissingChecked = this.zcTesterFailReason === 'missing_color' ? 'checked' : '';
+                  return `
+                    <div class="mt-4 p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700 ${disabled}">
+                      <div class="text-sm font-semibold mb-2">Tester Verification</div>
+                      <div class="mb-3 space-y-2">
+                        <label class="flex items-center gap-2">
+                          <input type="radio" name="zcTesterOutcome" ${outcomeDoneChecked} onchange="window.factoryTestingPage.setZcTesterOutcome('done')" />
+                          <span class="inline-flex items-center gap-2">
+                            ${this.zcTesterOutcome === 'done' ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="2" class="h-4 w-4"><path stroke-linecap="round" stroke-linejoin="round" d="M20 6L9 17l-5-5"/></svg>' : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="h-4 w-4"><circle cx="12" cy="12" r="3" fill="#9CA3AF"/></svg>'}
+                            <span>LCD Done</span>
+                          </span>
+                        </label>
+                        <div>
+                          <label class="flex items-center gap-2">
+                            <input type="radio" name="zcTesterOutcome" ${outcomeFailChecked} onchange="window.factoryTestingPage.setZcTesterOutcome('fail')" />
+                            <span class="inline-flex items-center gap-2">
+                              ${this.zcTesterOutcome === 'fail' ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#DC2626" stroke-width="2" class="h-4 w-4"><path stroke-linecap="round" stroke-linejoin="round" d="M18 6L6 18M6 6l12 12"/></svg>' : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="h-4 w-4"><circle cx="12" cy="12" r="3" fill="#9CA3AF"/></svg>'}
+                              <span>LCD Fail</span>
+                            </span>
+                          </label>
+                          ${this.zcTesterOutcome === 'fail' ? `
+                            <div class="ml-6 mt-2 flex items-center gap-6">
+                              <label class="inline-flex items-center gap-2">
+                                <input type="radio" name="zcTesterFailReason" ${failWrongChecked} onchange="window.factoryTestingPage.setZcTesterFailReason('wrong_color')" />
+                                <span>Wrong color</span>
+                              </label>
+                              <label class="inline-flex items-center gap-2">
+                                <input type="radio" name="zcTesterFailReason" ${failMissingChecked} onchange="window.factoryTestingPage.setZcTesterFailReason('missing_color')" />
+                                <span>Missing color</span>
+                              </label>
+                            </div>
+                          ` : ''}
+                        </div>
+                      </div>
+                      <div class="flex justify-end">
+                        <button onclick="window.factoryTestingPage.finalizeZcTesterEntry()" class="rounded-lg bg-gray-900 px-5 py-2 text-sm font-semibold text-white hover:bg-gray-700 dark:bg-gray-200 dark:text-gray-900 dark:hover:bg-gray-100">Finish</button>
+                      </div>
+                    </div>
+                  `;
+                })()}
               </div>
             ` : ''}
 
