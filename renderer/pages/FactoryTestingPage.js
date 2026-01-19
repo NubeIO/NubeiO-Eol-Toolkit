@@ -45,6 +45,7 @@ class FactoryTestingPage {
     this._autoPollTimer = null;
     this.showConnectConfirm = false; // show modal to confirm before running tests in Auto
     this.showMicroEdgeConnectModal = false; // show custom modal for Micro Edge connection
+    this.showRstPromptModal = false; // prompt before scanning next device
     this._lastAutoConnectedPort = '';
     this._autoConnectInProgress = false;
     this._autoConnectLastPort = '';
@@ -137,6 +138,57 @@ class FactoryTestingPage {
         this.runFactoryTests();
       }
     } catch (e) { console.warn('Failed to start tests after confirm:', e && e.message); }
+  }
+
+  async confirmMicroEdgeConnectOk() {
+    this.showMicroEdgeConnectModal = false;
+    this.app.render();
+    
+    // After user closes modal, run tests in auto mode
+    if (this.mode === 'auto' && !this.isTesting) {
+      try {
+        this.testProgress = 'Starting auto tests...';
+        this.showProgressModal = true;
+        this.app.render();
+        
+        const fullRes = await this.withTimeout(window.factoryTestingModule.runFactoryTests('Micro Edge'), 30000, 'Run all tests');
+        if (fullRes && fullRes.success) {
+          this.factoryTestResults = fullRes.data || this.factoryTestResults;
+          this.testProgress = '✅ Micro Edge auto tests completed';
+          await this.saveResultsToFile();
+          const evals = (this.factoryTestResults && this.factoryTestResults._eval) ? this.factoryTestResults._eval : null;
+          const allPass = evals ? ['pass_battery','pass_ain1','pass_ain2','pass_ain3','pass_pulses','pass_lora'].every(k => evals[k] === true) : false;
+          this._lastTestResultPass = allPass;
+          this.showTestResultModal = true;
+        } else {
+          this.testProgress = `❌ Micro Edge auto tests failed: ${fullRes && fullRes.error ? fullRes.error : 'Unknown error'}`;
+          this._lastTestResultPass = false;
+          this.showTestResultModal = true;
+        }
+      } catch (e) {
+        console.warn('[Factory Testing] Micro Edge auto test error:', e && e.message);
+        this.testProgress = `❌ Auto test error: ${e && e.message}`;
+        this._lastTestResultPass = false;
+        this.showTestResultModal = true;
+      }
+      this.showProgressModal = false;
+      this.app.render();
+    }
+  }
+
+  async confirmRstPromptOk() {
+    // Close the RST prompt and begin the original auto workflow
+    this.showRstPromptModal = false;
+    this.app.render();
+    try {
+      if (window.factoryTestingModule && window.factoryTestingModule.setAutoNextEnabled) {
+        window.factoryTestingModule.setAutoNextEnabled(true);
+      }
+      if (this.isConnected) {
+        await this.disconnectDevice();
+      }
+    } catch (e) { /* ignore */ }
+    this._startAutoWorkflow();
   }
 
   async confirmMicroEdgeConnectOk() {
@@ -915,17 +967,9 @@ class FactoryTestingPage {
 
   // User action: enable auto-next and start scanning for the next device
   async startTestNextDevice() {
-    try {
-      if (window.factoryTestingModule && window.factoryTestingModule.setAutoNextEnabled) {
-        window.factoryTestingModule.setAutoNextEnabled(true);
-      }
-      // If currently connected, disconnect first
-      if (this.isConnected) {
-        await this.disconnectDevice();
-      }
-    } catch (e) { /* ignore */ }
-    // kick off auto workflow
-    this._startAutoWorkflow();
+    // Show the RST prompt modal; actual workflow starts after confirmation
+    this.showRstPromptModal = true;
+    this.app.render();
   }
 
   // Format AIN display: if value is normalized (0..1) convert to 0..3.3V, otherwise assume already volts
@@ -3785,6 +3829,22 @@ RS485: ${JSON.stringify((this.factoryTestResults.rs485 && this.factoryTestResult
             })()}
             <div class="mt-3 flex justify-end">
               <button onclick="window.factoryTestingPage.confirmMicroEdgeConnectOk()" class="px-4 py-1 bg-gray-200 dark:bg-gray-700 rounded">OK</button>
+            </div>
+          </div>
+        </div>
+      ` : ''}
+      ${this.showRstPromptModal ? `
+        <div class="fixed inset-0 z-50 flex items-center justify-center">
+          <div class="absolute inset-0 bg-black opacity-40"></div>
+          <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl z-10 w-11/12 max-w-md p-4">
+            <h3 class="text-sm font-semibold mb-3">nube-io-toolkit</h3>
+            <div class="text-xs">
+              <p><strong>Press the device RST button</strong></p>
+              <br>
+              <p>After pressing RST, click OK to continue.</p>
+            </div>
+            <div class="mt-3 flex justify-end">
+              <button onclick="window.factoryTestingPage.confirmRstPromptOk()" class="px-4 py-1 bg-gray-200 dark:bg-gray-700 rounded">OK</button>
             </div>
           </div>
         </div>
