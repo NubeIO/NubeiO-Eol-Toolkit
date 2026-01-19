@@ -44,6 +44,7 @@ class FactoryTestingPage {
     this.preTestingCollapsed = true; // pre-testing section collapsed by default
     this._autoPollTimer = null;
     this.showConnectConfirm = false; // show modal to confirm before running tests in Auto
+    this.showMicroEdgeConnectModal = false; // show custom modal for Micro Edge connection
     this._lastAutoConnectedPort = '';
     this._autoConnectInProgress = false;
     this._autoConnectLastPort = '';
@@ -136,6 +137,42 @@ class FactoryTestingPage {
         this.runFactoryTests();
       }
     } catch (e) { console.warn('Failed to start tests after confirm:', e && e.message); }
+  }
+
+  async confirmMicroEdgeConnectOk() {
+    this.showMicroEdgeConnectModal = false;
+    this.app.render();
+    
+    // After user closes modal, run tests in auto mode
+    if (this.mode === 'auto' && !this.isTesting) {
+      try {
+        this.testProgress = 'Starting auto tests...';
+        this.showProgressModal = true;
+        this.app.render();
+        
+        const fullRes = await this.withTimeout(window.factoryTestingModule.runFactoryTests('Micro Edge'), 30000, 'Run all tests');
+        if (fullRes && fullRes.success) {
+          this.factoryTestResults = fullRes.data || this.factoryTestResults;
+          this.testProgress = '✅ Micro Edge auto tests completed';
+          await this.saveResultsToFile();
+          const evals = (this.factoryTestResults && this.factoryTestResults._eval) ? this.factoryTestResults._eval : null;
+          const allPass = evals ? ['pass_battery','pass_ain1','pass_ain2','pass_ain3','pass_pulses','pass_lora'].every(k => evals[k] === true) : false;
+          this._lastTestResultPass = allPass;
+          this.showTestResultModal = true;
+        } else {
+          this.testProgress = `❌ Micro Edge auto tests failed: ${fullRes && fullRes.error ? fullRes.error : 'Unknown error'}`;
+          this._lastTestResultPass = false;
+          this.showTestResultModal = true;
+        }
+      } catch (e) {
+        console.warn('[Factory Testing] Micro Edge auto test error:', e && e.message);
+        this.testProgress = `❌ Auto test error: ${e && e.message}`;
+        this._lastTestResultPass = false;
+        this.showTestResultModal = true;
+      }
+      this.showProgressModal = false;
+      this.app.render();
+    }
   }
 
   // Progress modal rendering
@@ -1141,51 +1178,15 @@ class FactoryTestingPage {
           // Always show for Micro Edge, even in auto mode
           const di = this.deviceInfo || {};
           const hasError = ['uniqueId','deviceModel','deviceMake','firmwareVersion'].some(k => String(di[k] || '').toUpperCase() === 'ERROR');
-          const infoMsg = [
-            `✅ Connected successfully to ${selectedPort} @ ${selectedBaud} baud`,
-            '',
-            'Device Information:',
-            `  Unique ID: ${di.uniqueId || 'N/A'}`,
-            `  Device Make: ${di.deviceMake || 'N/A'}`,
-            `  Device Model: ${di.deviceModel || 'N/A'}`,
-            `  FW Version: ${di.firmwareVersion || di.fwVersion || 'N/A'}`,
-            '',
-            hasError ? '❌ Failed to read all fields over RS485' : 'Ready to run tests!'
-          ].join('\n');
-          alert(infoMsg);
           
-          // After user closes popup, run tests in auto mode
-          if (this.mode === 'auto') {
-            try {
-              this.testProgress = 'Starting auto tests...';
-              this.showProgressModal = true;
-              this.app.render();
-              
-              const fullRes = await this.withTimeout(window.factoryTestingModule.runFactoryTests('Micro Edge'), 30000, 'Run all tests');
-              if (fullRes && fullRes.success) {
-                this.factoryTestResults = fullRes.data || this.factoryTestResults;
-                this.testProgress = '✅ Micro Edge auto tests completed';
-                // Save results to enable Print Label if all tests pass
-                await this.saveResultsToFile();
-                // Show result modal with PASS/FAIL
-                const evals = (this.factoryTestResults && this.factoryTestResults._eval) ? this.factoryTestResults._eval : null;
-                const allPass = evals ? ['pass_battery','pass_ain1','pass_ain2','pass_ain3','pass_pulses','pass_lora'].every(k => evals[k] === true) : false;
-                this._lastTestResultPass = allPass;
-                this.showTestResultModal = true;
-              } else {
-                this.testProgress = `❌ Micro Edge auto tests failed: ${fullRes && fullRes.error ? fullRes.error : 'Unknown error'}`;
-                this._lastTestResultPass = false;
-                this.showTestResultModal = true;
-              }
-            } catch (e) {
-              console.warn('[Factory Testing] Micro Edge auto test error:', e && e.message);
-              this.testProgress = `❌ Auto test error: ${e && e.message}`;
-              this._lastTestResultPass = false;
-              this.showTestResultModal = true;
-            }
-            this.showProgressModal = false;
-            this.app.render();
-          }
+          // Store connection info for modal
+          this._lastAutoConnectedPort = selectedPort;
+          this._lastAutoConnectedBaud = String(selectedBaud);
+          this._microEdgeHasError = hasError;
+          
+          // Show custom modal with bold instruction
+          this.showMicroEdgeConnectModal = true;
+          this.app.render();
           
         } else if (this.selectedDevice === 'ZC-LCD') {
           // ZC-LCD: Device info already read during connect, show popup
@@ -3752,6 +3753,38 @@ RS485: ${JSON.stringify((this.factoryTestResults.rs485 && this.factoryTestResult
             })()}
             <div class="mt-3 flex justify-end">
               <button onclick="window.factoryTestingPage.confirmConnectOk()" class="px-4 py-1 bg-gray-200 dark:bg-gray-700 rounded">OK</button>
+            </div>
+          </div>
+        </div>
+      ` : ''}
+      ${this.showMicroEdgeConnectModal ? `
+        <div class="fixed inset-0 z-50 flex items-center justify-center">
+          <div class="absolute inset-0 bg-black opacity-40"></div>
+          <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl z-10 w-11/12 max-w-md p-4">
+            <h3 class="text-sm font-semibold mb-3">nube-io-toolkit</h3>
+            ${(() => {
+              const port = this._lastAutoConnectedPort || '';
+              const baud = this._lastAutoConnectedBaud ? ` @ ${this._lastAutoConnectedBaud} baud` : '';
+              const di = this.deviceInfo || {};
+              const hasError = this._microEdgeHasError || false;
+              return `
+                <div class="text-xs">
+                  <p>☑ Connected successfully to ${port}${baud}</p>
+                  <br>
+                  <p>Device Information:</p>
+                  <p>Unique ID: ${di.uniqueId || 'N/A'}</p>
+                  <p>Device Make: ${di.deviceMake || 'N/A'}</p>
+                  <p>Device Model: ${di.deviceModel || 'N/A'}</p>
+                  <p>FW Version: ${di.firmwareVersion || di.fwVersion || 'N/A'}</p>
+                  <br>
+                  <p>${hasError ? '❌ Failed to read all fields over RS485' : 'Ready to run tests!'}</p>
+                  <br>
+                  <p><strong>Press Switch 5 times</strong></p>
+                </div>
+              `;
+            })()}
+            <div class="mt-3 flex justify-end">
+              <button onclick="window.factoryTestingPage.confirmMicroEdgeConnectOk()" class="px-4 py-1 bg-gray-200 dark:bg-gray-700 rounded">OK</button>
             </div>
           </div>
         </div>
