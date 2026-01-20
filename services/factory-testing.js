@@ -475,8 +475,8 @@ class FactoryTestingService {
       throw new Error('Not connected to a serial port');
     }
 
-    // Small delay to ensure previous command response is fully consumed
-    await new Promise(resolve => setTimeout(resolve, 100));
+    // Small delay to ensure previous command response is fully consumed (tuned down)
+    await new Promise(resolve => setTimeout(resolve, 30));
 
     // For AT+TEST commands, default timeout is 20s unless caller overrides
     const isTestCommand = typeof command === 'string' && command.toUpperCase().startsWith('AT+TEST=');
@@ -561,15 +561,14 @@ class FactoryTestingService {
             this.parser.removeListener('data', onData);
             resolve(responseData);
           } else {
-            // For devices that require OK: Set a short timer - if no OK comes within 500ms, accept the data anyway
+            // For devices that require OK: brief grace period for OK, then accept data
             dataReceivedTimer = setTimeout(() => {
               if (responseData && !gotOK) {
-                // Accept data if OK hasn't arrived within 500ms to keep flows responsive
                 clearTimeout(timeout);
                 this.parser.removeListener('data', onData);
                 resolve(responseData);
               }
-            }, 500);
+            }, 150);
           }
         }
         
@@ -941,10 +940,10 @@ class FactoryTestingService {
     try {
       console.log('[Factory Testing] Reading device information...');
       
-      // Determine if this is Micro Edge (doesn't require OK)
-      const isMicroEdge = deviceType === 'Micro Edge';
-      const requireOK = !isMicroEdge; // Micro Edge: false, others: true
-      const quickTimeout = 2000; // 2s timeout for fast device info commands
+      // Devices that don't emit trailing OK for info commands
+      const isNoOKDevice = deviceType === 'Micro Edge' || deviceType === 'LoRa UART' || deviceType === 'ACB-M';
+      const requireOK = !isNoOKDevice; // Resolve immediately on data for no-OK devices
+      const quickTimeout = 800; // Faster timeout for quick info commands
 
       const deviceInfo = {};
 
@@ -981,7 +980,7 @@ class FactoryTestingService {
       try {
         let modelResponse = null;
         let retries = 3;
-        const timeout = 1000; // 1 second timeout per command
+        const timeout = 600; // shorter per-attempt timeout
 
         for (let i = 0; i < retries; i++) {
           try {
@@ -989,7 +988,7 @@ class FactoryTestingService {
             if (modelResponse) break; // Exit on success
           } catch (err) {
             console.warn(`[Factory Testing] Device Model attempt ${i + 1}/${retries} failed:`, err.message);
-            if (i < retries - 1) await new Promise(resolve => setTimeout(resolve, 300)); // Reduce retry delay
+            if (i < retries - 1) await new Promise(resolve => setTimeout(resolve, 120)); // quicker retry delay
           }
         }
         deviceInfo.deviceModel = modelResponse ? modelResponse.replace('+DEVICEMODEL:', '').trim() : 'ERROR';
