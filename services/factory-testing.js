@@ -984,7 +984,7 @@ class FactoryTestingService {
       try {
         let modelResponse = null;
         let retries = 3;
-        const timeout = 600; // shorter per-attempt timeout
+        const timeout = 1000; // 1 second timeout per command
 
         for (let i = 0; i < retries; i++) {
           try {
@@ -992,7 +992,7 @@ class FactoryTestingService {
             if (modelResponse) break; // Exit on success
           } catch (err) {
             console.warn(`[Factory Testing] Device Model attempt ${i + 1}/${retries} failed:`, err.message);
-            if (i < retries - 1) await new Promise(resolve => setTimeout(resolve, 120)); // quicker retry delay
+            if (i < retries - 1) await new Promise(resolve => setTimeout(resolve, 300)); // Reduce retry delay
           }
         }
         deviceInfo.deviceModel = modelResponse ? modelResponse.replace('+DEVICEMODEL:', '').trim() : 'ERROR';
