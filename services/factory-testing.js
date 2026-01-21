@@ -588,9 +588,13 @@ class FactoryTestingService {
             this.parser.removeListener('data', onData);
             resolve(responseData);
           }
-          // Otherwise keep waiting for data line (within timeout)
+          // If caller expects a specific data line, keep waiting for it (typical for AT+TEST=...)
+          else if (expectedPrefixes && expectedPrefixes.length > 0) {
+            // do not resolve yet; wait for data line or main timeout
+            return;
+          }
+          // Otherwise resolve OK immediately for non-blocking behavior
           else {
-            // No data line expected or device only returns OK → resolve OK immediately for non-blocking behavior
             clearTimeout(timeout);
             this.parser.removeListener('data', onData);
             resolve('OK');
@@ -1179,7 +1183,8 @@ class FactoryTestingService {
         // WiFi test: AT+TEST=wifi → +WIFI:6,1 (networks>1, connected=1)
         this.updateProgress('ZC-LCD: Running WiFi test...');
         try {
-          const resp = await this.sendATCommand('AT+TEST=wifi', '+WIFI:', 30000, false);
+          // Require OK to ensure the device finishes the test before next command
+          const resp = await this.sendATCommand('AT+TEST=wifi', '+WIFI:', 30000, true);
           const payload = resp.replace('+WIFI:', '').trim();
           const parts = payload.split(',');
           const networkCount = Number(parts[0] || '0');
@@ -1193,6 +1198,8 @@ class FactoryTestingService {
             message: pass ? `Networks: ${networkCount}, connected` : `Networks=${networkCount}, connected=${connected}`
           };
           setEval('pass_wifi', pass);
+          // Small cooldown between tests to match manual terminal pacing
+          await new Promise(r => setTimeout(r, 200));
         } catch (err) {
           resultsZC.tests.wifi = {
             pass: false,
@@ -1207,8 +1214,19 @@ class FactoryTestingService {
         // RS485 test: AT+TEST=rs485 → +RS485:4096 (must be exactly 4096)
         this.updateProgress('ZC-LCD: Running RS485 test...');
         try {
-          const resp = await this.sendATCommand('AT+TEST=rs485', '+RS485:', 30000, false);
-          const payload = resp.replace('+RS485:', '').trim();
+          // Require OK to avoid '+CME ERROR:test_running' if previous test still finalizing
+          let resp = null;
+          const maxRetries = 5;
+          for (let i = 0; i < maxRetries; i++) {
+            resp = await this.sendATCommand('AT+TEST=rs485', '+RS485:', 5000, true);
+            if (typeof resp === 'string' && /^\+CME ERROR:test_running/i.test(resp)) {
+              // Device still busy; brief backoff then retry
+              await new Promise(r => setTimeout(r, 200));
+              continue;
+            }
+            break;
+          }
+          const payload = String(resp || '').replace('+RS485:', '').trim();
           // Expected format: +RS485:4096 (value should be 4096 for pass)
           const value = Number(payload);
           const pass = value === 4096;
@@ -1232,7 +1250,7 @@ class FactoryTestingService {
         // I2C test: AT+TEST=i2c → +I2C:0x40,266,671 (address, temp, humidity with OK)
         this.updateProgress('ZC-LCD: Running I2C test...');
         try {
-          const resp = await this.sendATCommand('AT+TEST=i2c', '+I2C:', 30000, false);
+          const resp = await this.sendATCommand('AT+TEST=i2c', '+I2C:', 30000, true);
           const payload = resp.replace('+I2C:', '').trim();
           // Expected format: +I2C:0x40,266,671 (i2c_address, temp*10, hum*10)
           const parts = payload.split(',');
