@@ -276,7 +276,7 @@ class FactoryTestingPage {
       const last2 = parts.slice(-2).join('/');
       return last2 || parts.pop();
     };
-    const shouldShowFiles = (this.selectedDevice === 'Micro Edge' || this.selectedDevice === 'Droplet');
+    const shouldShowFiles = (this.selectedDevice === 'Micro Edge' || this.selectedDevice === 'Droplet' || this.selectedDevice === 'ZC-LCD');
     const fileLines = shouldShowFiles ? `\nCSV: ${compact(saved.csvPath)}\nTXT: ${compact(saved.logPath)}` : '';
     const deviceLabel = (make && model) ? `${make}-${model}` : (this.selectedDevice || '');
     return `
@@ -1860,6 +1860,14 @@ class FactoryTestingPage {
     this.zcTesterComplete = true;
     // Trigger save to include annotations
     await this.saveResultsToFile();
+    // After saving, show modal with file paths like Hercules flow
+    try {
+      const evals = (this.factoryTestResults && this.factoryTestResults._eval) ? this.factoryTestResults._eval : null;
+      const allPass = evals ? ['pass_wifi','pass_rs485','pass_i2c','pass_lcd'].every(k => evals[k] === true) : false;
+      this._lastTestResultPass = allPass;
+      this.showTestResultModal = true;
+    } catch (_) {}
+    this.app.render();
     this.showToast('Tester input saved');
   }
 
