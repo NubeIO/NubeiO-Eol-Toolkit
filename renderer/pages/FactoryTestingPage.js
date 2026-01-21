@@ -1858,7 +1858,29 @@ class FactoryTestingPage {
       return;
     }
     this.zcTesterComplete = true;
-    // Trigger save to include annotations
+    // Reflect tester decision in results and evaluation flags
+    try {
+      this.factoryTestResults = this.factoryTestResults || {};
+      this.factoryTestResults.tests = this.factoryTestResults.tests || {};
+      this.factoryTestResults._eval = this.factoryTestResults._eval || {};
+      if (this.zcTesterOutcome === 'done') {
+        const prev = this.factoryTestResults.tests.lcd || {};
+        this.factoryTestResults.tests.lcd = Object.assign({}, prev, {
+          pass: true,
+          message: 'Tester verified LCD Done'
+        });
+        this.factoryTestResults._eval.pass_lcd = true;
+      } else if (this.zcTesterOutcome === 'fail') {
+        const prev = this.factoryTestResults.tests.lcd || {};
+        const reason = this.zcTesterFailReason === 'wrong_color' ? 'Wrong color' : (this.zcTesterFailReason === 'missing_color' ? 'Missing color' : '');
+        this.factoryTestResults.tests.lcd = Object.assign({}, prev, {
+          pass: false,
+          message: `Tester marked LCD Fail${reason ? ' - ' + reason : ''}`
+        });
+        this.factoryTestResults._eval.pass_lcd = false;
+      }
+    } catch (_) {}
+    // Trigger save to include annotations and updated pass/fail
     await this.saveResultsToFile();
     // After saving, show modal with file paths like Hercules flow
     try {
