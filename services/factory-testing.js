@@ -1299,7 +1299,8 @@ class FactoryTestingService {
             raw: resp,
             message: pass ? `LCD test passed (touches: ${touchCount})` : `Touch count: ${touchCount} (need > 2)`
           };
-          setEval('pass_lcd', pass);
+          // Track touch sub-test separately; overall LCD pass requires color confirmation too
+          setEval('pass_lcd_touch', pass);
         } catch (err) {
           resultsZC.tests.lcd = {
             pass: false,
@@ -1307,7 +1308,7 @@ class FactoryTestingService {
             raw: null,
             message: err.message || 'LCD test failed'
           };
-          setEval('pass_lcd', false);
+          setEval('pass_lcd_touch', false);
         }
 
         const allPass = Object.keys(resultsZC._eval).length > 0 && Object.values(resultsZC._eval).every(Boolean);

@@ -1542,8 +1542,8 @@ class FactoryTestingPage {
         const rMasterEl = document.getElementById('zc-rs485-master-val'); if (rMasterEl) rMasterEl.textContent = (typeof rr.master_ok !== 'undefined' ? (rr.master_ok ? 'Yes' : 'No') : '—');
 
         this.testProgress = 'ZC-LCD full test completed';
-        // Auto-save
-        await this.saveResultsToFile();
+        // Auto-save (defer ZC-LCD summary until tester choice)
+        await this.saveResultsToFile({ deferSummaryForZc: true });
       } else {
         this.testProgress = `ZC-LCD full test failed: ${res.error}`;
       }
@@ -1624,7 +1624,7 @@ class FactoryTestingPage {
         }
         
         // Auto-save results to file
-        await this.saveResultsToFile();
+        await this.saveResultsToFile({ deferSummaryForZc: this.selectedDevice === 'ZC-LCD' && !this.zcTesterComplete });
         // Populate Micro Edge result spans if present (use IDs that match the rendered DOM)
         try {
           const setIf = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
@@ -1714,7 +1714,7 @@ class FactoryTestingPage {
     }
   }
 
-  async saveResultsToFile() {
+  async saveResultsToFile(options = {}) {
     if (!window.factoryTestingModule) {
       return;
     }
@@ -1762,21 +1762,23 @@ class FactoryTestingPage {
           allPass = !!(evals && ['pass_uart','pass_rtc','pass_wifi','pass_lora','pass_eth','pass_rs4852'].every(k => evals[k] === true));
         } else if (this.selectedDevice === 'ZC-LCD') {
           const evals = this.factoryTestResults && this.factoryTestResults._eval;
-          allPass = !!(evals && ['pass_wifi','pass_rs485','pass_i2c','pass_lcd'].every(k => evals[k] === true));
+          allPass = !!(evals && ['pass_wifi','pass_rs485','pass_i2c','pass_lcd_touch','pass_lcd_color'].every(k => evals[k] === true));
         } else if (this.selectedDevice === 'ZC-Controller' || this.selectedDevice === 'Droplet') {
           const summary = this.factoryTestResults && this.factoryTestResults.summary;
           allPass = !!(summary && summary.passAll);
         }
-        const head = allPass ? '✅ Done' : '❌ Fail';
-
-        // Compact paths for display
-        const folderShort = this._compactPath(result.folder);
-        const csvShort = this._compactPath(result.csvPath);
-        const logShort = this._compactPath(result.logPath);
-        const masterShort = this._compactPath(result.masterCsvPath);
-
-        // Replace progress block with concise saved-artifacts summary
-        this.testProgress = `${head}\n📁 Folder: ${folderShort}\n📄 CSV: ${csvShort}\n🗒️ LOG: ${logShort}\n📊 Master CSV: ${masterShort}`;
+        // If ZC-LCD and waiting for tester LCD decision, defer pass/fail header
+        const deferZcSummary = (this.selectedDevice === 'ZC-LCD') && options && options.deferSummaryForZc === true && !this.zcTesterComplete;
+        if (deferZcSummary) {
+          this.testProgress = `Awaiting tester LCD verification...\n📁 Folder: ${this._compactPath(result.folder)}\n📄 CSV: ${this._compactPath(result.csvPath)}\n🗒️ LOG: ${this._compactPath(result.logPath)}\n📊 Master CSV: ${this._compactPath(result.masterCsvPath)}`;
+        } else {
+          const head = allPass ? '✅ Done' : '❌ Fail';
+          const folderShort = this._compactPath(result.folder);
+          const csvShort = this._compactPath(result.csvPath);
+          const logShort = this._compactPath(result.logPath);
+          const masterShort = this._compactPath(result.masterCsvPath);
+          this.testProgress = `${head}\n📁 Folder: ${folderShort}\n📄 CSV: ${csvShort}\n🗒️ LOG: ${logShort}\n📊 Master CSV: ${masterShort}`;
+        }
         
         // If tests pass, enable Print button
         try {
@@ -1795,11 +1797,13 @@ class FactoryTestingPage {
               this.testProgress += '\n✅ All tests passed - Print Label enabled';
             }
           } else if (this.selectedDevice === 'ZC-LCD') {
-            const evals = (this.factoryTestResults && this.factoryTestResults._eval) ? this.factoryTestResults._eval : null;
-            const allPass = evals ? ['pass_wifi','pass_rs485','pass_i2c','pass_lcd'].every(k => evals[k] === true) : false;
-            if (allPass) {
-              this.allowPrint = true;
-              this.testProgress += '\n✅ All tests passed - Print Label enabled';
+            if (!deferZcSummary) {
+              const evals = (this.factoryTestResults && this.factoryTestResults._eval) ? this.factoryTestResults._eval : null;
+              const allPass = evals ? ['pass_wifi','pass_rs485','pass_i2c','pass_lcd_touch','pass_lcd_color'].every(k => evals[k] === true) : false;
+              if (allPass) {
+                this.allowPrint = true;
+                this.testProgress += '\n✅ All tests passed - Print Label enabled';
+              }
             }
           } else if (this.selectedDevice === 'ZC-Controller') {
             const summary = this.factoryTestResults && this.factoryTestResults.summary;
@@ -1863,29 +1867,36 @@ class FactoryTestingPage {
       this.factoryTestResults = this.factoryTestResults || {};
       this.factoryTestResults.tests = this.factoryTestResults.tests || {};
       this.factoryTestResults._eval = this.factoryTestResults._eval || {};
+      const prev = this.factoryTestResults.tests.lcd || {};
+      const touchPass = typeof this.factoryTestResults._eval.pass_lcd_touch === 'boolean'
+        ? this.factoryTestResults._eval.pass_lcd_touch
+        : (typeof prev.touchCount === 'number' ? prev.touchCount > 2 : false);
+      let colorPass = false;
       if (this.zcTesterOutcome === 'done') {
-        const prev = this.factoryTestResults.tests.lcd || {};
-        this.factoryTestResults.tests.lcd = Object.assign({}, prev, {
-          pass: true,
-          message: 'Tester verified LCD Done'
-        });
-        this.factoryTestResults._eval.pass_lcd = true;
+        colorPass = true;
+        this.factoryTestResults._eval.pass_lcd_color = true;
       } else if (this.zcTesterOutcome === 'fail') {
-        const prev = this.factoryTestResults.tests.lcd || {};
-        const reason = this.zcTesterFailReason === 'wrong_color' ? 'Wrong color' : (this.zcTesterFailReason === 'missing_color' ? 'Missing color' : '');
-        this.factoryTestResults.tests.lcd = Object.assign({}, prev, {
-          pass: false,
-          message: `Tester marked LCD Fail${reason ? ' - ' + reason : ''}`
-        });
-        this.factoryTestResults._eval.pass_lcd = false;
+        colorPass = false;
+        this.factoryTestResults._eval.pass_lcd_color = false;
       }
+      const reason = this.zcTesterFailReason === 'wrong_color' ? 'Wrong color' : (this.zcTesterFailReason === 'missing_color' ? 'Missing color' : '');
+      const combinedPass = !!(touchPass && colorPass);
+      this.factoryTestResults.tests.lcd = Object.assign({}, prev, {
+        pass: combinedPass,
+        colorOutcome: this.zcTesterOutcome === 'done' ? 'DONE' : 'FAIL',
+        message: combinedPass
+          ? (prev.message || 'LCD Touch + Color passed')
+          : (this.zcTesterOutcome === 'fail' ? `LCD color fail${reason ? ' - ' + reason : ''}` : (prev.message || 'LCD Touch failed'))
+      });
+      // Maintain a combined flag for legacy checks
+      this.factoryTestResults._eval.pass_lcd = combinedPass;
     } catch (_) {}
     // Trigger save to include annotations and updated pass/fail
     await this.saveResultsToFile();
     // After saving, show modal with file paths like Hercules flow
     try {
-      const evals = (this.factoryTestResults && this.factoryTestResults._eval) ? this.factoryTestResults._eval : null;
-      const allPass = evals ? ['pass_wifi','pass_rs485','pass_i2c','pass_lcd'].every(k => evals[k] === true) : false;
+          const evals = (this.factoryTestResults && this.factoryTestResults._eval) ? this.factoryTestResults._eval : null;
+          const allPass = evals ? ['pass_wifi','pass_rs485','pass_i2c','pass_lcd_touch','pass_lcd_color'].every(k => evals[k] === true) : false;
       this._lastTestResultPass = allPass;
       this.showTestResultModal = true;
     } catch (_) {}
@@ -2219,7 +2230,7 @@ class FactoryTestingPage {
       wifi: zcStatusBadge(zcEval.pass_wifi),
       rs485: zcStatusBadge(zcEval.pass_rs485),
       i2c: zcStatusBadge(zcEval.pass_i2c),
-      lcd: zcStatusBadge(zcEval.pass_lcd)
+      lcd: zcStatusBadge(zcEval.pass_lcd_touch && zcEval.pass_lcd_color)
     };
     const zcSummaryBadge = zcStatusBadge(typeof zcSummary.passAll === 'boolean' ? zcSummary.passAll : undefined);
 
@@ -3190,10 +3201,16 @@ class FactoryTestingPage {
                 }
                 // For ZC-LCD: check ZC-LCD specific tests
                 if (this.selectedDevice === 'ZC-LCD') {
-                  const allPass = this.factoryTestResults._eval.pass_wifi && 
-                                  this.factoryTestResults._eval.pass_rs485 && 
-                                  this.factoryTestResults._eval.pass_i2c && 
-                                  this.factoryTestResults._eval.pass_lcd;
+                  const ev = this.factoryTestResults._eval || {};
+                  const hasColor = typeof ev.pass_lcd_color === 'boolean';
+                  const allPass = !!(ev.pass_wifi && ev.pass_rs485 && ev.pass_i2c && ev.pass_lcd_touch && ev.pass_lcd_color);
+                  if (!hasColor) {
+                    return `
+                      <div class="mt-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-200">
+                        Awaiting tester LCD verification...
+                      </div>
+                    `;
+                  }
                   return allPass ? `
                     <div class="mt-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700 dark:border-green-800 dark:bg-green-900/20 dark:text-green-200">
                       Device passed all checks.
