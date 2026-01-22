@@ -410,7 +410,6 @@ function createWindow() {
     setTimeout(() => {
       console.log('Sending test event to renderer...');
       mainWindow.webContents.send('test-event');
-      mainWindow.webContents.send('menu:switch-page', 'devices');
     }, 2000);
   });
 

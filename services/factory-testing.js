@@ -475,8 +475,8 @@ class FactoryTestingService {
       throw new Error('Not connected to a serial port');
     }
 
-    // Small delay to ensure previous command response is fully consumed
-    await new Promise(resolve => setTimeout(resolve, 100));
+    // Small delay to ensure previous command response is fully consumed (tuned down)
+    await new Promise(resolve => setTimeout(resolve, 30));
 
     // For AT+TEST commands, default timeout is 20s unless caller overrides
     const isTestCommand = typeof command === 'string' && command.toUpperCase().startsWith('AT+TEST=');
@@ -561,15 +561,14 @@ class FactoryTestingService {
             this.parser.removeListener('data', onData);
             resolve(responseData);
           } else {
-            // For devices that require OK: Set a short timer - if no OK comes within 500ms, accept the data anyway
+            // For devices that require OK: brief grace period for OK, then accept data
             dataReceivedTimer = setTimeout(() => {
               if (responseData && !gotOK) {
-                // Accept data if OK hasn't arrived within 500ms to keep flows responsive
                 clearTimeout(timeout);
                 this.parser.removeListener('data', onData);
                 resolve(responseData);
               }
-            }, 500);
+            }, 150);
           }
         }
         
@@ -589,9 +588,13 @@ class FactoryTestingService {
             this.parser.removeListener('data', onData);
             resolve(responseData);
           }
-          // Otherwise keep waiting for data line (within timeout)
+          // If caller expects a specific data line, keep waiting for it (typical for AT+TEST=...)
+          else if (expectedPrefixes && expectedPrefixes.length > 0) {
+            // do not resolve yet; wait for data line or main timeout
+            return;
+          }
+          // Otherwise resolve OK immediately for non-blocking behavior
           else {
-            // No data line expected or device only returns OK → resolve OK immediately for non-blocking behavior
             clearTimeout(timeout);
             this.parser.removeListener('data', onData);
             resolve('OK');
@@ -941,10 +944,10 @@ class FactoryTestingService {
     try {
       console.log('[Factory Testing] Reading device information...');
       
-      // Determine if this is Micro Edge (doesn't require OK)
-      const isMicroEdge = deviceType === 'Micro Edge';
-      const requireOK = !isMicroEdge; // Micro Edge: false, others: true
-      const quickTimeout = 2000; // 2s timeout for fast device info commands
+      // Devices that don't emit trailing OK for info commands
+      const isNoOKDevice = deviceType === 'Micro Edge' || deviceType === 'LoRa UART' || deviceType === 'ACB-M';
+      const requireOK = !isNoOKDevice; // Resolve immediately on data for no-OK devices
+      const quickTimeout = 800; // Faster timeout for quick info commands
 
       const deviceInfo = {};
 
@@ -1180,7 +1183,8 @@ class FactoryTestingService {
         // WiFi test: AT+TEST=wifi → +WIFI:6,1 (networks>1, connected=1)
         this.updateProgress('ZC-LCD: Running WiFi test...');
         try {
-          const resp = await this.sendATCommand('AT+TEST=wifi', '+WIFI:', 30000, false);
+          // Require OK to ensure the device finishes the test before next command
+          const resp = await this.sendATCommand('AT+TEST=wifi', '+WIFI:', 30000, true);
           const payload = resp.replace('+WIFI:', '').trim();
           const parts = payload.split(',');
           const networkCount = Number(parts[0] || '0');
@@ -1194,6 +1198,8 @@ class FactoryTestingService {
             message: pass ? `Networks: ${networkCount}, connected` : `Networks=${networkCount}, connected=${connected}`
           };
           setEval('pass_wifi', pass);
+          // Small cooldown between tests to match manual terminal pacing
+          await new Promise(r => setTimeout(r, 200));
         } catch (err) {
           resultsZC.tests.wifi = {
             pass: false,
@@ -1208,8 +1214,19 @@ class FactoryTestingService {
         // RS485 test: AT+TEST=rs485 → +RS485:4096 (must be exactly 4096)
         this.updateProgress('ZC-LCD: Running RS485 test...');
         try {
-          const resp = await this.sendATCommand('AT+TEST=rs485', '+RS485:', 30000, false);
-          const payload = resp.replace('+RS485:', '').trim();
+          // Require OK to avoid '+CME ERROR:test_running' if previous test still finalizing
+          let resp = null;
+          const maxRetries = 5;
+          for (let i = 0; i < maxRetries; i++) {
+            resp = await this.sendATCommand('AT+TEST=rs485', '+RS485:', 5000, true);
+            if (typeof resp === 'string' && /^\+CME ERROR:test_running/i.test(resp)) {
+              // Device still busy; brief backoff then retry
+              await new Promise(r => setTimeout(r, 200));
+              continue;
+            }
+            break;
+          }
+          const payload = String(resp || '').replace('+RS485:', '').trim();
           // Expected format: +RS485:4096 (value should be 4096 for pass)
           const value = Number(payload);
           const pass = value === 4096;
@@ -1233,7 +1250,7 @@ class FactoryTestingService {
         // I2C test: AT+TEST=i2c → +I2C:0x40,266,671 (address, temp, humidity with OK)
         this.updateProgress('ZC-LCD: Running I2C test...');
         try {
-          const resp = await this.sendATCommand('AT+TEST=i2c', '+I2C:', 30000, false);
+          const resp = await this.sendATCommand('AT+TEST=i2c', '+I2C:', 30000, true);
           const payload = resp.replace('+I2C:', '').trim();
           // Expected format: +I2C:0x40,266,671 (i2c_address, temp*10, hum*10)
           const parts = payload.split(',');
@@ -1282,7 +1299,8 @@ class FactoryTestingService {
             raw: resp,
             message: pass ? `LCD test passed (touches: ${touchCount})` : `Touch count: ${touchCount} (need > 2)`
           };
-          setEval('pass_lcd', pass);
+          // Track touch sub-test separately; overall LCD pass requires color confirmation too
+          setEval('pass_lcd_touch', pass);
         } catch (err) {
           resultsZC.tests.lcd = {
             pass: false,
@@ -1290,7 +1308,7 @@ class FactoryTestingService {
             raw: null,
             message: err.message || 'LCD test failed'
           };
-          setEval('pass_lcd', false);
+          setEval('pass_lcd_touch', false);
         }
 
         const allPass = Object.keys(resultsZC._eval).length > 0 && Object.values(resultsZC._eval).every(Boolean);
@@ -2157,6 +2175,7 @@ class FactoryTestingService {
       // ZC-LCD CSV entries
       if (device === 'ZC-LCD') {
         const zcTests = testResults.tests || {};
+        const ta = testResults.testerAnnotations || {};
         const formatStatus = (res) => {
           if (!res) return 'N/A';
           const state = res.pass === true ? 'PASS' : res.pass === false ? 'FAIL' : 'N/A';
@@ -2173,6 +2192,9 @@ class FactoryTestingService {
         csvContent += `Test Results,I2C Humidity,${zcTests.i2c && typeof zcTests.i2c.humidity !== 'undefined' ? zcTests.i2c.humidity : 'N/A'}\n`;
         csvContent += `Test Results,I2C Status,${formatStatus(zcTests.i2c)}\n`;
         csvContent += `Test Results,LCD Status,${formatStatus(zcTests.lcd)}\n`;
+        // Tester annotations
+        csvContent += `Tester, LCD Outcome,${ta.lcdOutcome ? ta.lcdOutcome : 'N/A'}\n`;
+        csvContent += `Tester, LCD Fail Reason,${ta.lcdFailReason ? ta.lcdFailReason : 'N/A'}\n`;
       }
 
       // Write CSV file
@@ -2255,6 +2277,7 @@ class FactoryTestingService {
       // ZC-LCD log entries
       if (device === 'ZC-LCD') {
         const zcTests = testResults.tests || {};
+        const ta = testResults.testerAnnotations || {};
         const statusToString = (res) => {
           if (!res) return 'N/A';
           const state = res.pass === true ? 'PASS' : res.pass === false ? 'FAIL' : 'N/A';
@@ -2270,6 +2293,8 @@ class FactoryTestingService {
         logContent += `I2C Humidity:      ${zcTests.i2c && typeof zcTests.i2c.humidity !== 'undefined' ? zcTests.i2c.humidity : 'N/A'}\n`;
         logContent += `I2C Status:        ${statusToString(zcTests.i2c)}\n`;
         logContent += `LCD Status:        ${statusToString(zcTests.lcd)}\n`;
+        logContent += `LCD Outcome:       ${ta.lcdOutcome ? ta.lcdOutcome : 'N/A'}\n`;
+        logContent += `LCD Fail Reason:   ${ta.lcdFailReason ? ta.lcdFailReason : 'N/A'}\n`;
       }
       
       logContent += '\n';
@@ -2317,7 +2342,7 @@ class FactoryTestingService {
         if (device === 'ACB-M') {
           header += 'UART Loopback,RTC Time,RTC Status,WiFi Networks,WiFi Connected,WiFi Status,ETH MAC,ETH IP,ETH Status,RS485 Cycles,RS485 Failures,RS485 Status,Test Result\n';
         } else if (device === 'ZC-LCD') {
-          header += 'WiFi Networks,WiFi Connected,WiFi Status,RS485 Value,RS485 Status,I2C Address,I2C Temperature,I2C Humidity,I2C Status,LCD Status,Test Result\n';
+          header += 'WiFi Networks,WiFi Connected,WiFi Status,RS485 Value,RS485 Status,I2C Address,I2C Temperature,I2C Humidity,I2C Status,LCD Status,LCD Outcome,LCD Fail Reason,Test Result\n';
         } else if (device === 'Droplet') {
           header += 'Temperature,Humidity,Pressure,CO2,AIN 1 Voltage,AIN 2 Voltage,AIN 3 Voltage,LoRa Address,LoRa Detect,LoRa Raw Push,Test Result\n';
         } else {
@@ -2442,6 +2467,7 @@ class FactoryTestingService {
       }
       else if (device === 'ZC-LCD') {
         const zcTests = testResults.tests || {};
+        const ta = testResults.testerAnnotations || {};
         const statusValue = (res) => {
           if (!res) return 'N/A';
           return res.pass === true ? 'PASS' : res.pass === false ? 'FAIL' : 'N/A';
@@ -2468,6 +2494,8 @@ class FactoryTestingService {
                   `${escapeCSV(typeof zcTests.i2c?.humidity !== 'undefined' ? zcTests.i2c.humidity : 'N/A')},` +
                   `${escapeCSV(statusValue(zcTests.i2c))},` +
                   `${escapeCSV(statusValue(zcTests.lcd))},` +
+                  `${escapeCSV(ta.lcdOutcome || 'N/A')},` +
+                  `${escapeCSV(ta.lcdFailReason || 'N/A')},` +
                   `${escapeCSV(testResult)}\n`;
       }
       

@@ -44,6 +44,8 @@ class FactoryTestingPage {
     this.preTestingCollapsed = true; // pre-testing section collapsed by default
     this._autoPollTimer = null;
     this.showConnectConfirm = false; // show modal to confirm before running tests in Auto
+    this.showMicroEdgeConnectModal = false; // show custom modal for Micro Edge connection
+    this.showRstPromptModal = false; // prompt before scanning next device
     this._lastAutoConnectedPort = '';
     this._autoConnectInProgress = false;
     this._autoConnectLastPort = '';
@@ -74,6 +76,11 @@ class FactoryTestingPage {
     this._lastTestResultPass = null;
     // Last saved artifact paths for display
     this._lastSaved = { folder: '', csvPath: '', logPath: '', masterCsvPath: '' };
+
+    // ZC-LCD tester annotations (post-test)
+    this.zcTesterOutcome = null; // 'done' | 'fail'
+    this.zcTesterFailReason = null; // 'wrong_color' | 'missing_color'
+    this.zcTesterComplete = false;
   }
 
   // Promise timeout helper for commands/tests
@@ -133,6 +140,93 @@ class FactoryTestingPage {
     } catch (e) { console.warn('Failed to start tests after confirm:', e && e.message); }
   }
 
+  async confirmMicroEdgeConnectOk() {
+    this.showMicroEdgeConnectModal = false;
+    this.app.render();
+    
+    // After user closes modal, run tests in auto mode
+    if (this.mode === 'auto' && !this.isTesting) {
+      try {
+        this.testProgress = 'Starting auto tests...';
+        this.showProgressModal = true;
+        this.app.render();
+        
+        const fullRes = await this.withTimeout(window.factoryTestingModule.runFactoryTests('Micro Edge'), 30000, 'Run all tests');
+        if (fullRes && fullRes.success) {
+          this.factoryTestResults = fullRes.data || this.factoryTestResults;
+          this.testProgress = '✅ Micro Edge auto tests completed';
+          await this.saveResultsToFile();
+          const evals = (this.factoryTestResults && this.factoryTestResults._eval) ? this.factoryTestResults._eval : null;
+          const allPass = evals ? ['pass_battery','pass_ain1','pass_ain2','pass_ain3','pass_pulses','pass_lora'].every(k => evals[k] === true) : false;
+          this._lastTestResultPass = allPass;
+          this.showTestResultModal = true;
+        } else {
+          this.testProgress = `❌ Micro Edge auto tests failed: ${fullRes && fullRes.error ? fullRes.error : 'Unknown error'}`;
+          this._lastTestResultPass = false;
+          this.showTestResultModal = true;
+        }
+      } catch (e) {
+        console.warn('[Factory Testing] Micro Edge auto test error:', e && e.message);
+        this.testProgress = `❌ Auto test error: ${e && e.message}`;
+        this._lastTestResultPass = false;
+        this.showTestResultModal = true;
+      }
+      this.showProgressModal = false;
+      this.app.render();
+    }
+  }
+
+  async confirmRstPromptOk() {
+    // Close the RST prompt and begin the original auto workflow
+    this.showRstPromptModal = false;
+    this.app.render();
+    try {
+      if (window.factoryTestingModule && window.factoryTestingModule.setAutoNextEnabled) {
+        window.factoryTestingModule.setAutoNextEnabled(true);
+      }
+      if (this.isConnected) {
+        await this.disconnectDevice();
+      }
+    } catch (e) { /* ignore */ }
+    this._startAutoWorkflow();
+  }
+
+  async confirmMicroEdgeConnectOk() {
+    this.showMicroEdgeConnectModal = false;
+    this.app.render();
+    
+    // After user closes modal, run tests in auto mode
+    if (this.mode === 'auto' && !this.isTesting) {
+      try {
+        this.testProgress = 'Starting auto tests...';
+        this.showProgressModal = true;
+        this.app.render();
+        
+        const fullRes = await this.withTimeout(window.factoryTestingModule.runFactoryTests('Micro Edge'), 30000, 'Run all tests');
+        if (fullRes && fullRes.success) {
+          this.factoryTestResults = fullRes.data || this.factoryTestResults;
+          this.testProgress = '✅ Micro Edge auto tests completed';
+          await this.saveResultsToFile();
+          const evals = (this.factoryTestResults && this.factoryTestResults._eval) ? this.factoryTestResults._eval : null;
+          const allPass = evals ? ['pass_battery','pass_ain1','pass_ain2','pass_ain3','pass_pulses','pass_lora'].every(k => evals[k] === true) : false;
+          this._lastTestResultPass = allPass;
+          this.showTestResultModal = true;
+        } else {
+          this.testProgress = `❌ Micro Edge auto tests failed: ${fullRes && fullRes.error ? fullRes.error : 'Unknown error'}`;
+          this._lastTestResultPass = false;
+          this.showTestResultModal = true;
+        }
+      } catch (e) {
+        console.warn('[Factory Testing] Micro Edge auto test error:', e && e.message);
+        this.testProgress = `❌ Auto test error: ${e && e.message}`;
+        this._lastTestResultPass = false;
+        this.showTestResultModal = true;
+      }
+      this.showProgressModal = false;
+      this.app.render();
+    }
+  }
+
   // Progress modal rendering
   renderProgressModal() {
     // Show whenever tests are running or explicitly requested
@@ -182,7 +276,7 @@ class FactoryTestingPage {
       const last2 = parts.slice(-2).join('/');
       return last2 || parts.pop();
     };
-    const shouldShowFiles = (this.selectedDevice === 'Micro Edge' || this.selectedDevice === 'Droplet');
+    const shouldShowFiles = (this.selectedDevice === 'Micro Edge' || this.selectedDevice === 'Droplet' || this.selectedDevice === 'ZC-LCD');
     const fileLines = shouldShowFiles ? `\nCSV: ${compact(saved.csvPath)}\nTXT: ${compact(saved.logPath)}` : '';
     const deviceLabel = (make && model) ? `${make}-${model}` : (this.selectedDevice || '');
     return `
@@ -873,17 +967,9 @@ class FactoryTestingPage {
 
   // User action: enable auto-next and start scanning for the next device
   async startTestNextDevice() {
-    try {
-      if (window.factoryTestingModule && window.factoryTestingModule.setAutoNextEnabled) {
-        window.factoryTestingModule.setAutoNextEnabled(true);
-      }
-      // If currently connected, disconnect first
-      if (this.isConnected) {
-        await this.disconnectDevice();
-      }
-    } catch (e) { /* ignore */ }
-    // kick off auto workflow
-    this._startAutoWorkflow();
+    // Show the RST prompt modal; actual workflow starts after confirmation
+    this.showRstPromptModal = true;
+    this.app.render();
   }
 
   // Format AIN display: if value is normalized (0..1) convert to 0..3.3V, otherwise assume already volts
@@ -1136,51 +1222,15 @@ class FactoryTestingPage {
           // Always show for Micro Edge, even in auto mode
           const di = this.deviceInfo || {};
           const hasError = ['uniqueId','deviceModel','deviceMake','firmwareVersion'].some(k => String(di[k] || '').toUpperCase() === 'ERROR');
-          const infoMsg = [
-            `✅ Connected successfully to ${selectedPort} @ ${selectedBaud} baud`,
-            '',
-            'Device Information:',
-            `  Unique ID: ${di.uniqueId || 'N/A'}`,
-            `  Device Make: ${di.deviceMake || 'N/A'}`,
-            `  Device Model: ${di.deviceModel || 'N/A'}`,
-            `  FW Version: ${di.firmwareVersion || di.fwVersion || 'N/A'}`,
-            '',
-            hasError ? '❌ Failed to read all fields over RS485' : 'Ready to run tests!'
-          ].join('\n');
-          alert(infoMsg);
           
-          // After user closes popup, run tests in auto mode
-          if (this.mode === 'auto') {
-            try {
-              this.testProgress = 'Starting auto tests...';
-              this.showProgressModal = true;
-              this.app.render();
-              
-              const fullRes = await this.withTimeout(window.factoryTestingModule.runFactoryTests('Micro Edge'), 30000, 'Run all tests');
-              if (fullRes && fullRes.success) {
-                this.factoryTestResults = fullRes.data || this.factoryTestResults;
-                this.testProgress = '✅ Micro Edge auto tests completed';
-                // Save results to enable Print Label if all tests pass
-                await this.saveResultsToFile();
-                // Show result modal with PASS/FAIL
-                const evals = (this.factoryTestResults && this.factoryTestResults._eval) ? this.factoryTestResults._eval : null;
-                const allPass = evals ? ['pass_battery','pass_ain1','pass_ain2','pass_ain3','pass_pulses','pass_lora'].every(k => evals[k] === true) : false;
-                this._lastTestResultPass = allPass;
-                this.showTestResultModal = true;
-              } else {
-                this.testProgress = `❌ Micro Edge auto tests failed: ${fullRes && fullRes.error ? fullRes.error : 'Unknown error'}`;
-                this._lastTestResultPass = false;
-                this.showTestResultModal = true;
-              }
-            } catch (e) {
-              console.warn('[Factory Testing] Micro Edge auto test error:', e && e.message);
-              this.testProgress = `❌ Auto test error: ${e && e.message}`;
-              this._lastTestResultPass = false;
-              this.showTestResultModal = true;
-            }
-            this.showProgressModal = false;
-            this.app.render();
-          }
+          // Store connection info for modal
+          this._lastAutoConnectedPort = selectedPort;
+          this._lastAutoConnectedBaud = String(selectedBaud);
+          this._microEdgeHasError = hasError;
+          
+          // Show custom modal with bold instruction
+          this.showMicroEdgeConnectModal = true;
+          this.app.render();
           
         } else if (this.selectedDevice === 'ZC-LCD') {
           // ZC-LCD: Device info already read during connect, show popup
@@ -1492,8 +1542,8 @@ class FactoryTestingPage {
         const rMasterEl = document.getElementById('zc-rs485-master-val'); if (rMasterEl) rMasterEl.textContent = (typeof rr.master_ok !== 'undefined' ? (rr.master_ok ? 'Yes' : 'No') : '—');
 
         this.testProgress = 'ZC-LCD full test completed';
-        // Auto-save
-        await this.saveResultsToFile();
+        // Auto-save (defer ZC-LCD summary until tester choice)
+        await this.saveResultsToFile({ deferSummaryForZc: true });
       } else {
         this.testProgress = `ZC-LCD full test failed: ${res.error}`;
       }
@@ -1538,6 +1588,12 @@ class FactoryTestingPage {
       if (result.success) {
         const mergedResults = Object.assign(this._createEmptyFactoryResults(), result.data || {});
         this.factoryTestResults = mergedResults;
+        // Reset tester annotations for a fresh run
+        if (this.selectedDevice === 'ZC-LCD') {
+          this.zcTesterOutcome = null;
+          this.zcTesterFailReason = null;
+          this.zcTesterComplete = false;
+        }
         if (!this.factoryTestResults.tests) this.factoryTestResults.tests = {};
         if (!this.factoryTestResults._eval) this.factoryTestResults._eval = {};
         if (!this.factoryTestResults.summary) this.factoryTestResults.summary = null;
@@ -1568,7 +1624,7 @@ class FactoryTestingPage {
         }
         
         // Auto-save results to file
-        await this.saveResultsToFile();
+        await this.saveResultsToFile({ deferSummaryForZc: this.selectedDevice === 'ZC-LCD' && !this.zcTesterComplete });
         // Populate Micro Edge result spans if present (use IDs that match the rendered DOM)
         try {
           const setIf = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
@@ -1658,7 +1714,7 @@ class FactoryTestingPage {
     }
   }
 
-  async saveResultsToFile() {
+  async saveResultsToFile(options = {}) {
     if (!window.factoryTestingModule) {
       return;
     }
@@ -1668,7 +1724,22 @@ class FactoryTestingPage {
         this.selectedVersion,
         this.selectedDevice,
         this.deviceInfo,
-        this.factoryTestResults,
+        // Attach tester annotations for ZC-LCD into test results
+        (function(page){
+          const fr = Object.assign({}, page.factoryTestResults);
+          if (page.selectedDevice === 'ZC-LCD') {
+            fr.testerAnnotations = fr.testerAnnotations || {};
+            // Map labels in English
+            if (page.zcTesterOutcome === 'done') {
+              fr.testerAnnotations.lcdOutcome = 'LCD Done';
+              fr.testerAnnotations.lcdFailReason = '';
+            } else if (page.zcTesterOutcome === 'fail') {
+              fr.testerAnnotations.lcdOutcome = 'LCD Fail';
+              fr.testerAnnotations.lcdFailReason = (page.zcTesterFailReason === 'wrong_color' ? 'Wrong color' : (page.zcTesterFailReason === 'missing_color' ? 'Missing color' : ''));
+            }
+          }
+          return fr;
+        })(this),
         this.preTesting
       );
 
@@ -1691,21 +1762,23 @@ class FactoryTestingPage {
           allPass = !!(evals && ['pass_uart','pass_rtc','pass_wifi','pass_lora','pass_eth','pass_rs4852'].every(k => evals[k] === true));
         } else if (this.selectedDevice === 'ZC-LCD') {
           const evals = this.factoryTestResults && this.factoryTestResults._eval;
-          allPass = !!(evals && ['pass_wifi','pass_rs485','pass_i2c','pass_lcd'].every(k => evals[k] === true));
+          allPass = !!(evals && ['pass_wifi','pass_rs485','pass_i2c','pass_lcd_touch','pass_lcd_color'].every(k => evals[k] === true));
         } else if (this.selectedDevice === 'ZC-Controller' || this.selectedDevice === 'Droplet') {
           const summary = this.factoryTestResults && this.factoryTestResults.summary;
           allPass = !!(summary && summary.passAll);
         }
-        const head = allPass ? '✅ Done' : '❌ Fail';
-
-        // Compact paths for display
-        const folderShort = this._compactPath(result.folder);
-        const csvShort = this._compactPath(result.csvPath);
-        const logShort = this._compactPath(result.logPath);
-        const masterShort = this._compactPath(result.masterCsvPath);
-
-        // Replace progress block with concise saved-artifacts summary
-        this.testProgress = `${head}\n📁 Folder: ${folderShort}\n📄 CSV: ${csvShort}\n🗒️ LOG: ${logShort}\n📊 Master CSV: ${masterShort}`;
+        // If ZC-LCD and waiting for tester LCD decision, defer pass/fail header
+        const deferZcSummary = (this.selectedDevice === 'ZC-LCD') && options && options.deferSummaryForZc === true && !this.zcTesterComplete;
+        if (deferZcSummary) {
+          this.testProgress = `Awaiting tester LCD verification...\n📁 Folder: ${this._compactPath(result.folder)}\n📄 CSV: ${this._compactPath(result.csvPath)}\n🗒️ LOG: ${this._compactPath(result.logPath)}\n📊 Master CSV: ${this._compactPath(result.masterCsvPath)}`;
+        } else {
+          const head = allPass ? '✅ Done' : '❌ Fail';
+          const folderShort = this._compactPath(result.folder);
+          const csvShort = this._compactPath(result.csvPath);
+          const logShort = this._compactPath(result.logPath);
+          const masterShort = this._compactPath(result.masterCsvPath);
+          this.testProgress = `${head}\n📁 Folder: ${folderShort}\n📄 CSV: ${csvShort}\n🗒️ LOG: ${logShort}\n📊 Master CSV: ${masterShort}`;
+        }
         
         // If tests pass, enable Print button
         try {
@@ -1724,11 +1797,13 @@ class FactoryTestingPage {
               this.testProgress += '\n✅ All tests passed - Print Label enabled';
             }
           } else if (this.selectedDevice === 'ZC-LCD') {
-            const evals = (this.factoryTestResults && this.factoryTestResults._eval) ? this.factoryTestResults._eval : null;
-            const allPass = evals ? ['pass_wifi','pass_rs485','pass_i2c','pass_lcd'].every(k => evals[k] === true) : false;
-            if (allPass) {
-              this.allowPrint = true;
-              this.testProgress += '\n✅ All tests passed - Print Label enabled';
+            if (!deferZcSummary) {
+              const evals = (this.factoryTestResults && this.factoryTestResults._eval) ? this.factoryTestResults._eval : null;
+              const allPass = evals ? ['pass_wifi','pass_rs485','pass_i2c','pass_lcd_touch','pass_lcd_color'].every(k => evals[k] === true) : false;
+              if (allPass) {
+                this.allowPrint = true;
+                this.testProgress += '\n✅ All tests passed - Print Label enabled';
+              }
             }
           } else if (this.selectedDevice === 'ZC-Controller') {
             const summary = this.factoryTestResults && this.factoryTestResults.summary;
@@ -1756,6 +1831,77 @@ class FactoryTestingPage {
     } catch (error) {
         this.isTesting = false; this.showProgressModal = false; this.app.render();
     }
+  }
+
+  // ZC-LCD tester UI handlers
+  setZcTesterOutcome(val) {
+    if (val !== 'done' && val !== 'fail') return;
+    this.zcTesterOutcome = val;
+    if (val === 'done') {
+      this.zcTesterFailReason = null;
+    }
+    this.app.render();
+  }
+
+  setZcTesterFailReason(val) {
+    if (val !== 'wrong_color' && val !== 'missing_color') return;
+    this.zcTesterFailReason = val;
+    this.app.render();
+  }
+
+  async finalizeZcTesterEntry() {
+    if (this.selectedDevice !== 'ZC-LCD') return;
+    // Require outcome selection
+    if (!this.zcTesterOutcome) {
+      alert('Please select LCD Done or LCD Fail');
+      return;
+    }
+    // If fail, require a reason
+    if (this.zcTesterOutcome === 'fail' && !this.zcTesterFailReason) {
+      alert('Please select a fail reason');
+      return;
+    }
+    this.zcTesterComplete = true;
+    // Reflect tester decision in results and evaluation flags
+    try {
+      this.factoryTestResults = this.factoryTestResults || {};
+      this.factoryTestResults.tests = this.factoryTestResults.tests || {};
+      this.factoryTestResults._eval = this.factoryTestResults._eval || {};
+      const prev = this.factoryTestResults.tests.lcd || {};
+      const touchPass = typeof this.factoryTestResults._eval.pass_lcd_touch === 'boolean'
+        ? this.factoryTestResults._eval.pass_lcd_touch
+        : (typeof prev.touchCount === 'number' ? prev.touchCount > 2 : false);
+      let colorPass = false;
+      if (this.zcTesterOutcome === 'done') {
+        colorPass = true;
+        this.factoryTestResults._eval.pass_lcd_color = true;
+      } else if (this.zcTesterOutcome === 'fail') {
+        colorPass = false;
+        this.factoryTestResults._eval.pass_lcd_color = false;
+      }
+      const reason = this.zcTesterFailReason === 'wrong_color' ? 'Wrong color' : (this.zcTesterFailReason === 'missing_color' ? 'Missing color' : '');
+      const combinedPass = !!(touchPass && colorPass);
+      this.factoryTestResults.tests.lcd = Object.assign({}, prev, {
+        pass: combinedPass,
+        colorOutcome: this.zcTesterOutcome === 'done' ? 'DONE' : 'FAIL',
+        message: combinedPass
+          ? (prev.message || 'LCD Touch + Color passed')
+          : (this.zcTesterOutcome === 'fail' ? `LCD color fail${reason ? ' - ' + reason : ''}` : (prev.message || 'LCD Touch failed'))
+      });
+      // Maintain a combined flag for legacy checks
+      this.factoryTestResults._eval.pass_lcd = combinedPass;
+    } catch (_) {}
+    // Trigger save to include annotations and updated pass/fail
+    await this.saveResultsToFile();
+    // After saving, show modal with file paths like Hercules flow
+    try {
+          const evals = (this.factoryTestResults && this.factoryTestResults._eval) ? this.factoryTestResults._eval : null;
+          const allPass = evals ? ['pass_wifi','pass_rs485','pass_i2c','pass_lcd_touch','pass_lcd_color'].every(k => evals[k] === true) : false;
+      this._lastTestResultPass = allPass;
+      this.showTestResultModal = true;
+    } catch (_) {}
+    this.app.render();
+    this.showToast('Tester input saved');
   }
 
   clearOutput() {
@@ -2084,7 +2230,7 @@ class FactoryTestingPage {
       wifi: zcStatusBadge(zcEval.pass_wifi),
       rs485: zcStatusBadge(zcEval.pass_rs485),
       i2c: zcStatusBadge(zcEval.pass_i2c),
-      lcd: zcStatusBadge(zcEval.pass_lcd)
+      lcd: zcStatusBadge(zcEval.pass_lcd_touch && zcEval.pass_lcd_color)
     };
     const zcSummaryBadge = zcStatusBadge(typeof zcSummary.passAll === 'boolean' ? zcSummary.passAll : undefined);
 
@@ -3055,10 +3201,29 @@ class FactoryTestingPage {
                 }
                 // For ZC-LCD: check ZC-LCD specific tests
                 if (this.selectedDevice === 'ZC-LCD') {
-                  const allPass = this.factoryTestResults._eval.pass_wifi && 
-                                  this.factoryTestResults._eval.pass_rs485 && 
-                                  this.factoryTestResults._eval.pass_i2c && 
-                                  this.factoryTestResults._eval.pass_lcd;
+                  const ev = this.factoryTestResults._eval || {};
+                  const hasColor = typeof ev.pass_lcd_color === 'boolean';
+                  const allPass = !!(ev.pass_wifi && ev.pass_rs485 && ev.pass_i2c && ev.pass_lcd_touch && ev.pass_lcd_color);
+                  if (!hasColor) {
+                    return `
+                      <div class="mt-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-200">
+                        Awaiting tester LCD verification...
+                      </div>
+                    `;
+                  }
+                  return allPass ? `
+                    <div class="mt-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700 dark:border-green-800 dark:bg-green-900/20 dark:text-green-200">
+                      Device passed all checks.
+                    </div>
+                  ` : `
+                    <div class="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+                      Device failed one or more checks. Review the results below.
+                    </div>
+                  `;
+                }
+                // LoRa UART: only UART + LoRa
+                if (this.selectedDevice === 'LoRa UART') {
+                  const allPass = !!(this.factoryTestResults._eval.pass_uart && this.factoryTestResults._eval.pass_lora);
                   return allPass ? `
                     <div class="mt-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700 dark:border-green-800 dark:bg-green-900/20 dark:text-green-200">
                       Device passed all checks.
@@ -3378,6 +3543,54 @@ class FactoryTestingPage {
                     </div>
                   </div>
                 </div>
+                <!-- Tester Verification (after tests) -->
+                ${(() => {
+                  const hasResults = (this.factoryTestResults && typeof this.factoryTestResults === 'object' && this.factoryTestResults.tests && Object.keys(this.factoryTestResults.tests || {}).length > 0);
+                  if (!hasResults) return '';
+                  const disabled = this.zcTesterComplete ? 'opacity-60 pointer-events-none' : '';
+                  const outcomeDoneChecked = this.zcTesterOutcome === 'done' ? 'checked' : '';
+                  const outcomeFailChecked = this.zcTesterOutcome === 'fail' ? 'checked' : '';
+                  const failWrongChecked = this.zcTesterFailReason === 'wrong_color' ? 'checked' : '';
+                  const failMissingChecked = this.zcTesterFailReason === 'missing_color' ? 'checked' : '';
+                  return `
+                    <div class="mt-4 p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700 ${disabled}">
+                      <div class="text-sm font-semibold mb-2">Tester Verification</div>
+                      <div class="mb-3 space-y-2">
+                        <label class="flex items-center gap-2">
+                          <input type="radio" name="zcTesterOutcome" ${outcomeDoneChecked} onchange="window.factoryTestingPage.setZcTesterOutcome('done')" />
+                          <span class="inline-flex items-center gap-2">
+                            ${this.zcTesterOutcome === 'done' ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="2" class="h-4 w-4"><path stroke-linecap="round" stroke-linejoin="round" d="M20 6L9 17l-5-5"/></svg>' : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="h-4 w-4"><circle cx="12" cy="12" r="3" fill="#9CA3AF"/></svg>'}
+                            <span>LCD Done</span>
+                          </span>
+                        </label>
+                        <div>
+                          <label class="flex items-center gap-2">
+                            <input type="radio" name="zcTesterOutcome" ${outcomeFailChecked} onchange="window.factoryTestingPage.setZcTesterOutcome('fail')" />
+                            <span class="inline-flex items-center gap-2">
+                              ${this.zcTesterOutcome === 'fail' ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#DC2626" stroke-width="2" class="h-4 w-4"><path stroke-linecap="round" stroke-linejoin="round" d="M18 6L6 18M6 6l12 12"/></svg>' : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="h-4 w-4"><circle cx="12" cy="12" r="3" fill="#9CA3AF"/></svg>'}
+                              <span>LCD Fail</span>
+                            </span>
+                          </label>
+                          ${this.zcTesterOutcome === 'fail' ? `
+                            <div class="ml-6 mt-2 flex items-center gap-6">
+                              <label class="inline-flex items-center gap-2">
+                                <input type="radio" name="zcTesterFailReason" ${failWrongChecked} onchange="window.factoryTestingPage.setZcTesterFailReason('wrong_color')" />
+                                <span>Wrong color</span>
+                              </label>
+                              <label class="inline-flex items-center gap-2">
+                                <input type="radio" name="zcTesterFailReason" ${failMissingChecked} onchange="window.factoryTestingPage.setZcTesterFailReason('missing_color')" />
+                                <span>Missing color</span>
+                              </label>
+                            </div>
+                          ` : ''}
+                        </div>
+                      </div>
+                      <div class="flex justify-end">
+                        <button onclick="window.factoryTestingPage.finalizeZcTesterEntry()" class="rounded-lg bg-gray-900 px-5 py-2 text-sm font-semibold text-white hover:bg-gray-700 dark:bg-gray-200 dark:text-gray-900 dark:hover:bg-gray-100">Finish</button>
+                      </div>
+                    </div>
+                  `;
+                })()}
               </div>
             ` : ''}
 
@@ -3644,6 +3857,54 @@ RS485: ${JSON.stringify((this.factoryTestResults.rs485 && this.factoryTestResult
             })()}
             <div class="mt-3 flex justify-end">
               <button onclick="window.factoryTestingPage.confirmConnectOk()" class="px-4 py-1 bg-gray-200 dark:bg-gray-700 rounded">OK</button>
+            </div>
+          </div>
+        </div>
+      ` : ''}
+      ${this.showMicroEdgeConnectModal ? `
+        <div class="fixed inset-0 z-50 flex items-center justify-center">
+          <div class="absolute inset-0 bg-black opacity-40"></div>
+          <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl z-10 w-11/12 max-w-md p-4">
+            <h3 class="text-sm font-semibold mb-3">nube-io-toolkit</h3>
+            ${(() => {
+              const port = this._lastAutoConnectedPort || '';
+              const baud = this._lastAutoConnectedBaud ? ` @ ${this._lastAutoConnectedBaud} baud` : '';
+              const di = this.deviceInfo || {};
+              const hasError = this._microEdgeHasError || false;
+              return `
+                <div class="text-xs">
+                  <p>☑ Connected successfully to ${port}${baud}</p>
+                  <br>
+                  <p>Device Information:</p>
+                  <p>Unique ID: ${di.uniqueId || 'N/A'}</p>
+                  <p>Device Make: ${di.deviceMake || 'N/A'}</p>
+                  <p>Device Model: ${di.deviceModel || 'N/A'}</p>
+                  <p>FW Version: ${di.firmwareVersion || di.fwVersion || 'N/A'}</p>
+                  <br>
+                  <p>${hasError ? '❌ Failed to read all fields over RS485' : 'Ready to run tests!'}</p>
+                  <br>
+                  <p><strong>Press Switch 5 times</strong></p>
+                </div>
+              `;
+            })()}
+            <div class="mt-3 flex justify-end">
+              <button onclick="window.factoryTestingPage.confirmMicroEdgeConnectOk()" class="px-4 py-1 bg-gray-200 dark:bg-gray-700 rounded">OK</button>
+            </div>
+          </div>
+        </div>
+      ` : ''}
+      ${this.showRstPromptModal ? `
+        <div class="fixed inset-0 z-50 flex items-center justify-center">
+          <div class="absolute inset-0 bg-black opacity-40"></div>
+          <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl z-10 w-11/12 max-w-md p-4">
+            <h3 class="text-sm font-semibold mb-3">nube-io-toolkit</h3>
+            <div class="text-xs">
+              <p><strong>Press the device RST button</strong></p>
+              <br>
+              <p>After pressing RST, click OK to continue.</p>
+            </div>
+            <div class="mt-3 flex justify-end">
+              <button onclick="window.factoryTestingPage.confirmRstPromptOk()" class="px-4 py-1 bg-gray-200 dark:bg-gray-700 rounded">OK</button>
             </div>
           </div>
         </div>
