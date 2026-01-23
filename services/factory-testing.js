@@ -2342,7 +2342,9 @@ class FactoryTestingService {
         if (device === 'ACB-M') {
           header += 'UART Loopback,RTC Time,RTC Status,WiFi Networks,WiFi Connected,WiFi Status,ETH MAC,ETH IP,ETH Status,RS485 Cycles,RS485 Failures,RS485 Status,Test Result\n';
         } else if (device === 'ZC-LCD') {
-          header += 'WiFi Networks,WiFi Connected,WiFi Status,RS485 Value,RS485 Status,I2C Address,I2C Temperature,I2C Humidity,I2C Status,LCD Status,LCD Outcome,LCD Fail Reason,Test Result\n';
+          // Gen2 ZC-LCD: move Test Result two cells to the right and
+          // insert an additional column for LCD color at the previous position
+          header += 'WiFi Networks,WiFi Connected,WiFi Status,RS485 Value,RS485 Status,I2C Address,I2C Temperature,I2C Humidity,I2C Status,LCD Status,LCD color,LCD Outcome,LCD Fail Reason,Test Result\n';
         } else if (device === 'Droplet') {
           header += 'Temperature,Humidity,Pressure,CO2,AIN 1 Voltage,AIN 2 Voltage,AIN 3 Voltage,LoRa Address,LoRa Detect,LoRa Raw Push,Test Result\n';
         } else {
@@ -2490,6 +2492,8 @@ class FactoryTestingService {
                   `${escapeCSV(typeof zcTests.i2c?.humidity !== 'undefined' ? zcTests.i2c.humidity : 'N/A')},` +
                   `${escapeCSV(statusValue(zcTests.i2c))},` +
                   `${escapeCSV(statusValue(zcTests.lcd))},` +
+                  // New column: LCD color (use tester outcome text if available)
+                  `${escapeCSV(ta.lcdOutcome || (zcTests.lcd?.colorOutcome === 'DONE' ? 'LCD Done' : (zcTests.lcd?.colorOutcome === 'FAIL' ? 'LCD Fail' : 'N/A')))},` +
                   `${escapeCSV(ta.lcdOutcome || 'N/A')},` +
                   `${escapeCSV(ta.lcdFailReason || 'N/A')},` +
                   `${escapeCSV(testResult)}\n`;
