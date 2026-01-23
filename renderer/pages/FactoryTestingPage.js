@@ -1379,10 +1379,9 @@ class FactoryTestingPage {
 
   // Compact a filesystem path to just last 1-2 segments
   _compactPath(p) {
+    // Show full absolute path to avoid confusion when locating files
     if (!p) return '';
-    const parts = String(p).split(/\\|\//);
-    const last2 = parts.slice(-2).join('/');
-    return last2 || parts.pop();
+    return String(p);
   }
 
   async disconnectDevice() {

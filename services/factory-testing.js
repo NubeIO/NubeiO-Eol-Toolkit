@@ -2352,17 +2352,13 @@ class FactoryTestingService {
       }
       
       // Determine overall test result
+      // Rule: Test Result is PASS only when ALL relevant flags pass
       let testResult = 'PASS';
       if (device === 'Micro Edge') {
-        const criticalTests = [
-          testResults.batteryVoltage,
-          testResults.loraAddress,
-          testResults.loraDetect,
-          testResults.loraRawPush
-        ];
-        if (criticalTests.some(test => test === 'ERROR' || test === 'Not Detected')) {
-          testResult = 'FAIL';
-        }
+        const evalFlags = testResults && testResults._eval ? testResults._eval : null;
+        const requiredFlags = ['pass_battery','pass_ain1','pass_ain2','pass_ain3','pass_pulses','pass_lora'];
+        const allPass = !!(evalFlags && requiredFlags.every(k => evalFlags[k] === true));
+        if (!allPass) testResult = 'FAIL';
       } else if (device === 'ACB-M' || device === 'ZC-LCD') {
         const evalFlags = testResults && testResults._eval ? Object.values(testResults._eval) : [];
         if (!evalFlags.length || evalFlags.some(flag => flag !== true)) {
