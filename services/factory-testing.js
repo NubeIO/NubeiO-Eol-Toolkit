@@ -2022,17 +2022,17 @@ class FactoryTestingService {
       // Evaluate pass/fail rules for Micro Edge here so service-side CSV can include flags
       try {
         const evalFlags = {};
-        // batteryVoltage expected between 2.5 and 4.5
+        // batteryVoltage expected between 3.45 and 3.70 (matching UI validation)
         const bv = this._parseVoltageValue(results.batteryVoltage);
-        evalFlags.pass_battery = bv !== null && bv >= 2.5 && bv <= 4.5;
+        evalFlags.pass_battery = bv !== null && bv >= 3.45 && bv <= 3.70;
 
-        // AIN thresholds (expected in volts after parsing)
+        // AIN thresholds (expected in volts after parsing) - matching UI validation
         const a1 = this._parseVoltageValue(results.ain1Voltage);
         const a2 = this._parseVoltageValue(results.ain2Voltage);
         const a3 = this._parseVoltageValue(results.ain3Voltage);
-        evalFlags.pass_ain1 = a1 !== null && a1 >= 1.4 && a1 <= 1.7;
-        evalFlags.pass_ain2 = a2 !== null && a2 >= 0.75 && a2 <= 1.2;
-        evalFlags.pass_ain3 = a3 !== null && a3 >= 0.5 && a3 <= 0.9;
+        evalFlags.pass_ain1 = a1 !== null && a1 >= 1.55 && a1 <= 1.75;
+        evalFlags.pass_ain2 = a2 !== null && a2 >= 0.95 && a2 <= 1.15;
+        evalFlags.pass_ain3 = a3 !== null && a3 >= 0.75 && a3 <= 0.95;
 
         // pulses > 3
         const pulsesNum = parseInt(String(results.pulsesCounter || '').replace(/\D/g, ''), 10);
